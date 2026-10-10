@@ -739,40 +739,58 @@ class _AddressScreenState extends State<AddressScreen> {
             const Divider(height: 1),
             const SizedBox(height: 4),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  isSelected ? "Tap another address to switch" : "Tap card to select as delivery address",
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isSelected ? const Color(0xFF047857) : AppColors.textMuted,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                Expanded(
+                  child: Text(
+                    isSelected ? "Tap another address to switch" : "Tap card to select as delivery",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isSelected ? const Color(0xFF047857) : AppColors.textMuted,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    ),
                   ),
                 ),
-                Row(
-                  children: [
-                    TextButton.icon(
-                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                      icon: const Icon(Icons.edit_outlined, size: 15, color: AppColors.primary),
-                      label: const Text("Edit", style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 12)),
-                      onPressed: () async {
-                        final updated = await Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => EditAddressPage(address: addr)),
-                        );
-                        if (updated == true) {
-                          _fetchAddresses();
-                          _loadActiveAddressFromPrefs();
-                        }
-                      },
+                InkWell(
+                  onTap: () async {
+                    final updated = await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => EditAddressPage(address: addr)),
+                    );
+                    if (updated == true) {
+                      _fetchAddresses();
+                      _loadActiveAddressFromPrefs();
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.edit_outlined, size: 14, color: AppColors.primary),
+                        SizedBox(width: 4),
+                        Text("Edit", style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 12)),
+                      ],
                     ),
-                    TextButton.icon(
-                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                      icon: const Icon(Icons.delete_outline_rounded, size: 15, color: AppColors.danger),
-                      label: const Text("Delete", style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700, fontSize: 12)),
-                      onPressed: () => _showDeleteConfirm(addr['add_id']),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => _showDeleteConfirm(addr['add_id']),
+                  borderRadius: BorderRadius.circular(8),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.delete_outline_rounded, size: 14, color: AppColors.danger),
+                        SizedBox(width: 4),
+                        Text("Delete", style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700, fontSize: 12)),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -980,7 +998,7 @@ class _EditAddressPageState extends State<EditAddressPage> {
           ? http.put(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
           : http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body)));
 
-      if (res.statusCode == 200) {
+      if (res.statusCode == 200 || res.statusCode == 201) {
         final shortA = cityVal.isNotEmpty ? cityVal : line1Val;
         final fullA = [
           line1Val,
@@ -990,23 +1008,32 @@ class _EditAddressPageState extends State<EditAddressPage> {
           if (c7.text.trim().isNotEmpty) "- ${c7.text.trim()}"
         ].where((s) => s.isNotEmpty).join(', ');
 
+        try {
+          final resData = jsonDecode(res.body);
+          final newAddId = resData['added']?['add_id']?.toString() ??
+              resData['updated']?['add_id']?.toString() ??
+              widget.address['add_id']?.toString();
+          if (newAddId != null && _setAsActive) {
+            await prefs.setString('active_delivery_add_id', newAddId);
+          }
+        } catch (_) {}
+
         if (_setAsActive) {
           await prefs.setString('customer_address_short', shortA);
           await prefs.setString('customer_address_full', fullA);
           await prefs.setString('active_order_customer_address', fullA);
           if (_latitude != null) await prefs.setDouble('customer_latitude', _latitude!);
           if (_longitude != null) await prefs.setDouble('customer_longitude', _longitude!);
-          if (isEdit && widget.address['add_id'] != null) {
-            await prefs.setString('active_delivery_add_id', widget.address['add_id'].toString());
-          }
         }
 
         if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(isEdit ? "Address updated successfully!" : "Address saved successfully!"),
               backgroundColor: AppColors.primary,
               behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 2),
             ),
           );
           Navigator.pop(context, true);

@@ -183,6 +183,7 @@ class _HomePageState extends State<HomePage> {
     final fullA = prefs.getString('customer_address_full');
     final lat = prefs.getDouble('customer_latitude');
     final lng = prefs.getDouble('customer_longitude');
+    final hasActiveSavedAddId = prefs.getString('active_delivery_add_id') != null;
 
     if (shortA != null && shortA.isNotEmpty) {
       setState(() {
@@ -225,12 +226,25 @@ class _HomePageState extends State<HomePage> {
       _fetchTrackingRoadRoute();
     }
 
-    // Refresh GPS coordinates silently in background without wiping customer's saved address
-    await _requestLiveLocation(silent: true, forceOverrideAddress: false);
+    // Automatically detect and update to device live GPS if no specific saved address is selected
+    await _requestLiveLocation(
+      silent: true,
+      forceOverrideAddress: !hasActiveSavedAddId || shortA == null || shortA == 'Current Location',
+    );
   }
 
   Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = false}) async {
     try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && !silent && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enable GPS Location Services on your device for accurate delivery.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -238,14 +252,19 @@ class _HomePageState extends State<HomePage> {
 
       if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
         Position? position;
+        // Fast instant fix from last known position
         try {
-          position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high,
-            timeLimit: const Duration(seconds: 5),
-          );
-        } catch (_) {
           position = await Geolocator.getLastKnownPosition();
-        }
+        } catch (_) {}
+
+        // High accuracy live fix
+        try {
+          final livePos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+            timeLimit: const Duration(seconds: 8),
+          );
+          position = livePos;
+        } catch (_) {}
 
         if (position == null) return;
         final curPos = position;
@@ -267,11 +286,12 @@ class _HomePageState extends State<HomePage> {
         final existingShort = prefs.getString('customer_address_short');
         final hasCustomAddress = existingShort != null &&
             existingShort.isNotEmpty &&
-            existingShort != "Current Location";
+            existingShort != "Current Location" &&
+            prefs.getString('active_delivery_add_id') != null;
 
         if (!hasCustomAddress || forceOverrideAddress) {
           String shortA = "Current Location";
-          String fullA = "Live Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
+          String fullA = "Live GPS Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
 
           try {
             final geoRes = await http.get(
@@ -1517,6 +1537,22 @@ class _HomePageState extends State<HomePage> {
                   await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
                 }
 
+                // Guarantee live device GPS coordinates instead of static dummy
+                double orderLat = _customerLocation.latitude;
+                double orderLng = _customerLocation.longitude;
+                try {
+                  final pos = await Geolocator.getLastKnownPosition() ??
+                      await Geolocator.getCurrentPosition(
+                        desiredAccuracy: LocationAccuracy.medium,
+                        timeLimit: const Duration(seconds: 4),
+                      );
+                  orderLat = pos.latitude;
+                  orderLng = pos.longitude;
+                  _customerLocation = LatLng(orderLat, orderLng);
+                  await prefs.setDouble('customer_latitude', orderLat);
+                  await prefs.setDouble('customer_longitude', orderLng);
+                } catch (_) {}
+
                 try {
                   // Call backend to create the real order in MongoDB with customer's fixed OTP
                   final res = await http.post(
@@ -1530,8 +1566,8 @@ class _HomePageState extends State<HomePage> {
                       'item_name': itemText,
                       'budget': budgetVal,
                       'cod_otp': customerFixedOtp,
-                      'customer_latitude': _customerLocation.latitude,
-                      'customer_longitude': _customerLocation.longitude,
+                      'customer_latitude': orderLat,
+                      'customer_longitude': orderLng,
                     }),
                   );
                   if (res.statusCode == 200 || res.statusCode == 201) {

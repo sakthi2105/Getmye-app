@@ -178,28 +178,38 @@ router.get('/pending', async (req, res) => {
       };
     }
 
-    const allOrders = await Order.find(query).sort({ created_at: -1 }).limit(30);
+    const allOrders = await Order.find(query).sort({ created_at: -1 });
 
-    // 3. 2 KM RADIUS GEOFENCING FILTER (HAVERSINE ALGORITHM)
-    // Only return pending orders placed within 2.0 KM of partner location
-    const filteredOrders = allOrders.filter(order => {
-      if (order.status !== 'pending') return true; // keep partner's own accepted/declined/cancelled orders
-      if (partnerLat === null || partnerLng === null || order.customer_latitude === null || order.customer_longitude === null) {
-        return true; // Fallback if GPS coords are missing
-      }
-      const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, order.customer_latitude, order.customer_longitude);
-      if (dist === null) return true;
-      return dist <= 2.0; // Strictly 2.0 km radius
-    }).map(order => {
+    // 3. 2 KM RADIUS PRIORITY & BROADCAST TO ALL ONLINE FREE PARTNERS
+    // "Order potta Location la Irunthu 2 Km radius sourronding la yaaru online status la irukanga nu pakanum.
+    // Itha thaandi online la irukura ella d.person kum alert poidanum."
+    const mappedOrders = allOrders.map(order => {
       const o = order.toObject();
-      if (partnerLat !== null && partnerLng !== null && o.customer_latitude && o.customer_longitude) {
+      if (partnerLat !== null && partnerLng !== null && o.customer_latitude !== null && o.customer_longitude !== null) {
         const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, o.customer_latitude, o.customer_longitude);
-        o.distance_km = dist !== null ? Number(dist.toFixed(2)) : null;
+        if (dist !== null) {
+          o.distance_km = Number(dist.toFixed(2));
+          o.is_within_2km = dist <= 2.0;
+        } else {
+          o.is_within_2km = true;
+        }
+      } else {
+        o.is_within_2km = true; // Fallback when coords not yet resolved
       }
       return o;
     });
 
-    res.json({ success: true, count: filteredOrders.length, orders: filteredOrders });
+    // Sort: 2km radius orders first, then nearest distance, then latest
+    mappedOrders.sort((a, b) => {
+      if (a.is_within_2km && !b.is_within_2km) return -1;
+      if (!a.is_within_2km && b.is_within_2km) return 1;
+      if (a.distance_km !== null && b.distance_km !== null) {
+        return a.distance_km - b.distance_km;
+      }
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    res.json({ success: true, count: mappedOrders.length, orders: mappedOrders });
   } catch (err) {
     console.error('Error fetching pending orders:', err);
     res.status(500).json({ error: 'Failed to fetch pending orders' });

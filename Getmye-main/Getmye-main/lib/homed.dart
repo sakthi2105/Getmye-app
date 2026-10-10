@@ -45,6 +45,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   final Set<String> _knownOrderIds = {};
+  bool _isShowingIncomingModal = false;
+  int _pollCount = 0;
 
   @override
   void initState() {
@@ -63,7 +65,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   void _startOrdersPolling() {
     _pendingOrdersTimer?.cancel();
     _checkPendingOrders();
+    _updateLiveLocationToBackend();
     _pendingOrdersTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _pollCount++;
+      if (_pollCount % 5 == 0) {
+        _updateLiveLocationToBackend();
+      }
       _checkPendingOrders();
     });
   }
@@ -137,7 +144,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
         final activeId = prefs.getString('active_order_id');
 
-        // Only consider pending orders strictly within 2 KM radius
+        // Only consider pending orders strictly unhandled
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';
           final status = (o['status']?.toString() ?? '').toLowerCase();
@@ -147,30 +154,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               status == 'pending';
         }).toList();
 
-        // 🚨 On initial check, mark pre-existing orders as known
-        if (!AlarmService.hasCompletedInitialCheck) {
-          for (final o in orders) {
-            final id = o['order_id']?.toString();
-            if (id != null) _knownOrderIds.add(id);
-          }
-          AlarmService.hasCompletedInitialCheck = true;
-          if (unhandledOrders.isEmpty) {
-            AlarmService.stopAlarm();
-          }
-          if (mounted) {
-            setState(() {
-              pendingOrderCount = unhandledOrders.length;
-            });
-          }
-          return;
-        }
+        // Mark initial check completed so alarm can sound for unhandled orders
+        AlarmService.hasCompletedInitialCheck = true;
 
         if (mounted) {
           setState(() {
             pendingOrderCount = unhandledOrders.length;
           });
 
-          // 🚨 ALARM SOUND: Notify partner for available orders within 2 KM radius
+          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (2 KM match or online broadcast)
           if (unhandledOrders.isNotEmpty && isOnline) {
             final firstOrder = unhandledOrders.first;
             final newId = firstOrder['order_id']?.toString();
@@ -179,12 +171,325 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               orderId: newId,
               item: firstOrder['item_name']?.toString(),
             );
+            if (!_isShowingIncomingModal && mounted) {
+              _showIncomingOrderModal(firstOrder as Map<String, dynamic>);
+            }
           } else {
             AlarmService.stopAlarm();
           }
         }
       }
     } catch (_) {}
+  }
+
+  Future<void> _showIncomingOrderModal(Map<String, dynamic> order) async {
+    if (_isShowingIncomingModal || !mounted) return;
+    _isShowingIncomingModal = true;
+
+    final orderId = order['order_id']?.toString() ?? '';
+    final itemName = order['item_name']?.toString() ?? 'Food Order';
+    final budget = order['budget']?.toString() ?? '150';
+    final customerName = order['customer_name']?.toString() ?? 'Customer';
+    final customerPhone = order['customer_phone']?.toString() ?? '';
+    final address = order['delivery_address']?.toString() ?? 'Customer Delivery Location';
+    final isWithin2km = order['is_within_2km'] == true;
+    final distanceKm = order['distance_km'];
+
+    await showModalBottomSheet(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (modalCtx) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 20,
+                offset: Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header with glowing icon and distance badge
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEF4444).withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.notifications_active_rounded,
+                        color: Color(0xFFEF4444),
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "New Order Alert! 🔔",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Order #$orderId",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isWithin2km ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isWithin2km ? const Color(0xFF86EFAC) : const Color(0xFFFDE68A),
+                        ),
+                      ),
+                      child: Text(
+                        isWithin2km ? "⚡ < 2 KM" : (distanceKm != null ? "📡 ${distanceKm}km" : "Online Alert"),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: isWithin2km ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Item and Budget card
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Icon(Icons.restaurant_rounded, size: 20, color: AppColors.primary),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    itemName,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            "₹$budget",
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.primaryDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 18),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.location_on_rounded, size: 18, color: Color(0xFFEF4444)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  customerName.isNotEmpty ? customerName : "Customer Delivery",
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  address,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                // Action Buttons: Decline & Accept
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 1,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          AlarmService.silenceOrder(orderId);
+                          AlarmService.stopAlarm();
+                          final prefs = await SharedPreferences.getInstance();
+                          final declined = prefs.getStringList('partner_declined_order_ids') ?? [];
+                          if (!declined.contains(orderId)) {
+                            declined.add(orderId);
+                            await prefs.setStringList('partner_declined_order_ids', declined);
+                          }
+                          try {
+                            final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
+                            await http.post(
+                              ApiConfig.orderDecline,
+                              headers: {'Content-Type': 'application/json'},
+                              body: jsonEncode({
+                                'order_id': orderId,
+                                'decline_reason': 'Declined from alert modal',
+                                'partner_id': pId,
+                              }),
+                            );
+                          } catch (_) {}
+                          if (modalCtx.mounted) Navigator.pop(modalCtx);
+                          _checkPendingOrders();
+                        },
+                        child: const Text(
+                          "Decline",
+                          style: TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 2,
+                        ),
+                        onPressed: () async {
+                          AlarmService.silenceOrder(orderId);
+                          AlarmService.stopAlarm();
+                          final prefs = await SharedPreferences.getInstance();
+                          final pName = prefs.getString('d_name') ?? "Karthi";
+                          final pPhone = prefs.getString('d_phone') ?? "+91 98765 43210";
+                          final pId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
+
+                          try {
+                            await http.post(
+                              ApiConfig.orderAccept,
+                              headers: {'Content-Type': 'application/json'},
+                              body: jsonEncode({
+                                'order_id': orderId,
+                                'partner_id': pId,
+                                'partner_name': pName,
+                                'partner_phone': pPhone,
+                              }),
+                            );
+                          } catch (e) {
+                            debugPrint("Error accepting order: $e");
+                          }
+
+                          await prefs.setString('order_${orderId}_status', 'accepted');
+                          await prefs.setBool('active_order_partner_accepted', true);
+                          await prefs.setString('active_order_partner_id', pId);
+                          await prefs.setString('active_order_partner_name', pName);
+                          await prefs.setString('active_order_partner_phone', pPhone);
+                          await prefs.setString('active_order_id', orderId);
+                          await prefs.setString('active_order_status', 'accepted');
+                          await prefs.setString('active_order_customer_name', customerName);
+                          await prefs.setString('active_order_customer_phone', customerPhone);
+                          await prefs.setString('active_order_customer_address', address);
+                          await prefs.setString('active_order_item', itemName);
+
+                          if (modalCtx.mounted) Navigator.pop(modalCtx);
+
+                          if (mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const NewOrdersPage()),
+                            ).then((_) => _loadPartnerData());
+                          }
+                        },
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_rounded, size: 20, color: Colors.white),
+                            SizedBox(width: 8),
+                            Text(
+                              "Accept Order",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    _isShowingIncomingModal = false;
   }
 
   Future<void> _loadPartnerData() async {
