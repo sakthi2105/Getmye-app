@@ -150,21 +150,6 @@ router.post('/accept', async (req, res) => {
       }
     } catch (_) {}
 
-    // Check if delivery partner is actively engaged in an ongoing delivery within last 2 hours
-    const alreadyDelivering = await Order.findOne({
-      partner_id,
-      order_id: { $ne: order_id },
-      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
-      updated_at: { $gte: new Date(Date.now() - 2 * 60 * 60 * 1000) }
-    }).select('order_id').lean();
-
-    if (alreadyDelivering) {
-      return res.status(400).json({
-        success: false,
-        error: 'ALREADY_HAVE_ACTIVE_ORDER',
-        message: `You are already assigned to active delivery #${alreadyDelivering.order_id}. You cannot accept another order until it is finished.`
-      });
-    }
 
     const order = await Order.findOneAndUpdate(
       { order_id, status: 'pending' },

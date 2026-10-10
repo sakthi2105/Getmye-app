@@ -211,21 +211,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       return;
     }
 
-    // 🛑 Requirement: "ore nerathula oru d.person ku 2 order vara koodathu"
-    // If partner is already delivering an active order, never ring or show incoming orders!
-    if (activeDeliveryOrder != null) {
-      AlarmService.stopAlarm();
-      if (_isShowingIncomingModal && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        _isShowingIncomingModal = false;
-      }
-      if (mounted) {
-        setState(() {
-          pendingOrderCount = 0;
-        });
-      }
-      return;
-    }
 
     try {
       final res = await http.get(ApiConfig.orderPending);
@@ -593,12 +578,33 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             });
                           }
 
+                          final deliveryOrder = DeliveryOrder(
+                            orderId: orderId,
+                            customerName: customerName,
+                            customerPhone: customerPhone,
+                            deliveryAddress: address,
+                            restaurantName: "Local Restaurant",
+                            restaurantAddress: "Pickup Point (Store)",
+                            items: [
+                              BillItem(
+                                name: itemName,
+                                quantity: 1,
+                                price: double.tryParse(budget) ?? 150.0,
+                                isCollected: false,
+                              ),
+                            ],
+                            deliveryFee: 0.0,
+                            status: "Accepted",
+                          );
+
                           if (modalCtx.mounted) Navigator.pop(modalCtx);
 
                           if (mounted) {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const NewOrdersPage()),
+                              MaterialPageRoute(
+                                builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+                              ),
                             ).then((_) => _loadPartnerData());
                           }
                         },

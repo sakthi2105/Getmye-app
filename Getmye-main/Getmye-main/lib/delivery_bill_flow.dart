@@ -870,20 +870,12 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           await prefs.setString('active_order_restaurant', order.restaurantName);
                                           await prefs.setDouble('active_order_grand_total', order.grandTotal);
                                           if (!context.mounted) return;
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(
-                                              content: Row(
-                                                children: [
-                                                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
-                                                  const SizedBox(width: 8),
-                                                  Text("Order ${order.orderId} Accepted! Going to buy food."),
-                                                ],
-                                              ),
-                                              backgroundColor: AppColors.primary,
-                                              behavior: SnackBarBehavior.floating,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                            ),
-                                          );
+                                           Navigator.push(
+                                             context,
+                                             MaterialPageRoute(
+                                               builder: (_) => DeliveryBillPostPage(order: order),
+                                             ),
+                                           );
                                         },
                                       ),
                                     ),
