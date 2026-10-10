@@ -13,25 +13,6 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
 
-    // 🛑 Requirement: "cutomer um oru order mudinja tha adutha order podanum athu maari vai"
-    // Customer cannot place a new order until their current order is delivered or cancelled!
-    const activeCustomerOrder = await Order.findOne({
-      $or: [
-        ...(user_id ? [{ user_id }] : []),
-        ...(customer_phone ? [{ customer_phone }] : [])
-      ],
-      status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-    }).sort({ created_at: -1 });
-
-    if (activeCustomerOrder) {
-      return res.status(400).json({
-        success: false,
-        error: 'ACTIVE_ORDER_EXISTS',
-        message: `You already have an active order in progress (${activeCustomerOrder.order_id}). Please wait until it is delivered or cancelled before placing a new order.`,
-        order: activeCustomerOrder
-      });
-    }
-
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
 
     // Retrieve or establish customer's fixed OTP
@@ -57,8 +38,6 @@ router.post('/create', async (req, res) => {
       user_id,
       customer_name: customer_name || 'Customer',
       customer_phone: customer_phone || '',
-      customer_latitude: req.body.customer_latitude !== undefined && req.body.customer_latitude !== null ? Number(req.body.customer_latitude) : null,
-      customer_longitude: req.body.customer_longitude !== undefined && req.body.customer_longitude !== null ? Number(req.body.customer_longitude) : null,
       delivery_address,
       item_name,
       budget: Number(budget) || 0,
@@ -67,182 +46,36 @@ router.post('/create', async (req, res) => {
     });
 
     await newOrder.save();
-
-    // 🚀 Fast Response to client immediately!
     res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
-
-    // 🛰️ Geofence Dispatch: Asynchronously scan online partners within 10 km radius (does not block client response)
-    setImmediate(async () => {
-      try {
-        const cLat = newOrder.customer_latitude;
-        const cLng = newOrder.customer_longitude;
-        if (cLat !== null && cLng !== null) {
-          const LiveLocation = require('../models/LiveLocation');
-          const onlineLocations = await LiveLocation.find({ is_online: true });
-          const nearbyPartners = [];
-          for (const loc of onlineLocations) {
-            const d = calculateHaversineDistanceKm(cLat, cLng, loc.latitude, loc.longitude);
-            if (d !== null && d <= 10.0) {
-              const busy = await Order.findOne({
-                partner_id: loc.partner_id,
-                status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
-                updated_at: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
-              });
-              if (!busy) {
-                nearbyPartners.push({ partner_id: loc.partner_id, distance_km: Number(d.toFixed(2)) });
-              }
-            }
-          }
-          console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 10 km:`, nearbyPartners);
-        }
-      } catch (dispatchErr) {
-        console.warn('Geofence partner scan notice:', dispatchErr.message);
-      }
-    });
-    return;
   } catch (err) {
     console.error('Error creating order:', err);
     res.status(500).json({ error: 'Failed to create order', details: err.message });
   }
 });
 
-// 🌐 Haversine Formula: Calculate Great-Circle Distance between two GPS points in Kilometers
-function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
-  if (lat1 === undefined || lat1 === null || lon1 === undefined || lon1 === null ||
-      lat2 === undefined || lat2 === null || lon2 === undefined || lon2 === null) {
-    return null;
-  }
-  const R = 6371; // Earth radius in KM
-  const dLat = (Number(lat2) - Number(lat1)) * Math.PI / 180;
-  const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(Number(lat1) * Math.PI / 180) * Math.cos(Number(lat2) * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-// GET /api/order/pending - Delivery partners view available pending orders within 10 km
-// Enforces:
-// 1. Online la Irukanum (Partner must be online)
-// 2. Already delivery la Irukura person ku Order po koodathu (Partner cannot have active delivery, max 1 order at a time)
-// 3. Order potta Location la Irunthu 10 Km radius surrounding-la irukavangaluku mattum order poganum
+// GET /api/order/pending - Delivery partners view available pending orders & active orders
 router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
-    let partnerLat = req.query.latitude || req.query.lat ? Number(req.query.latitude || req.query.lat) : null;
-    let partnerLng = req.query.longitude || req.query.lng ? Number(req.query.longitude || req.query.lng) : null;
-
-    if (partnerId) {
-      const LiveLocation = require('../models/LiveLocation');
-      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
-
-      // Run status, location, and busy checks concurrently
-      const [dp, liveLoc, activeDelivery] = await Promise.all([
-        DeliveryPerson.findOne({
-          $or: [{ DP_id: partnerId }, { mobile_number: partnerId }]
-        }).select('DP_id dp_status').lean(),
-        LiveLocation.findOne({ partner_id: partnerId }).select('is_online latitude longitude').lean(),
-        Order.findOne({
-          partner_id: partnerId,
-          status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
-          updated_at: { $gte: fourHoursAgo }
-        }).select('order_id status partner_id item_name budget customer_name customer_phone delivery_address').lean()
-      ]);
-
-      if (liveLoc) {
-        if (partnerLat === null && liveLoc.latitude !== undefined && liveLoc.latitude !== null) {
-          partnerLat = liveLoc.latitude;
-        }
-        if (partnerLng === null && liveLoc.longitude !== undefined && liveLoc.longitude !== null) {
-          partnerLng = liveLoc.longitude;
-        }
-      }
-
-      // 1. ONLINE CHECK
-      const isOnline = (dp && dp.dp_status === 'online') || (liveLoc && liveLoc.is_online === true);
-      if (dp && dp.dp_status === 'offline' && (!liveLoc || !liveLoc.is_online)) {
-        return res.json({
-          success: true,
-          orders: [],
-          is_online: false,
-          reason: 'Partner is currently OFFLINE. Toggle online to receive new orders.'
-        });
-      }
-
-      // 2. BUSY CHECK (Max 1 active delivery at a time)
-      if (activeDelivery) {
-        return res.json({
-          success: true,
-          orders: [],
-          has_active_delivery: true,
-          active_order: activeDelivery,
-          reason: 'Partner is currently engaged in an active delivery.'
-        });
-      }
-    }
-
-    // 3. RETRIEVE PENDING ORDERS (Orders within 10 km that are pending, or cancelled in last 5 min)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const orderQuery = {
+    let query = {
       $or: [
         { status: 'pending' },
-        { status: 'cancelled', cancelled_at: { $gte: fiveMinutesAgo } }
+        { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 5 * 60 * 1000) } }
       ]
     };
     if (partnerId) {
-      orderQuery.declined_by = { $ne: partnerId };
+      query = {
+        $or: [
+          { status: 'pending' },
+          { partner_id: partnerId, status: { $in: ['accepted', 'purchasing_food'] } },
+          { partner_id: partnerId, status: 'cancelled' },
+          { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 5 * 60 * 1000) } }
+        ],
+        declined_by: { $ne: partnerId }
+      };
     }
-
-    const allOrders = await Order.find(orderQuery)
-      .select('order_id user_id customer_name customer_phone customer_latitude customer_longitude delivery_address item_name budget status decline_reason declined_by partner_id partner_name partner_phone cancel_reason cancelled_at created_at')
-      .sort({ created_at: -1 })
-      .limit(30)
-      .lean();
-
-    // 4. STRICT 10 KM RADIUS FILTER
-    const mappedOrders = [];
-    for (const order of allOrders) {
-      const o = { ...order };
-      if (o.status === 'cancelled') {
-        mappedOrders.push(o);
-        continue;
-      }
-
-      if (partnerLat !== null && partnerLng !== null && o.customer_latitude !== null && o.customer_longitude !== null) {
-        const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, o.customer_latitude, o.customer_longitude);
-        if (dist !== null) {
-          o.distance_km = Number(dist.toFixed(2));
-          if (dist <= 10.0) {
-            o.is_within_10km = true;
-            o.is_within_2km = dist <= 2.0;
-            mappedOrders.push(o);
-          }
-        } else {
-          o.is_within_10km = true;
-          o.is_within_2km = true;
-          mappedOrders.push(o);
-        }
-      } else {
-        // Fallback if coordinates are pending GPS resolution
-        o.is_within_10km = true;
-        o.is_within_2km = true;
-        mappedOrders.push(o);
-      }
-    }
-
-    // Sort: Pending orders first, then nearest distance, then newest
-    mappedOrders.sort((a, b) => {
-      if (a.status === 'pending' && b.status !== 'pending') return -1;
-      if (b.status === 'pending' && a.status !== 'pending') return 1;
-      if (a.distance_km !== null && a.distance_km !== undefined && b.distance_km !== null && b.distance_km !== undefined) {
-        return a.distance_km - b.distance_km;
-      }
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
-
-    res.json({ success: true, count: mappedOrders.length, orders: mappedOrders });
+    const orders = await Order.find(query).sort({ created_at: -1 }).limit(20).lean();
+    res.json({ success: true, count: orders.length, orders });
   } catch (err) {
     console.error('Error fetching pending orders:', err);
     res.status(500).json({ error: 'Failed to fetch pending orders' });
@@ -317,12 +150,12 @@ router.post('/accept', async (req, res) => {
       }
     } catch (_) {}
 
-    // 🛑 Requirement: "ore nerathula oru d.person ku 2 order vara koodathu"
-    // Check if delivery partner is already engaged in an active delivery
+    // Check if delivery partner is actively engaged in an ongoing delivery within last 2 hours
     const alreadyDelivering = await Order.findOne({
       partner_id,
       order_id: { $ne: order_id },
-      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+      updated_at: { $gte: new Date(Date.now() - 2 * 60 * 60 * 1000) }
     }).select('order_id').lean();
 
     if (alreadyDelivering) {

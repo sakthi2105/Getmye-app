@@ -50,8 +50,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   bool _isShowingIncomingModal = false;
   int _pollCount = 0;
   Map<String, dynamic>? activeDeliveryOrder;
-  double? _cachedPartnerLat;
-  double? _cachedPartnerLng;
 
   @override
   void initState() {
@@ -192,8 +190,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             desiredAccuracy: LocationAccuracy.medium,
             timeLimit: const Duration(seconds: 4),
           );
-      _cachedPartnerLat = pos.latitude;
-      _cachedPartnerLng = pos.longitude;
       await http.post(
         ApiConfig.trackingUpdate,
         headers: {'Content-Type': 'application/json'},
@@ -232,60 +228,13 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     }
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
-
-      // 📍 Use cached or fast GPS coordinates to enforce 10 KM radius matching
-      double? lat = _cachedPartnerLat;
-      double? lng = _cachedPartnerLng;
-      if (lat == null || lng == null) {
-        try {
-          final pos = await Geolocator.getLastKnownPosition();
-          if (pos != null) {
-            lat = pos.latitude;
-            lng = pos.longitude;
-            _cachedPartnerLat = lat;
-            _cachedPartnerLng = lng;
-          }
-        } catch (_) {}
-      }
-
-      final uri = ApiConfig.orderPendingWithParams(
-        partnerId: pId,
-        latitude: lat,
-        longitude: lng,
-      );
-
-      final res = await http.get(uri);
+      final res = await http.get(ApiConfig.orderPending);
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-
-        // If backend reports partner is busy on active delivery or offline, stop alarm
-        if (data['is_online'] == false || data['has_active_delivery'] == true) {
-          AlarmService.stopAlarm();
-          if (_isShowingIncomingModal && mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            _isShowingIncomingModal = false;
-          }
-          if (mounted) {
-            setState(() {
-              pendingOrderCount = 0;
-              final ordersList = data['orders'] as List? ?? [];
-              activeDeliveryOrder = data['active_order'] as Map<String, dynamic>? ??
-                  (ordersList.isNotEmpty ? ordersList.first as Map<String, dynamic> : null);
-            });
-          }
-          return;
-        } else {
-          if (mounted && activeDeliveryOrder != null) {
-            setState(() {
-              activeDeliveryOrder = null;
-            });
-          }
-        }
-
         final List orders = data['orders'] ?? [];
+        final prefs = await SharedPreferences.getInstance();
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
+        final activeId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
 
         // 🚨 CANCELLATION DETECTOR: Alert delivery partner immediately with Reason if order cancelled
         for (final o in orders) {
@@ -336,6 +285,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           final status = (o['status']?.toString() ?? '').toLowerCase();
           return !declinedIds.contains(id) &&
               !AlarmService.isOrderSilenced(id) &&
+              id != activeId &&
               status == 'pending';
         }).toList();
 
@@ -347,7 +297,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             pendingOrderCount = unhandledOrders.length;
           });
 
-          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (10 KM match or online broadcast)
+          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (broadcast to online partners)
           if (unhandledOrders.isNotEmpty && isOnline) {
             final firstOrder = unhandledOrders.first;
             final newId = firstOrder['order_id']?.toString();
@@ -377,8 +327,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final customerName = order['customer_name']?.toString() ?? 'Customer';
     final customerPhone = order['customer_phone']?.toString() ?? '';
     final address = order['delivery_address']?.toString() ?? 'Customer Delivery Location';
-    final isWithin10km = order['is_within_10km'] == true || order['is_within_2km'] == true;
-    final distanceKm = order['distance_km'];
 
     await showModalBottomSheet(
       context: context,
@@ -448,20 +396,16 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: isWithin10km ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                        color: const Color(0xFFDCFCE7),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isWithin10km ? const Color(0xFF86EFAC) : const Color(0xFFFDE68A),
-                        ),
+                        border: Border.all(color: const Color(0xFF86EFAC)),
                       ),
-                      child: Text(
-                        isWithin10km
-                            ? (distanceKm != null ? "⚡ ${distanceKm}km (< 10 KM)" : "⚡ < 10 KM")
-                            : (distanceKm != null ? "📡 ${distanceKm}km" : "Online Alert"),
+                      child: const Text(
+                        "⚡ Online Alert",
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
-                          color: isWithin10km ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                          color: Color(0xFF15803D),
                         ),
                       ),
                     ),
