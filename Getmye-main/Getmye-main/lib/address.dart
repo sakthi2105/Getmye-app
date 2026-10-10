@@ -154,11 +154,25 @@ class _AddressScreenState extends State<AddressScreen> {
           final geoData = jsonDecode(geoRes.body);
           final address = geoData['address'];
           if (address != null) {
-            road = address['road'] ?? address['suburb'] ?? address['neighbourhood'] ?? address['quarter'] ?? 'Current Location';
+            road = address['road'] ?? address['neighbourhood'] ?? address['residential'] ?? '';
+            final suburb = address['suburb'] ?? '';
             city = address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Live Location';
             state = address['state'] ?? 'Tamil Nadu';
             pincode = address['postcode'] ?? '';
-            fullDisplayName = geoData['display_name'] ?? "$road, $city, $state $pincode";
+
+            if (road.isEmpty) {
+              if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
+                road = suburb;
+              } else {
+                road = city != 'Live Location' ? city : 'Current Location';
+              }
+            }
+
+            String cleanDisplay = geoData['display_name'] ?? "$road, $city, $state $pincode";
+            if (cleanDisplay.startsWith('Matthi, ')) {
+              cleanDisplay = cleanDisplay.replaceFirst('Matthi, ', '');
+            }
+            fullDisplayName = cleanDisplay;
           }
         }
       } catch (_) {}

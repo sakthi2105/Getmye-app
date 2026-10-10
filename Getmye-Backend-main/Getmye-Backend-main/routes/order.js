@@ -13,6 +13,25 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
 
+    // 🛑 Requirement: "cutomer um oru order mudinja tha adutha order podanum athu maari vai"
+    // Customer cannot place a new order until their current order is delivered or cancelled!
+    const activeCustomerOrder = await Order.findOne({
+      $or: [
+        ...(user_id ? [{ user_id }] : []),
+        ...(customer_phone ? [{ customer_phone }] : [])
+      ],
+      status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+    }).sort({ created_at: -1 });
+
+    if (activeCustomerOrder) {
+      return res.status(400).json({
+        success: false,
+        error: 'ACTIVE_ORDER_EXISTS',
+        message: `You already have an active order in progress (${activeCustomerOrder.order_id}). Please wait until it is delivered or cancelled before placing a new order.`,
+        order: activeCustomerOrder
+      });
+    }
+
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
 
     // Retrieve or establish customer's fixed OTP
@@ -49,34 +68,38 @@ router.post('/create', async (req, res) => {
 
     await newOrder.save();
 
-    // 🛰️ Geofence Dispatch: Log online partners within 10 km radius
-    try {
-      const cLat = newOrder.customer_latitude;
-      const cLng = newOrder.customer_longitude;
-      if (cLat !== null && cLng !== null) {
-        const LiveLocation = require('../models/LiveLocation');
-        const onlineLocations = await LiveLocation.find({ is_online: true });
-        const nearbyPartners = [];
-        for (const loc of onlineLocations) {
-          const d = calculateHaversineDistanceKm(cLat, cLng, loc.latitude, loc.longitude);
-          if (d !== null && d <= 10.0) {
-            const busy = await Order.findOne({
-              partner_id: loc.partner_id,
-              status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
-              updated_at: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
-            });
-            if (!busy) {
-              nearbyPartners.push({ partner_id: loc.partner_id, distance_km: Number(d.toFixed(2)) });
+    // 🚀 Fast Response to client immediately!
+    res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
+
+    // 🛰️ Geofence Dispatch: Asynchronously scan online partners within 10 km radius (does not block client response)
+    setImmediate(async () => {
+      try {
+        const cLat = newOrder.customer_latitude;
+        const cLng = newOrder.customer_longitude;
+        if (cLat !== null && cLng !== null) {
+          const LiveLocation = require('../models/LiveLocation');
+          const onlineLocations = await LiveLocation.find({ is_online: true });
+          const nearbyPartners = [];
+          for (const loc of onlineLocations) {
+            const d = calculateHaversineDistanceKm(cLat, cLng, loc.latitude, loc.longitude);
+            if (d !== null && d <= 10.0) {
+              const busy = await Order.findOne({
+                partner_id: loc.partner_id,
+                status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+                updated_at: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
+              });
+              if (!busy) {
+                nearbyPartners.push({ partner_id: loc.partner_id, distance_km: Number(d.toFixed(2)) });
+              }
             }
           }
+          console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 10 km:`, nearbyPartners);
         }
-        console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 10 km:`, nearbyPartners);
+      } catch (dispatchErr) {
+        console.warn('Geofence partner scan notice:', dispatchErr.message);
       }
-    } catch (dispatchErr) {
-      console.warn('Geofence partner scan notice:', dispatchErr.message);
-    }
-
-    res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
+    });
+    return;
   } catch (err) {
     console.error('Error creating order:', err);
     res.status(500).json({ error: 'Failed to create order', details: err.message });
@@ -103,8 +126,8 @@ function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
 // GET /api/order/pending - Delivery partners view available pending orders
 // Enforces:
 // 1. Online la Irukanum (Partner must be online)
-// 2. Already delivery la Irukura person ku Order po koodathu (Partner cannot have active delivery)
-// 3. Order potta Location la Irunthu 2 Km (radius) surrounding-la irukavangaluku mattum order poganum
+// 2. Already delivery la Irukura person ku Order po koodathu (Partner cannot have active delivery, max 1 order at a time)
+// 3. Order potta Location la Irunthu 10 Km radius surrounding-la irukavangaluku mattum order poganum
 router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
@@ -134,7 +157,7 @@ router.get('/pending', async (req, res) => {
       }
 
       // 2. BUSY CHECK: Partner already in an active delivery
-      // "Already delivery la Irukura person ku Order po koodathu."
+      // "Already delivery la Irukura person ku Order po koodathu / ore nerathula 2 order vara koodathu"
       const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
       const activeDelivery = await Order.findOne({
         partner_id: partnerId,
@@ -145,7 +168,7 @@ router.get('/pending', async (req, res) => {
       if (activeDelivery) {
         return res.json({
           success: true,
-          orders: [activeDelivery],
+          orders: [], // 🛑 STRICT: Return 0 new pending orders to a busy delivery person
           has_active_delivery: true,
           active_order: activeDelivery,
           reason: 'Partner is currently engaged in an active delivery.'
@@ -185,35 +208,42 @@ router.get('/pending', async (req, res) => {
 
     const allOrders = await Order.find(query).sort({ created_at: -1 });
 
-    // 3. 10 KM RADIUS PRIORITY & BROADCAST TO ALL ONLINE FREE PARTNERS
-    // "Order potta Location la Irunthu 10 Km radius sourronding la yaaru online status la irukanga nu pakanum.
-    // Itha thaandi online la irukura ella d.person kum alert poidanum."
-    const mappedOrders = allOrders.map(order => {
+    // 3. STRICT 10 KM RADIUS FILTER:
+    // "Order potta Location la Irunthu 10 Km radius surrounding-la irukavangaluku mattum order poganum"
+    const mappedOrders = [];
+    for (const order of allOrders) {
       const o = order.toObject();
+      if (o.status === 'cancelled') {
+        // Always include recently cancelled orders so partner app can dismiss them & clear alarms
+        mappedOrders.push(o);
+        continue;
+      }
+
       if (partnerLat !== null && partnerLng !== null && o.customer_latitude !== null && o.customer_longitude !== null) {
         const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, o.customer_latitude, o.customer_longitude);
         if (dist !== null) {
           o.distance_km = Number(dist.toFixed(2));
-          o.is_within_10km = dist <= 10.0;
-          o.is_within_2km = dist <= 10.0; // Backward compatible for existing UI checks
+          if (dist <= 10.0) {
+            o.is_within_10km = true;
+            o.is_within_2km = true;
+            mappedOrders.push(o);
+          }
         } else {
           o.is_within_10km = true;
           o.is_within_2km = true;
+          mappedOrders.push(o);
         }
       } else {
-        o.is_within_10km = true; // Fallback when coords not yet resolved
+        // Fallback when GPS not yet resolved on either end
+        o.is_within_10km = true;
         o.is_within_2km = true;
+        mappedOrders.push(o);
       }
-      return o;
-    });
+    }
 
-    // Sort: 10km radius orders first, then nearest distance, then latest
+    // Sort: nearest distance first, then latest
     mappedOrders.sort((a, b) => {
-      const aWithin = a.is_within_10km || a.is_within_2km;
-      const bWithin = b.is_within_10km || b.is_within_2km;
-      if (aWithin && !bWithin) return -1;
-      if (!aWithin && bWithin) return 1;
-      if (a.distance_km !== null && b.distance_km !== null) {
+      if (a.distance_km !== null && a.distance_km !== undefined && b.distance_km !== null && b.distance_km !== undefined) {
         return a.distance_km - b.distance_km;
       }
       return new Date(b.created_at) - new Date(a.created_at);
@@ -295,6 +325,22 @@ router.post('/accept', async (req, res) => {
       }
     } catch (_) {}
 
+    // 🛑 Requirement: "ore nerathula oru d.person ku 2 order vara koodathu"
+    // Check if delivery partner is already engaged in an active delivery
+    const alreadyDelivering = await Order.findOne({
+      partner_id,
+      order_id: { $ne: order_id },
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+    });
+
+    if (alreadyDelivering) {
+      return res.status(400).json({
+        success: false,
+        error: 'ALREADY_HAVE_ACTIVE_ORDER',
+        message: `You are already assigned to active delivery #${alreadyDelivering.order_id}. You cannot accept another order until it is finished.`
+      });
+    }
+
     const order = await Order.findOneAndUpdate(
       { order_id, status: 'pending' },
       {
@@ -305,12 +351,25 @@ router.post('/accept', async (req, res) => {
         status: 'accepted',
         accepted_at: new Date()
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) {
-      return res.status(404).json({ error: 'Order not found or already accepted' });
+      return res.status(400).json({
+        success: false,
+        error: 'ORDER_NOT_AVAILABLE',
+        message: 'Order not found or has already been accepted by another delivery partner.'
+      });
     }
+
+    // Update partner's LiveLocation in MongoDB so status is 'delivering'
+    try {
+      const LiveLocation = require('../models/LiveLocation');
+      await LiveLocation.updateMany(
+        { partner_id },
+        { status: 'delivering', order_id: order.order_id }
+      );
+    } catch (_) {}
 
     res.json({ success: true, message: 'Order accepted by partner', order });
   } catch (err) {

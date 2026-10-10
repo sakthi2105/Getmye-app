@@ -50,12 +50,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   bool _isShowingIncomingModal = false;
   int _pollCount = 0;
   Map<String, dynamic>? activeDeliveryOrder;
+  double? _cachedPartnerLat;
+  double? _cachedPartnerLng;
 
   @override
   void initState() {
     super.initState();
     _loadPartnerData();
     _startOrdersPolling();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndPromptLocationService();
+    });
   }
 
   @override
@@ -65,13 +70,112 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     super.dispose();
   }
 
+  // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum"
+  Future<void> _checkAndPromptLocationService() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        await _showTurnOnGPSDialog(
+          title: "Turn On GPS Location",
+          message: "Please turn ON device GPS location to receive incoming orders within 10 km and enable live tracking.",
+        );
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever && mounted) {
+        await _showTurnOnGPSDialog(
+          title: "Location Permission Required",
+          message: "Location permission is disabled for Getmye Delivery. Please enable it in device settings to receive delivery orders.",
+          isPermissionSettings: true,
+        );
+      }
+
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        _updateLiveLocationToBackend();
+      }
+    } catch (e) {
+      debugPrint("Partner location service check error: $e");
+    }
+  }
+
+  Future<void> _showTurnOnGPSDialog({
+    required String title,
+    required String message,
+    bool isPermissionSettings = false,
+  }) async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.location_on_rounded, color: Color(0xFF2563EB), size: 24),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Later", style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            icon: const Icon(Icons.settings_rounded, color: Colors.white, size: 16),
+            label: Text(
+              isPermissionSettings ? "Open Settings" : "Turn On GPS",
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              if (isPermissionSettings) {
+                await Geolocator.openAppSettings();
+              } else {
+                await Geolocator.openLocationSettings();
+              }
+              Future.delayed(const Duration(seconds: 1), () {
+                if (mounted) _checkAndPromptLocationService();
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   void _startOrdersPolling() {
     _pendingOrdersTimer?.cancel();
     _checkPendingOrders();
     _updateLiveLocationToBackend();
-    _pendingOrdersTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    // ⚡ Fast polling: 1500ms for instantaneous order alerts!
+    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       _pollCount++;
-      if (_pollCount % 5 == 0) {
+      if (_pollCount % 4 == 0) {
         _updateLiveLocationToBackend();
       }
       _checkPendingOrders();
@@ -88,6 +192,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             desiredAccuracy: LocationAccuracy.medium,
             timeLimit: const Duration(seconds: 4),
           );
+      _cachedPartnerLat = pos.latitude;
+      _cachedPartnerLng = pos.longitude;
       await http.post(
         ApiConfig.trackingUpdate,
         headers: {'Content-Type': 'application/json'},
@@ -96,7 +202,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           'latitude': pos.latitude,
           'longitude': pos.longitude,
           'is_online': isOnline,
-          'status': 'idle',
+          'status': activeDeliveryOrder != null ? 'delivering' : 'idle',
+          'order_id': activeDeliveryOrder?['order_id'],
         }),
       );
     } catch (_) {}
@@ -107,20 +214,41 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       AlarmService.stopAlarm();
       return;
     }
+
+    // 🛑 Requirement: "ore nerathula oru d.person ku 2 order vara koodathu"
+    // If partner is already delivering an active order, never ring or show incoming orders!
+    if (activeDeliveryOrder != null) {
+      AlarmService.stopAlarm();
+      if (_isShowingIncomingModal && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        _isShowingIncomingModal = false;
+      }
+      if (mounted) {
+        setState(() {
+          pendingOrderCount = 0;
+        });
+      }
+      return;
+    }
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
 
-      // 📍 Retrieve live GPS coordinates to enforce 10 KM radius matching
-      double? lat;
-      double? lng;
-      try {
-        final pos = await Geolocator.getLastKnownPosition();
-        if (pos != null) {
-          lat = pos.latitude;
-          lng = pos.longitude;
-        }
-      } catch (_) {}
+      // 📍 Use cached or fast GPS coordinates to enforce 10 KM radius matching
+      double? lat = _cachedPartnerLat;
+      double? lng = _cachedPartnerLng;
+      if (lat == null || lng == null) {
+        try {
+          final pos = await Geolocator.getLastKnownPosition();
+          if (pos != null) {
+            lat = pos.latitude;
+            lng = pos.longitude;
+            _cachedPartnerLat = lat;
+            _cachedPartnerLng = lng;
+          }
+        } catch (_) {}
+      }
 
       final uri = ApiConfig.orderPendingWithParams(
         partnerId: pId,
@@ -135,6 +263,10 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         // If backend reports partner is busy on active delivery or offline, stop alarm
         if (data['is_online'] == false || data['has_active_delivery'] == true) {
           AlarmService.stopAlarm();
+          if (_isShowingIncomingModal && mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+            _isShowingIncomingModal = false;
+          }
           if (mounted) {
             setState(() {
               pendingOrderCount = 0;
@@ -498,6 +630,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           }
 
                           await prefs.setString('order_${orderId}_status', 'accepted');
+                          await prefs.setString('partner_active_order_id', orderId);
                           await prefs.setBool('active_order_partner_accepted', true);
                           await prefs.setString('active_order_partner_id', pId);
                           await prefs.setString('active_order_partner_name', pName);
@@ -508,6 +641,13 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           await prefs.setString('active_order_customer_phone', customerPhone);
                           await prefs.setString('active_order_customer_address', address);
                           await prefs.setString('active_order_item', itemName);
+
+                          if (mounted) {
+                            setState(() {
+                              activeDeliveryOrder = order;
+                              pendingOrderCount = 0;
+                            });
+                          }
 
                           if (modalCtx.mounted) Navigator.pop(modalCtx);
 

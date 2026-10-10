@@ -68,6 +68,7 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _itemController = TextEditingController();
   final TextEditingController _budgetController = TextEditingController();
   final TextEditingController _chatMsgController = TextEditingController();
+  final TextEditingController _customLocationTextController = TextEditingController();
 
   // Promotional Banner Carousel Controller & Timer
   late PageController _bannerPageController;
@@ -161,6 +162,107 @@ class _HomePageState extends State<HomePage> {
     _bannerPageController = PageController();
     _loadSavedLocation();
     _startBannerAutoSlide();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndPromptLocationService();
+    });
+  }
+
+  // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum"
+  Future<void> _checkAndPromptLocationService() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        await _showTurnOnGPSDialog(
+          title: "Turn On GPS Location",
+          message: "Please turn ON your device location (GPS) to accurately detect your delivery address and locate delivery partners.",
+        );
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever && mounted) {
+        await _showTurnOnGPSDialog(
+          title: "Location Permission Required",
+          message: "Location permission is disabled for Getmye. Please enable it in device settings to place orders.",
+          isPermissionSettings: true,
+        );
+      }
+
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        await _requestLiveLocation(silent: true, forceOverrideAddress: false);
+      }
+    } catch (e) {
+      debugPrint("Customer location service check error: $e");
+    }
+  }
+
+  Future<void> _showTurnOnGPSDialog({
+    required String title,
+    required String message,
+    bool isPermissionSettings = false,
+  }) async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.location_on_rounded, color: Color(0xFF2563EB), size: 24),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Later", style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            icon: const Icon(Icons.settings_rounded, color: Colors.white, size: 16),
+            label: Text(
+              isPermissionSettings ? "Open Settings" : "Turn On GPS",
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              if (isPermissionSettings) {
+                await Geolocator.openAppSettings();
+              } else {
+                await Geolocator.openLocationSettings();
+              }
+              Future.delayed(const Duration(seconds: 1), () {
+                if (mounted) _checkAndPromptLocationService();
+              });
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   void _startBannerAutoSlide() {
@@ -183,7 +285,6 @@ class _HomePageState extends State<HomePage> {
     final fullA = prefs.getString('customer_address_full');
     final lat = prefs.getDouble('customer_latitude');
     final lng = prefs.getDouble('customer_longitude');
-    final hasActiveSavedAddId = prefs.getString('active_delivery_add_id') != null;
 
     if (shortA != null && shortA.isNotEmpty) {
       setState(() {
@@ -226,10 +327,10 @@ class _HomePageState extends State<HomePage> {
       _fetchTrackingRoadRoute();
     }
 
-    // Automatically detect and update to device live GPS if no specific saved address is selected
+    // Refresh live device GPS position in background without wiping user's saved/selected address text
     await _requestLiveLocation(
       silent: true,
-      forceOverrideAddress: !hasActiveSavedAddId || shortA == null || shortA == 'Current Location',
+      forceOverrideAddress: false,
     );
   }
 
@@ -237,12 +338,11 @@ class _HomePageState extends State<HomePage> {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && !silent && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enable GPS Location Services on your device for accurate delivery.'),
-            behavior: SnackBarBehavior.floating,
-          ),
+        await _showTurnOnGPSDialog(
+          title: "Turn On GPS Location",
+          message: "Please turn ON device GPS to detect your live location.",
         );
+        return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -257,11 +357,11 @@ class _HomePageState extends State<HomePage> {
           position = await Geolocator.getLastKnownPosition();
         } catch (_) {}
 
-        // High accuracy live fix
+        // Live fix
         try {
           final livePos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.medium,
-            timeLimit: const Duration(seconds: 8),
+            desiredAccuracy: LocationAccuracy.high,
+            timeLimit: const Duration(seconds: 4),
           );
           position = livePos;
         } catch (_) {}
@@ -287,7 +387,7 @@ class _HomePageState extends State<HomePage> {
         final hasCustomAddress = existingShort != null &&
             existingShort.isNotEmpty &&
             existingShort != "Current Location" &&
-            prefs.getString('active_delivery_add_id') != null;
+            !existingShort.toLowerCase().contains("matthi");
 
         if (!hasCustomAddress || forceOverrideAddress) {
           String shortA = "Current Location";
@@ -303,16 +403,32 @@ class _HomePageState extends State<HomePage> {
               final geoData = jsonDecode(geoRes.body);
               final address = geoData['address'];
               if (address != null) {
-                final road = address['road'] ?? address['suburb'] ?? address['neighbourhood'] ?? '';
+                String road = address['road'] ?? address['neighbourhood'] ?? address['residential'] ?? '';
+                final suburb = address['suburb'] ?? '';
                 final city = address['city'] ?? address['town'] ?? address['village'] ?? address['state_district'] ?? '';
-                if (road.isNotEmpty && city.isNotEmpty) {
+
+                // 🛑 Fix for "Matthi": Filter out obscure hamlet tag 'Matthi' if city is known
+                if (road.isEmpty) {
+                  if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
+                    road = suburb;
+                  } else {
+                    road = city.isNotEmpty ? city : 'Current Location';
+                  }
+                }
+
+                if (road.isNotEmpty && city.isNotEmpty && road != city) {
                   shortA = '$road, $city';
                 } else if (road.isNotEmpty) {
                   shortA = road;
                 } else if (city.isNotEmpty) {
                   shortA = city;
                 }
-                fullA = geoData['display_name'] ?? (shortA != "Current Location" ? shortA : fullA);
+
+                String cleanFull = geoData['display_name'] ?? fullA;
+                if (cleanFull.startsWith('Matthi, ')) {
+                  cleanFull = cleanFull.replaceFirst('Matthi, ', '');
+                }
+                fullA = cleanFull;
               }
             }
           } catch (_) {}
@@ -745,6 +861,84 @@ class _HomePageState extends State<HomePage> {
                             );
                             await _requestLiveLocation(silent: false, forceOverrideAddress: true);
                           },
+                        ),
+                      ),
+
+                      // Quick Option 2: Set Location Directly
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.edit_location_alt_rounded, color: AppColors.primary, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  "Set Specific Area / Landmark",
+                                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textPrimary),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _customLocationTextController,
+                                    decoration: InputDecoration(
+                                      hintText: "e.g. Kumbakonam Town, Big Temple",
+                                      hintStyle: const TextStyle(fontSize: 12),
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                      fillColor: Colors.white,
+                                      filled: true,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  ),
+                                  onPressed: () async {
+                                    final val = _customLocationTextController.text.trim();
+                                    if (val.isEmpty) return;
+                                    final p = await SharedPreferences.getInstance();
+                                    await p.setString('customer_address_short', val);
+                                    await p.setString('customer_address_full', val);
+                                    await p.setString('active_order_customer_address', val);
+                                    if (mounted) {
+                                      setState(() {
+                                        _currentAddressShort = val;
+                                        _currentAddressFull = val;
+                                      });
+                                    }
+                                    if (modalCtx.mounted) Navigator.pop(modalCtx);
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text("Delivery address set to: $val"),
+                                          backgroundColor: const Color(0xFF047857),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  child: const Text("Set", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
 
@@ -1507,6 +1701,37 @@ class _HomePageState extends State<HomePage> {
                   return;
                 }
                 final prefs = await SharedPreferences.getInstance();
+
+                // 🛑 Requirement: "cutomer um oru order mudinja tha adutha order podanum athu maari vai"
+                final hasActive = prefs.getBool('has_active_order') ?? false;
+                final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
+                final existingOrderId = prefs.getString('active_order_id') ?? '';
+                if (hasActive && activeStatus != 'delivered' && activeStatus != 'cancelled' && existingOrderId.isNotEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: Colors.white, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "You already have active order #$existingOrderId in progress! Please wait until it is delivered or cancelled before ordering again.",
+                            ),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: AppColors.primaryDark,
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                  setState(() {
+                    showDeliveryDetails = true;
+                  });
+                  scrollToBottom();
+                  return;
+                }
+
                 final userId = prefs.getString('user_id') ?? 'usr_001';
                 final custName = prefs.getString('user_name') ?? 'Customer';
                 final custPhone = prefs.getString('mobile_number') ?? '+91 98765 43210';
@@ -1537,20 +1762,18 @@ class _HomePageState extends State<HomePage> {
                   await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
                 }
 
-                // Guarantee live device GPS coordinates instead of static dummy
+                // ⚡ Fast: Use live GPS coordinates without blocking delay
                 double orderLat = _customerLocation.latitude;
                 double orderLng = _customerLocation.longitude;
                 try {
-                  final pos = await Geolocator.getLastKnownPosition() ??
-                      await Geolocator.getCurrentPosition(
-                        desiredAccuracy: LocationAccuracy.medium,
-                        timeLimit: const Duration(seconds: 4),
-                      );
-                  orderLat = pos.latitude;
-                  orderLng = pos.longitude;
-                  _customerLocation = LatLng(orderLat, orderLng);
-                  await prefs.setDouble('customer_latitude', orderLat);
-                  await prefs.setDouble('customer_longitude', orderLng);
+                  final pos = await Geolocator.getLastKnownPosition();
+                  if (pos != null) {
+                    orderLat = pos.latitude;
+                    orderLng = pos.longitude;
+                    _customerLocation = LatLng(orderLat, orderLng);
+                    await prefs.setDouble('customer_latitude', orderLat);
+                    await prefs.setDouble('customer_longitude', orderLng);
+                  }
                 } catch (_) {}
 
                 try {
@@ -1581,6 +1804,23 @@ class _HomePageState extends State<HomePage> {
                         await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
                       }
                     }
+                  } else if (res.statusCode == 400) {
+                    final data = jsonDecode(res.body);
+                    final errMsg = data['message'] ?? 'You already have an active order in progress.';
+                    if (mounted) {
+                      setState(() {
+                        isSearchingRider = false;
+                        showDeliveryDetails = true;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(errMsg),
+                          backgroundColor: AppColors.danger,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                    return;
                   }
                 } catch (e) {
                   debugPrint("Backend order creation error: $e");
