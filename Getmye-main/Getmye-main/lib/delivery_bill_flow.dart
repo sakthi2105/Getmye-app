@@ -129,7 +129,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
 
       final savedDeclined = prefs.getStringList('partner_declined_order_ids') ?? [];
       _declinedOrderIds.addAll(savedDeclined);
-      final activeSavedId = prefs.getString('active_order_id');
+      final activeSavedId = prefs.getString('partner_active_order_id');
       if (activeSavedId != null && activeSavedId.isNotEmpty) {
         _acceptedOrderIds.add(activeSavedId);
       }
@@ -214,15 +214,16 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
           final dAddr = o['delivery_address'] ?? 'Customer Delivery Location';
           final iName = o['item_name'] ?? 'Food Item';
           final bVal = (o['budget'] as num?)?.toDouble() ?? 150.0;
-          final isAccepted = _acceptedOrderIds.contains(oId) ||
-              oId == activeSavedId ||
-              localStatus == 'accepted' ||
-              status == 'accepted' ||
-              status == 'purchasing_food' ||
-              status == 'bill_sent' ||
-              status == 'picked_up' ||
-              status == 'in_transit' ||
-              status == 'Accepted';
+          final isAccepted = status != 'pending' &&
+              (_acceptedOrderIds.contains(oId) ||
+                  (activeSavedId != null && activeSavedId.isNotEmpty && oId == activeSavedId) ||
+                  localStatus == 'accepted' ||
+                  status == 'accepted' ||
+                  status == 'purchasing_food' ||
+                  status == 'bill_sent' ||
+                  status == 'picked_up' ||
+                  status == 'in_transit' ||
+                  status == 'Accepted');
           final isDeclined = !isAccepted &&
               (_declinedOrderIds.contains(oId) ||
                   localStatus == 'declined' ||

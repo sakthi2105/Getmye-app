@@ -47,6 +47,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   final Set<String> _knownOrderIds = {};
   bool _isShowingIncomingModal = false;
   int _pollCount = 0;
+  Map<String, dynamic>? activeDeliveryOrder;
 
   @override
   void initState() {
@@ -135,14 +136,22 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           if (mounted) {
             setState(() {
               pendingOrderCount = 0;
+              final ordersList = data['orders'] as List? ?? [];
+              activeDeliveryOrder = data['active_order'] as Map<String, dynamic>? ??
+                  (ordersList.isNotEmpty ? ordersList.first as Map<String, dynamic> : null);
             });
           }
           return;
+        } else {
+          if (mounted && activeDeliveryOrder != null) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
+          }
         }
 
         final List orders = data['orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
-        final activeId = prefs.getString('active_order_id');
 
         // Only consider pending orders strictly unhandled
         final unhandledOrders = orders.where((o) {
@@ -150,7 +159,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           final status = (o['status']?.toString() ?? '').toLowerCase();
           return !declinedIds.contains(id) &&
               !AlarmService.isOrderSilenced(id) &&
-              id != activeId &&
               status == 'pending';
         }).toList();
 
@@ -960,33 +968,110 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: isOnline
-                  ? InkWell(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const NewOrdersPage()),
-                        ).then((_) => _loadPartnerData());
-                      },
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFFEF3C7), Color(0xFFFDE68A)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
+                  ? (activeDeliveryOrder != null
+                      ? InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const NewOrdersPage()),
+                            ).then((_) => _loadPartnerData());
+                          },
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.amber.withValues(alpha: 0.2),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFEFF6FF), Color(0xFFDBEAFE)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFF3B82F6), width: 1.2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.blue.withValues(alpha: 0.15),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Row(
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2563EB),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(Icons.delivery_dining_rounded, color: Colors.white, size: 26),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Ongoing Delivery: #${activeDeliveryOrder?['order_id'] ?? ''}",
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 15,
+                                          color: Color(0xFF1E3A8A),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      const Text(
+                                        "Finish this delivery to receive new orders",
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF1D4ED8),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1D4ED8),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Text(
+                                    "Continue",
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const NewOrdersPage()),
+                            ).then((_) => _loadPartnerData());
+                          },
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFFEF3C7), Color(0xFFFDE68A)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.amber.withValues(alpha: 0.2),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
                           children: [
                             Container(
                               padding: const EdgeInsets.all(12),
@@ -1051,7 +1136,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           ],
                         ),
                       ),
-                    )
+                    ))
                   : Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(

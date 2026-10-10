@@ -62,7 +62,8 @@ router.post('/create', async (req, res) => {
           if (d !== null && d <= 10.0) {
             const busy = await Order.findOne({
               partner_id: loc.partner_id,
-              status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+              status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+              updated_at: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
             });
             if (!busy) {
               nearbyPartners.push({ partner_id: loc.partner_id, distance_km: Number(d.toFixed(2)) });
@@ -134,15 +135,19 @@ router.get('/pending', async (req, res) => {
 
       // 2. BUSY CHECK: Partner already in an active delivery
       // "Already delivery la Irukura person ku Order po koodathu."
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
       const activeDelivery = await Order.findOne({
         partner_id: partnerId,
-        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-      });
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+        updated_at: { $gte: fourHoursAgo }
+      }).sort({ updated_at: -1 });
+
       if (activeDelivery) {
         return res.json({
           success: true,
           orders: [activeDelivery],
           has_active_delivery: true,
+          active_order: activeDelivery,
           reason: 'Partner is currently engaged in an active delivery.'
         });
       }
