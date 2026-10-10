@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_application_1/homed.dart';
 import 'api_config.dart';
 import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 class DeliveryPersonDetailsPage extends StatefulWidget {
   const DeliveryPersonDetailsPage({super.key});
@@ -129,6 +130,9 @@ class _DeliveryPersonDetailsPageState
         await prefs.setBool('d_is_online', true);
         await prefs.setBool('is_logged_in', true);
         await prefs.setString('account_type', 'partner');
+        if (personImage != null) {
+          await prefs.setString('d_profile_image', personImage!.path);
+        }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -281,29 +285,47 @@ class _DeliveryPersonDetailsPageState
     );
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Form(
-        key: _formKey,
-        child: CustomScrollView(
-          slivers: [
-            SliverAppBar(
-              backgroundColor: Colors.white,
-              pinned: true,
-              floating: true,
-              elevation: 0,
-              iconTheme: const IconThemeData(color: AppColors.textPrimary),
-              title: const Text(
-                "Delivery Partner Details",
-                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: Form(
+          key: _formKey,
+          child: CustomScrollView(
+            slivers: [
+              SliverAppBar(
+                backgroundColor: Colors.white,
+                pinned: true,
+                floating: true,
+                elevation: 0,
+                iconTheme: const IconThemeData(color: AppColors.textPrimary),
+                title: const Text(
+                  "Delivery Partner Details",
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                ),
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _handleBackNavigation,
+                ),
               ),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ),
             SliverList(
               delegate: SliverChildListDelegate([
                 _buildEditableField("Name", nameController),
@@ -361,6 +383,7 @@ class _DeliveryPersonDetailsPageState
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

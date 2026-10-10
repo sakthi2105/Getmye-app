@@ -1,26 +1,179 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/dperson.dart';
-import 'package:flutter_application_1/homed.dart';
+import 'dlogin.dart';
 import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 class DeliveryPersonJoinPage extends StatelessWidget {
   const DeliveryPersonJoinPage({super.key});
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
+  void _showPoliteRegistrationDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          elevation: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Illustration with rounded borders
+                  Container(
+                    height: 190,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      color: const Color(0xFFFEF3C7),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Image.asset(
+                        'assets/partner_humble_notice.jpg',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(Icons.handshake_rounded, size: 70, color: Color(0xFFB45309)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Polite Title
+                  const Text(
+                    "Partner Onboarding Notice 🙏",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    "Getmye Delivery Network",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Polite Notice Card
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          "Welcome! Currently, open self-registration for Delivery Partners is not publicly available.",
+                          style: TextStyle(fontSize: 13.5, color: Color(0xFF92400E), height: 1.45, fontWeight: FontWeight.w600),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          "At present, Delivery Partner accounts are strictly verified and allocated directly by our App Administrators.",
+                          style: TextStyle(fontSize: 13, color: Color(0xFF78350F), height: 1.4),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          "In the future, you will be able to easily register and join as an official partner with Getmye! Thank you very much for your patience and support. ❤️",
+                          style: TextStyle(fontSize: 13, color: AppColors.primary, height: 1.4, fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: AppColors.border),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text("Got it, Thanks", style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const DeliveryPersonLoginPage()),
+                            );
+                          },
+                          child: const Text("Partner Login", style: TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        title: const Text(
-          "Join as Delivery Partner",
-          style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: () => _handleBackNavigation(context),
+          ),
+          iconTheme: const IconThemeData(color: AppColors.textPrimary),
+          title: const Text(
+            "Join as Delivery Partner",
+            style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+          ),
+          centerTitle: true,
         ),
-        centerTitle: true,
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20.0),
         child: Column(
@@ -57,7 +210,7 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                 border: Border.all(color: AppColors.border),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withValues(alpha: 0.04),
                     blurRadius: 14,
                     offset: const Offset(0, 4),
                   ),
@@ -96,9 +249,9 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppColors.primaryLight.withOpacity(0.5),
+                      color: AppColors.primaryLight.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                      border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
                     ),
                     child: const Row(
                       children: [
@@ -136,10 +289,7 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                   ),
                 ),
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => DeliveryPersonDetailsPage()),
-                  );
+                  _showPoliteRegistrationDialog(context);
                 },
                 icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
                 label: const Text(
@@ -162,7 +312,7 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => DeliveryHomePage()),
+                    MaterialPageRoute(builder: (context) => const DeliveryPersonLoginPage()),
                   );
                 },
                 icon: const Icon(Icons.login_rounded, color: AppColors.textPrimary),
@@ -175,8 +325,9 @@ class DeliveryPersonJoinPage extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class NextPage extends StatelessWidget {

@@ -2,21 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class UpiPaymentService {
-  // Default merchant / receiver UPI details (can be configured or received from backend)
-  static const String defaultVpa = 'getmye@upi';
-  static const String defaultPayeeName = 'GetMye Express';
+  // Default merchant / receiver UPI details
+  static const String defaultVpa = 'sivaprakashsivaprakash421@okaxis';
+  static const String defaultPayeeName = 'SIVAPRAKASH MUTHUKUMAR';
 
-  /// Generates the standard UPI URI
+  /// Generates the standard P2P UPI URI
   static String buildUpiUri({
     required double amount,
     String vpa = defaultVpa,
     String payeeName = defaultPayeeName,
-    String note = 'Food Order Payment',
+    String note = 'Food Order',
   }) {
     final encodedPn = Uri.encodeComponent(payeeName);
     final encodedTn = Uri.encodeComponent(note);
     final formattedAmount = amount.toStringAsFixed(2);
-    return 'upi://pay?pa=$vpa&pn=$encodedPn&mc=5411&tr=${DateTime.now().millisecondsSinceEpoch}&tn=$encodedTn&am=$formattedAmount&cu=INR';
+    return 'upi://pay?pa=$vpa&pn=$encodedPn&am=$formattedAmount&cu=INR&tn=$encodedTn';
+  }
+
+  /// Generates a live QR code image URL that can be scanned by any UPI App (GPay, PhonePe, Paytm, etc.)
+  static String getQrCodeUrl({required double amount, String note = 'GetMye Food Order'}) {
+    final upiUri = buildUpiUri(amount: amount, note: note);
+    return 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${Uri.encodeComponent(upiUri)}';
   }
 
   /// Launch Google Pay specifically or fallback to UPI intent
@@ -26,30 +32,25 @@ class UpiPaymentService {
     String note = 'GetMye Google Pay',
   }) async {
     final upiUrl = buildUpiUri(amount: amount, note: note);
-
-    // Google Pay custom scheme
-    final gpaySchemeUri = Uri.parse(
-      upiUrl.replaceFirst('upi://', 'tez://upi/'),
-    );
-    final fallbackUpiUri = Uri.parse(upiUrl);
+    final upiUri = Uri.parse(upiUrl);
 
     try {
-      if (await canLaunchUrl(gpaySchemeUri)) {
-        return await launchUrl(gpaySchemeUri, mode: LaunchMode.externalApplication);
-      } else if (await canLaunchUrl(fallbackUpiUri)) {
-        return await launchUrl(fallbackUpiUri, mode: LaunchMode.externalApplication);
-      } else {
-        if (context.mounted) _showNoAppError(context, 'Google Pay or any UPI app');
-        return false;
+      // First try standard externalApplication launch which opens UPI chooser with Google Pay
+      final launched = await launchUrl(upiUri, mode: LaunchMode.externalApplication);
+      if (launched) return true;
+    } catch (_) {}
+
+    // Fallback: try tez custom scheme
+    try {
+      final tezUri = Uri.parse(upiUrl.replaceFirst('upi://', 'tez://upi/'));
+      if (await canLaunchUrl(tezUri)) {
+        return await launchUrl(tezUri, mode: LaunchMode.externalApplication);
       }
-    } catch (e) {
-      debugPrint('Error launching GPay: $e');
-      if (await canLaunchUrl(fallbackUpiUri)) {
-        return await launchUrl(fallbackUpiUri, mode: LaunchMode.externalApplication);
-      }
-      if (context.mounted) _showNoAppError(context, 'Google Pay');
-      return false;
-    }
+    } catch (_) {}
+
+    // Fallback: general UPI
+    if (!context.mounted) return false;
+    return await openAnyUpi(context, amount: amount, note: note);
   }
 
   /// Launch PhonePe specifically or fallback to UPI intent
@@ -59,30 +60,117 @@ class UpiPaymentService {
     String note = 'GetMye PhonePe',
   }) async {
     final upiUrl = buildUpiUri(amount: amount, note: note);
-
-    // PhonePe custom scheme
-    final phonePeSchemeUri = Uri.parse(
-      upiUrl.replaceFirst('upi://', 'phonepe://'),
-    );
-    final fallbackUpiUri = Uri.parse(upiUrl);
+    final upiUri = Uri.parse(upiUrl);
 
     try {
-      if (await canLaunchUrl(phonePeSchemeUri)) {
-        return await launchUrl(phonePeSchemeUri, mode: LaunchMode.externalApplication);
-      } else if (await canLaunchUrl(fallbackUpiUri)) {
-        return await launchUrl(fallbackUpiUri, mode: LaunchMode.externalApplication);
-      } else {
-        if (context.mounted) _showNoAppError(context, 'PhonePe or any UPI app');
-        return false;
+      final launched = await launchUrl(upiUri, mode: LaunchMode.externalApplication);
+      if (launched) return true;
+    } catch (_) {}
+
+    // Fallback: try phonepe custom scheme
+    try {
+      final phonePeUri = Uri.parse(upiUrl.replaceFirst('upi://', 'phonepe://'));
+      if (await canLaunchUrl(phonePeUri)) {
+        return await launchUrl(phonePeUri, mode: LaunchMode.externalApplication);
       }
-    } catch (e) {
-      debugPrint('Error launching PhonePe: $e');
-      if (await canLaunchUrl(fallbackUpiUri)) {
-        return await launchUrl(fallbackUpiUri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+
+    // Fallback: general UPI
+    if (!context.mounted) return false;
+    return await openAnyUpi(context, amount: amount, note: note);
+  }
+
+  /// Launch Paytm specifically or fallback to UPI intent
+  static Future<bool> openPaytm(
+    BuildContext context, {
+    required double amount,
+    String note = 'GetMye Paytm',
+  }) async {
+    final upiUrl = buildUpiUri(amount: amount, note: note);
+
+    try {
+      final paytmUri = Uri.parse(upiUrl.replaceFirst('upi://', 'paytmmp://'));
+      if (await canLaunchUrl(paytmUri)) {
+        return await launchUrl(paytmUri, mode: LaunchMode.externalApplication);
       }
-      if (context.mounted) _showNoAppError(context, 'PhonePe');
-      return false;
-    }
+    } catch (_) {}
+
+    if (!context.mounted) return false;
+    return await openAnyUpi(context, amount: amount, note: note);
+  }
+
+  /// Launch CRED specifically or fallback to UPI intent
+  static Future<bool> openCred(
+    BuildContext context, {
+    required double amount,
+    String note = 'GetMye CRED',
+  }) async {
+    final upiUrl = buildUpiUri(amount: amount, note: note);
+
+    try {
+      final credUri = Uri.parse(upiUrl.replaceFirst('upi://', 'credpay://'));
+      if (await canLaunchUrl(credUri)) {
+        return await launchUrl(credUri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {}
+
+    if (!context.mounted) return false;
+    return await openAnyUpi(context, amount: amount, note: note);
+  }
+
+  /// Launch BHIM or any UPI intent
+  static Future<bool> openBhim(
+    BuildContext context, {
+    required double amount,
+    String note = 'GetMye BHIM',
+  }) async {
+    final upiUrl = buildUpiUri(amount: amount, note: note);
+
+    try {
+      final bhimUri = Uri.parse(upiUrl.replaceFirst('upi://', 'bhim://'));
+      if (await canLaunchUrl(bhimUri)) {
+        return await launchUrl(bhimUri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {}
+
+    if (!context.mounted) return false;
+    return await openAnyUpi(context, amount: amount, note: note);
+  }
+
+  /// Probe available payment apps on the device
+  static Future<Map<String, bool>> getInstalledUpiApps(double amount) async {
+    final upiUrl = buildUpiUri(amount: amount);
+    bool gpay = false;
+    bool phonepe = false;
+    bool paytm = false;
+    bool anyUpi = false;
+
+    try {
+      final tezUri = Uri.parse(upiUrl.replaceFirst('upi://', 'tez://upi/'));
+      gpay = await canLaunchUrl(tezUri);
+    } catch (_) {}
+
+    try {
+      final phonepeUri = Uri.parse(upiUrl.replaceFirst('upi://', 'phonepe://'));
+      phonepe = await canLaunchUrl(phonepeUri);
+    } catch (_) {}
+
+    try {
+      final paytmUri = Uri.parse(upiUrl.replaceFirst('upi://', 'paytmmp://'));
+      paytm = await canLaunchUrl(paytmUri);
+    } catch (_) {}
+
+    try {
+      final genericUri = Uri.parse(upiUrl);
+      anyUpi = await canLaunchUrl(genericUri);
+    } catch (_) {}
+
+    return {
+      'gpay': gpay,
+      'phonepe': phonepe,
+      'paytm': paytm,
+      'anyUpi': anyUpi,
+    };
   }
 
   /// General UPI launcher
@@ -92,12 +180,17 @@ class UpiPaymentService {
     String note = 'GetMye Order',
   }) async {
     final upiUri = Uri.parse(buildUpiUri(amount: amount, note: note));
-    if (await canLaunchUrl(upiUri)) {
-      return await launchUrl(upiUri, mode: LaunchMode.externalApplication);
-    } else {
-      if (context.mounted) _showNoAppError(context, 'a supported UPI payment app');
-      return false;
+    try {
+      final launched = await launchUrl(upiUri, mode: LaunchMode.externalApplication);
+      if (launched) return true;
+    } catch (e) {
+      debugPrint('Error launching general UPI: $e');
     }
+
+    if (context.mounted) {
+      _showNoAppError(context, 'a supported UPI payment app (Google Pay / PhonePe / Paytm)');
+    }
+    return false;
   }
 
   static void _showNoAppError(BuildContext context, String appName) {
@@ -110,7 +203,7 @@ class UpiPaymentService {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Could not launch $appName. Please ensure it is installed on this device.',
+                'Could not launch $appName. You can copy the UPI ID or scan QR to pay directly.',
                 style: const TextStyle(fontSize: 13),
               ),
             ),

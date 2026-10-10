@@ -6,6 +6,7 @@ import 'package:flutter_application_1/withdraw.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
+import 'homed.dart';
 
 class WalletPage extends StatefulWidget {
   const WalletPage({super.key});
@@ -32,32 +33,49 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   @override
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+        (route) => false,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     double withdrawableAmount = (totalAmount - minimumBalance) > 0 ? (totalAmount - minimumBalance) : 0.0;
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        title: const Text(
-          'Partner Wallet',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.2,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          title: const Text(
+            'Partner Wallet',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.2,
+            ),
+          ),
+          centerTitle: true,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: () => _handleBackNavigation(context),
           ),
         ),
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -68,7 +86,7 @@ class _WalletPageState extends State<WalletPage> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF064E3B), Color(0xFF047857)],
+                  colors: [Color(0xFF0C1B30), Color(0xFF142B4A)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -288,8 +306,9 @@ class _WalletPageState extends State<WalletPage> {
         ),
       ),
       bottomNavigationBar: const DeliveryBottomNavBar(currentIndex: 1),
-    );
-  }
+    ),
+  );
+}
 }
 
 // Placeholder for Withdraw Page

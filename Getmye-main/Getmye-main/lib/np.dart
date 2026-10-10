@@ -233,7 +233,7 @@ class _PincodePageState extends State<PincodePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text("Withdrawal Authorized Successfully!"),
-        backgroundColor: Colors.green,
+        backgroundColor: AppColors.primary,
       ),
     );
 

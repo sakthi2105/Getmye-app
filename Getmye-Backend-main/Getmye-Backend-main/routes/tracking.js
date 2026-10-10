@@ -19,7 +19,7 @@ router.post('/update', async (req, res) => {
         heading: Number(heading) || 0,
         speed: Number(speed) || 0,
         status: status || 'in_transit',
-        is_online: true,
+        is_online: req.body.is_online !== undefined ? Boolean(req.body.is_online) : true,
         last_updated: new Date()
       },
       { upsert: true, new: true }

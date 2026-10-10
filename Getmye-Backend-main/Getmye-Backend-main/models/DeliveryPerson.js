@@ -101,6 +101,14 @@ const DeliveryPersonSchema = new mongoose.Schema({
   profile_kyp: {
     type: String,
     default: null
+  },
+  reset_otp: {
+    type: String,
+    default: null
+  },
+  reset_otp_expires_at: {
+    type: Date,
+    default: null
   }
 }, {
   collection: 'delivery_person',

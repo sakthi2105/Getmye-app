@@ -58,7 +58,7 @@ class _CodPageState extends State<CodPage> {
               ListTile(
                 leading: const Icon(Icons.account_balance_wallet, color: Colors.blue),
                 title: const Text('Google Pay (GPay)'),
-                subtitle: const Text('Tap to open Google Pay app'),
+                subtitle: const Text('To: sivaprakashsivaprakash421@okaxis'),
                 onTap: () {
                   Navigator.of(context).pop();
                   UpiPaymentService.openGooglePay(context, amount: totalAmount);
@@ -68,7 +68,7 @@ class _CodPageState extends State<CodPage> {
                 leading:
                     const Icon(Icons.phone_android_rounded, color: Colors.deepPurple),
                 title: const Text('PhonePe UPI'),
-                subtitle: const Text('Tap to open PhonePe app'),
+                subtitle: const Text('To: sivaprakashsivaprakash421@okaxis'),
                 onTap: () {
                   Navigator.of(context).pop();
                   UpiPaymentService.openPhonePe(context, amount: totalAmount);

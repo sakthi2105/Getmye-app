@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const LiveLocationSchema = new mongoose.Schema({

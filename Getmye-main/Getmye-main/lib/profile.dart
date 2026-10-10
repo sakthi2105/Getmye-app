@@ -12,6 +12,7 @@ import 'main.dart';
 import 'options.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -101,7 +102,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Profile picture updated successfully!'),
-              backgroundColor: Color(0xFF15803D),
+              backgroundColor: AppColors.primary,
               duration: Duration(seconds: 2),
             ),
           );
@@ -197,23 +198,41 @@ class _ProfilePageState extends State<ProfilePage> {
     return null;
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final avatarProvider = _getAvatarProvider();
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: _handleBackNavigation,
+          ),
+          centerTitle: true,
+          title: const Text('My Profile', style: AppTypography.screenHeading),
         ),
-        centerTitle: true,
-        title: const Text('My Profile', style: AppTypography.screenHeading),
-      ),
       body: Column(
         children: [
           if (_isLoading)
@@ -392,8 +411,9 @@ class _ProfilePageState extends State<ProfilePage> {
         ],
       ),
       bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 1),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildMenuTile({
     required IconData icon,
@@ -455,7 +475,16 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
               onPressed: () async {
                 final prefs = await SharedPreferences.getInstance();
-                await prefs.clear();
+                await prefs.setBool('is_logged_in', false);
+                await prefs.remove('account_type');
+                await prefs.remove('user_id');
+                await prefs.remove('user_name');
+                await prefs.remove('user_email');
+                await prefs.remove('mobile_number');
+                await prefs.remove('active_order_id');
+                await prefs.remove('has_active_order');
+                await prefs.remove('active_order_partner_name');
+                await prefs.remove('active_order_customer_name');
                 if (!mounted) return;
                 dialogNav.pop();
                 nav.pushAndRemoveUntil(

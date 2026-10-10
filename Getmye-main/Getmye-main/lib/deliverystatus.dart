@@ -175,7 +175,7 @@ class _DeliveryStatusPageState extends State<DeliveryStatusPage> {
                   }),
                 ),
               ),
-              IconButton(icon: const Icon(Icons.add_circle, color: Colors.green), onPressed: _addNewRow),
+              IconButton(icon: const Icon(Icons.add_circle, color: AppColors.primary), onPressed: _addNewRow),
               const SizedBox(height: 20),
               Text("Total Amount: ₹${getTotalAmount().toStringAsFixed(2)}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),

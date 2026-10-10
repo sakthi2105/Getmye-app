@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
 import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 class OrderHistoryPage extends StatefulWidget {
   final Map? order;
@@ -67,17 +68,35 @@ class _OrderHistoryPageState extends State<OrderHistoryPage> {
     }
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text("Order History", style: AppTypography.screenHeading),
-        centerTitle: false,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text("Order History", style: AppTypography.screenHeading),
+          centerTitle: false,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: _handleBackNavigation,
+          ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: AppColors.primaryDark),
@@ -241,6 +260,7 @@ class _OrderHistoryPageState extends State<OrderHistoryPage> {
                       },
                     ),
             ),
+      ),
     );
   }
 }

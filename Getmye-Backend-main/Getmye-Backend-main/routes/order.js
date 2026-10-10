@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
 const Profile = require('../models/Profile');
+const DeliveryPerson = require('../models/DeliveryPerson');
 const { getNextSequence } = require('../models/Counter');
 
 // POST /api/order/create - Customer places a new order
@@ -37,6 +38,8 @@ router.post('/create', async (req, res) => {
       user_id,
       customer_name: customer_name || 'Customer',
       customer_phone: customer_phone || '',
+      customer_latitude: req.body.customer_latitude !== undefined && req.body.customer_latitude !== null ? Number(req.body.customer_latitude) : null,
+      customer_longitude: req.body.customer_longitude !== undefined && req.body.customer_longitude !== null ? Number(req.body.customer_longitude) : null,
       delivery_address,
       item_name,
       budget: Number(budget) || 0,
@@ -45,6 +48,33 @@ router.post('/create', async (req, res) => {
     });
 
     await newOrder.save();
+
+    // 🛰️ Geofence Dispatch: Log online partners within 2 km radius
+    try {
+      const cLat = newOrder.customer_latitude;
+      const cLng = newOrder.customer_longitude;
+      if (cLat !== null && cLng !== null) {
+        const LiveLocation = require('../models/LiveLocation');
+        const onlineLocations = await LiveLocation.find({ is_online: true });
+        const nearbyPartners = [];
+        for (const loc of onlineLocations) {
+          const d = calculateHaversineDistanceKm(cLat, cLng, loc.latitude, loc.longitude);
+          if (d !== null && d <= 2.0) {
+            const busy = await Order.findOne({
+              partner_id: loc.partner_id,
+              status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+            });
+            if (!busy) {
+              nearbyPartners.push({ partner_id: loc.partner_id, distance_km: Number(d.toFixed(2)) });
+            }
+          }
+        }
+        console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 2 km:`, nearbyPartners);
+      }
+    } catch (dispatchErr) {
+      console.warn('Geofence partner scan notice:', dispatchErr.message);
+    }
+
     res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
   } catch (err) {
     console.error('Error creating order:', err);
@@ -52,10 +82,84 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// GET /api/order/pending - Delivery partners view available pending orders & active accepted orders
+// 🌐 Haversine Formula: Calculate Great-Circle Distance between two GPS points in Kilometers
+function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
+  if (lat1 === undefined || lat1 === null || lon1 === undefined || lon1 === null ||
+      lat2 === undefined || lat2 === null || lon2 === undefined || lon2 === null) {
+    return null;
+  }
+  const R = 6371; // Earth radius in KM
+  const dLat = (Number(lat2) - Number(lat1)) * Math.PI / 180;
+  const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(Number(lat1) * Math.PI / 180) * Math.cos(Number(lat2) * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// GET /api/order/pending - Delivery partners view available pending orders
+// Enforces:
+// 1. Online la Irukanum (Partner must be online)
+// 2. Already delivery la Irukura person ku Order po koodathu (Partner cannot have active delivery)
+// 3. Order potta Location la Irunthu 2 Km (radius) surrounding-la irukavangaluku mattum order poganum
 router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
+    const reqLat = req.query.latitude || req.query.lat ? Number(req.query.latitude || req.query.lat) : null;
+    const reqLng = req.query.longitude || req.query.lng ? Number(req.query.longitude || req.query.lng) : null;
+
+    if (partnerId) {
+      // 1. ONLINE STATUS FILTER:
+      const dp = await DeliveryPerson.findOne({
+        $or: [
+          { DP_id: partnerId },
+          { DP_id: new RegExp(`^${partnerId}$`, 'i') },
+          { mobile_number: partnerId }
+        ]
+      });
+      const LiveLocation = require('../models/LiveLocation');
+      const liveLoc = await LiveLocation.findOne({ partner_id: partnerId });
+
+      const isDpOnline = (dp && dp.dp_status === 'online') || (liveLoc && liveLoc.is_online === true);
+      if (dp && dp.dp_status === 'offline' && (!liveLoc || !liveLoc.is_online)) {
+        return res.json({
+          success: true,
+          orders: [],
+          is_online: false,
+          reason: 'Partner is currently OFFLINE. Toggle online to receive new orders.'
+        });
+      }
+
+      // 2. BUSY CHECK: Partner already in an active delivery
+      // "Already delivery la Irukura person ku Order po koodathu."
+      const activeDelivery = await Order.findOne({
+        partner_id: partnerId,
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      });
+      if (activeDelivery) {
+        return res.json({
+          success: true,
+          orders: [activeDelivery],
+          has_active_delivery: true,
+          reason: 'Partner is currently engaged in an active delivery.'
+        });
+      }
+    }
+
+    // Determine partner current coordinates:
+    let partnerLat = reqLat;
+    let partnerLng = reqLng;
+    if ((partnerLat === null || partnerLng === null) && partnerId) {
+      const LiveLocation = require('../models/LiveLocation');
+      const loc = await LiveLocation.findOne({ partner_id: partnerId });
+      if (loc && loc.latitude && loc.longitude) {
+        partnerLat = loc.latitude;
+        partnerLng = loc.longitude;
+      }
+    }
+
     let query = {
       $or: [
         { status: 'pending' },
@@ -73,15 +177,36 @@ router.get('/pending', async (req, res) => {
         ]
       };
     }
-    const orders = await Order.find(query).sort({ created_at: -1 }).limit(20);
-    res.json({ success: true, orders });
+
+    const allOrders = await Order.find(query).sort({ created_at: -1 }).limit(30);
+
+    // 3. 2 KM RADIUS GEOFENCING FILTER (HAVERSINE ALGORITHM)
+    // Only return pending orders placed within 2.0 KM of partner location
+    const filteredOrders = allOrders.filter(order => {
+      if (order.status !== 'pending') return true; // keep partner's own accepted/declined/cancelled orders
+      if (partnerLat === null || partnerLng === null || order.customer_latitude === null || order.customer_longitude === null) {
+        return true; // Fallback if GPS coords are missing
+      }
+      const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, order.customer_latitude, order.customer_longitude);
+      if (dist === null) return true;
+      return dist <= 2.0; // Strictly 2.0 km radius
+    }).map(order => {
+      const o = order.toObject();
+      if (partnerLat !== null && partnerLng !== null && o.customer_latitude && o.customer_longitude) {
+        const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, o.customer_latitude, o.customer_longitude);
+        o.distance_km = dist !== null ? Number(dist.toFixed(2)) : null;
+      }
+      return o;
+    });
+
+    res.json({ success: true, count: filteredOrders.length, orders: filteredOrders });
   } catch (err) {
     console.error('Error fetching pending orders:', err);
     res.status(500).json({ error: 'Failed to fetch pending orders' });
   }
 });
 
-// GET /api/order/active/:user_id - Customer gets current active order
+// GET /api/order/active/:user_id - Customer gets current active order (with partner photo enrichment)
 router.get('/active/:user_id', async (req, res) => {
   try {
     const activeOrder = await Order.findOne({
@@ -89,7 +214,30 @@ router.get('/active/:user_id', async (req, res) => {
       status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
     }).sort({ created_at: -1 });
 
-    res.json({ success: true, order: activeOrder });
+    if (!activeOrder) {
+      return res.json({ success: true, order: null });
+    }
+
+    const orderObj = activeOrder.toObject();
+    // 👤 Dynamically populate partner profile picture if missing
+    if (orderObj.partner_id && !orderObj.partner_profile_picture) {
+      try {
+        const dp = await DeliveryPerson.findOne({
+          $or: [
+            { DP_id: orderObj.partner_id },
+            { DP_id: new RegExp(`^${orderObj.partner_id}$`, 'i') },
+            { mobile_number: orderObj.partner_phone || orderObj.partner_id }
+          ]
+        });
+        if (dp && dp.profile_picture) {
+          orderObj.partner_profile_picture = Buffer.isBuffer(dp.profile_picture)
+            ? Buffer.from(dp.profile_picture).toString('base64')
+            : dp.profile_picture.toString();
+        }
+      } catch (_) {}
+    }
+
+    res.json({ success: true, order: orderObj });
   } catch (err) {
     console.error('Error fetching active order:', err);
     res.status(500).json({ error: 'Failed to fetch active order' });
@@ -99,17 +247,41 @@ router.get('/active/:user_id', async (req, res) => {
 // POST /api/order/accept - Partner accepts an order
 router.post('/accept', async (req, res) => {
   try {
-    const { order_id, partner_id, partner_name, partner_phone } = req.body;
+    const { order_id, partner_id, partner_name, partner_phone, partner_profile_picture } = req.body;
     if (!order_id || !partner_id) {
       return res.status(400).json({ error: 'order_id and partner_id are required' });
     }
+
+    let partnerPic = partner_profile_picture || null;
+    let actualPartnerName = partner_name;
+    let actualPartnerPhone = partner_phone;
+
+    try {
+      const dp = await DeliveryPerson.findOne({
+        $or: [
+          { DP_id: partner_id },
+          { DP_id: new RegExp(`^${partner_id}$`, 'i') },
+          { mobile_number: partner_phone || partner_id }
+        ]
+      });
+      if (dp) {
+        if (!actualPartnerName || actualPartnerName === 'Delivery Partner') actualPartnerName = dp.name;
+        if (!actualPartnerPhone) actualPartnerPhone = dp.mobile_number;
+        if (!partnerPic && dp.profile_picture) {
+          partnerPic = Buffer.isBuffer(dp.profile_picture)
+            ? Buffer.from(dp.profile_picture).toString('base64')
+            : dp.profile_picture.toString();
+        }
+      }
+    } catch (_) {}
 
     const order = await Order.findOneAndUpdate(
       { order_id, status: 'pending' },
       {
         partner_id,
-        partner_name: partner_name || 'Delivery Partner',
-        partner_phone: partner_phone || '+91 98765 43210',
+        partner_name: actualPartnerName || 'Delivery Partner',
+        partner_phone: actualPartnerPhone || '+91 98765 43210',
+        partner_profile_picture: partnerPic || null,
         status: 'accepted',
         accepted_at: new Date()
       },
@@ -279,7 +451,21 @@ router.get('/:order_id', async (req, res) => {
   try {
     const order = await Order.findOne({ order_id: req.params.order_id });
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json({ success: true, order });
+    const orderObj = order.toObject();
+    if (orderObj.partner_id && !orderObj.partner_profile_picture) {
+      try {
+        const dp = await DeliveryPerson.findOne({
+          $or: [
+            { DP_id: orderObj.partner_id },
+            { mobile_number: orderObj.partner_phone || orderObj.partner_id }
+          ]
+        });
+        if (dp && dp.profile_picture) {
+          orderObj.partner_profile_picture = Buffer.from(dp.profile_picture).toString('base64');
+        }
+      } catch (_) {}
+    }
+    res.json({ success: true, order: orderObj });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch order' });
   }

@@ -34,11 +34,23 @@ const AddressSchema = new mongoose.Schema({
   },
   country: {
     type: String,
-    required: true
+    default: 'India'
   },
   pincode: {
     type: String,
-    required: true
+    default: ''
+  },
+  latitude: {
+    type: Number,
+    default: null
+  },
+  longitude: {
+    type: Number,
+    default: null
+  },
+  is_default: {
+    type: Boolean,
+    default: false
   }
 }, {
   collection: 'address',

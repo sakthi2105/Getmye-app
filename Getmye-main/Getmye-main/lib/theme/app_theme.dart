@@ -2,29 +2,29 @@ import 'package:flutter/material.dart';
 
 class AppColors {
   // Required Color System
-  static const Color primary = Color(0xFF22C55E);      // Primary Green
-  static const Color primaryDark = Color(0xFF15803D);  // Dark Green
-  static const Color primaryLight = Color(0xFFDCFCE7); // Light Green
-  static const Color background = Color(0xFFF8FAF9);   // Clean Background
+  static const Color primary = Color(0xFF142B4A);      // Primary Dark Navy Blue (#142B4A)
+  static const Color primaryDark = Color(0xFF0C1B30);  // Deep Midnight Navy
+  static const Color primaryLight = Color(0xFFE8F2FF); // Soft Light Ice Blue (#E8F2FF)
+  static const Color background = Color(0xFFF5F8FD);   // Clean Background with cool blue tone
   static const Color white = Color(0xFFFFFFFF);        // White
   static const Color surface = Color(0xFFFFFFFF);      // Card Surface
-  static const Color textPrimary = Color(0xFF17211B);  // Primary Text
-  static const Color textSecondary = Color(0xFF6B756D);// Secondary Text
-  static const Color border = Color(0xFFE5EAE6);       // Thin light border
+  static const Color textPrimary = Color(0xFF0F1E33);  // Primary Navy Text
+  static const Color textSecondary = Color(0xFF566981);// Secondary Slate Text
+  static const Color border = Color(0xFFD6E4F5);       // Thin light ice blue border
   static const Color danger = Color(0xFFEF4444);       // Error Red
   static const Color warning = Color(0xFFF59E0B);      // Warning Amber
-  static const Color primarySubtle = Color(0xFFF0FDF4); // Subtle green tint
-  static const Color primaryDeep = Color(0xFF15803D);   // Deep primary green alias
-  static const Color textMuted = Color(0xFF6B756D);     // Muted secondary text alias
+  static const Color primarySubtle = Color(0xFFF0F6FF); // Very subtle ice blue tint
+  static const Color primaryDeep = Color(0xFF142B4A);   // Deep primary alias
+  static const Color textMuted = Color(0xFF566981);     // Muted secondary text alias
 
   // Helpers
-  static const Color vegGreen = Color(0xFF22C55E);
-  static const Color nonVegRed = Color(0xFFEF4444);
-  static const Color cardShadow = Color(0x08000000);   // Very subtle shadow
+  static const Color vegGreen = Color(0xFF22C55E);     // Veg dietary badge
+  static const Color nonVegRed = Color(0xFFEF4444);    // Non-veg dietary badge
+  static const Color cardShadow = Color(0x0A142B4A);   // Subtle navy shadow
 
   static List<BoxShadow> get subtleShadow => [
         BoxShadow(
-          color: const Color(0x0A17211B),
+          color: const Color(0x0A142B4A),
           blurRadius: 16,
           offset: const Offset(0, 4),
         ),
@@ -32,7 +32,7 @@ class AppColors {
 
   static List<BoxShadow> get floatingShadow => [
         BoxShadow(
-          color: const Color(0x1417211B),
+          color: const Color(0x14142B4A),
           blurRadius: 24,
           offset: const Offset(0, 8),
         ),

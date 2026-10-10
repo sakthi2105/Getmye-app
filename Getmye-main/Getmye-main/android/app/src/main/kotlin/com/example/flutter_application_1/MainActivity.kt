@@ -17,6 +17,7 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.getmye.alarm"
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
+    private var isAlarmRunning = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -37,20 +38,38 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startAlarm() {
-        if (mediaPlayer?.isPlaying == true) return
+        if (isAlarmRunning && mediaPlayer?.isPlaying == true) return
+        isAlarmRunning = true
 
         try {
             val resId = resources.getIdentifier("order_alarm", "raw", packageName)
             if (resId != 0) {
-                mediaPlayer = MediaPlayer.create(applicationContext, resId)?.apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                    isLooping = true
-                    start()
+                val afd = resources.openRawResourceFd(resId)
+                if (afd != null) {
+                    mediaPlayer?.release()
+                    mediaPlayer = MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        afd.close()
+                        isLooping = true
+                        setOnCompletionListener { mp ->
+                            if (isAlarmRunning) {
+                                try {
+                                    mp.seekTo(0)
+                                    mp.start()
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                        }
+                        prepare()
+                        start()
+                    }
                 }
             } else {
                 var alertUri: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
@@ -61,6 +80,7 @@ class MainActivity : FlutterActivity() {
                     alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
                 }
 
+                mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
                     setDataSource(applicationContext, alertUri!!)
                     setAudioAttributes(
@@ -70,6 +90,16 @@ class MainActivity : FlutterActivity() {
                             .build()
                     )
                     isLooping = true
+                    setOnCompletionListener { mp ->
+                        if (isAlarmRunning) {
+                            try {
+                                mp.seekTo(0)
+                                mp.start()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
                     prepare()
                     start()
                 }
@@ -96,6 +126,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun stopAlarm() {
+        isAlarmRunning = false
         try {
             mediaPlayer?.let {
                 if (it.isPlaying) {

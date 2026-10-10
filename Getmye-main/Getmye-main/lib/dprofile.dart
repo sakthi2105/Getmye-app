@@ -1,10 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_application_1/homed.dart';
+import 'api_config.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
+import 'dlogin.dart';
 
 // ignore: camel_case_types
 class dEditProfilePage extends StatefulWidget {
@@ -23,6 +27,7 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
   final TextEditingController addressController = TextEditingController();
 
   String? _profileImagePath;
+  String? _profileBase64;
   String bankAccount = "";
   String bankName = "";
   String bankIFSC = "";
@@ -43,7 +48,7 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
     super.dispose();
   }
 
-  /// Load persisted profile details from SharedPreferences
+  /// Load persisted profile details from SharedPreferences & backend
   Future<void> _loadProfile() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -52,15 +57,53 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
       emailController.text = prefs.getString('d_email') ?? '';
       addressController.text = prefs.getString('d_address') ?? '';
       _profileImagePath = prefs.getString('d_profile_image');
+      _profileBase64 = prefs.getString('d_profile_picture_base64');
 
       bankAccount = prefs.getString('d_bank_account') ?? '';
       bankName = prefs.getString('d_bank_name') ?? '';
       bankIFSC = prefs.getString('d_bank_ifsc') ?? '';
       bankBranch = prefs.getString('d_bank_branch') ?? '';
     });
+
+    final dId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? phoneController.text.trim();
+    if (dId.isNotEmpty && (_profileImagePath == null || !File(_profileImagePath!).existsSync())) {
+      try {
+        final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/$dId'));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final b64 = data['profile_picture']?.toString();
+          if (b64 != null && b64.isNotEmpty && mounted) {
+            await prefs.setString('d_profile_picture_base64', b64);
+            setState(() {
+              _profileBase64 = b64;
+            });
+          }
+        }
+      } catch (_) {}
+    }
   }
 
-  /// Save profile details to SharedPreferences
+  Future<void> _syncProfileToBackend(String? base64Img) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
+      final phone = phoneController.text.trim().isNotEmpty ? phoneController.text.trim() : (prefs.getString('d_phone') ?? '');
+      await http.put(
+        Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/update'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'dp_id': pId,
+          'mobile_number': phone,
+          'name': nameController.text.trim(),
+          'email': emailController.text.trim(),
+          'address': addressController.text.trim(),
+          if (base64Img != null) 'profile_picture_base64': base64Img,
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /// Save profile details to SharedPreferences and sync to backend
   Future<void> _saveProfile() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('d_name', nameController.text.trim());
@@ -72,6 +115,16 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
     await prefs.setString('d_bank_name', bankName);
     await prefs.setString('d_bank_ifsc', bankIFSC);
     await prefs.setString('d_bank_branch', bankBranch);
+
+    String? b64 = _profileBase64;
+    if (_profileImagePath != null && File(_profileImagePath!).existsSync()) {
+      try {
+        final bytes = await File(_profileImagePath!).readAsBytes();
+        b64 = base64Encode(bytes);
+        await prefs.setString('d_profile_picture_base64', b64);
+      } catch (_) {}
+    }
+    _syncProfileToBackend(b64);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -119,11 +172,16 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
                     final picker = ImagePicker();
                     final photo = await picker.pickImage(source: ImageSource.camera);
                     if (photo != null) {
+                      final bytes = await photo.readAsBytes();
+                      final b64 = base64Encode(bytes);
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.setString('d_profile_image', photo.path);
+                      await prefs.setString('d_profile_picture_base64', b64);
                       setState(() {
                         _profileImagePath = photo.path;
+                        _profileBase64 = b64;
                       });
+                      _syncProfileToBackend(b64);
                     }
                   } catch (e) {
                     debugPrint("Camera error: $e");
@@ -139,11 +197,16 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
                     final picker = ImagePicker();
                     final photo = await picker.pickImage(source: ImageSource.gallery);
                     if (photo != null) {
+                      final bytes = await photo.readAsBytes();
+                      final b64 = base64Encode(bytes);
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.setString('d_profile_image', photo.path);
+                      await prefs.setString('d_profile_picture_base64', b64);
                       setState(() {
                         _profileImagePath = photo.path;
+                        _profileBase64 = b64;
                       });
+                      _syncProfileToBackend(b64);
                     }
                   } catch (e) {
                     debugPrint("Gallery error: $e");
@@ -236,35 +299,102 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
     );
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+        (route) => false,
+      );
+    }
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.logout_rounded, color: AppColors.danger, size: 22),
+              SizedBox(width: 8),
+              Text('Partner Sign Out', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+            ],
+          ),
+          content: const Text('Are you sure you want to sign out from your Delivery Partner console?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.danger,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('is_logged_in', false);
+                await prefs.remove('account_type');
+                await prefs.remove('d_id');
+                await prefs.remove('active_order_partner_id');
+                await prefs.remove('d_name');
+                await prefs.remove('d_phone');
+                await prefs.remove('d_email');
+                await prefs.remove('d_address');
+                await prefs.setBool('d_is_online', false);
+                await prefs.remove('d_profile_image');
+                await prefs.remove('d_profile_picture_base64');
+                await prefs.remove('active_order_id');
+                await prefs.remove('active_order_customer_name');
+                await prefs.remove('active_order_partner_name');
+
+                if (!mounted) return;
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DeliveryPersonLoginPage()),
+                  (route) => false,
+                );
+              },
+              child: const Text('Sign Out', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
-          (route) => false,
-        );
+        _handleBackNavigation();
       },
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-            onPressed: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
-                (route) => false,
-              );
-            },
+            onPressed: _handleBackNavigation,
           ),
           title: const Text(
             "Delivery Profile",
             style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
           ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout_rounded, color: AppColors.danger, size: 22),
+              tooltip: "Logout",
+              onPressed: _showLogoutDialog,
+            ),
+          ],
           backgroundColor: Colors.white,
           elevation: 0,
           scrolledUnderElevation: 0,
@@ -290,9 +420,9 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
                         backgroundColor: AppColors.primaryLight,
                         backgroundImage: (_profileImagePath != null && File(_profileImagePath!).existsSync())
                             ? FileImage(File(_profileImagePath!)) as ImageProvider
-                            : const NetworkImage(
-                                "https://m.media-amazon.com/images/I/41p+wBs+RmL.AC_UY1100.jpg",
-                              ),
+                            : (_profileBase64 != null && _profileBase64!.isNotEmpty)
+                                ? MemoryImage(base64Decode(_profileBase64!)) as ImageProvider
+                                : const AssetImage('assets/delivery_boy_toon.png') as ImageProvider,
                       ),
                     ),
                     Container(
@@ -401,6 +531,30 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+
+            // Logout Button
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  backgroundColor: const Color(0xFFFEF2F2),
+                ),
+                icon: const Icon(Icons.logout_rounded, color: AppColors.danger, size: 20),
+                label: const Text(
+                  "Logout from Partner Console",
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.danger),
+                ),
+                onPressed: _showLogoutDialog,
+              ),
+            ),
+            const SizedBox(height: 10),
           ],
         ),
       ),

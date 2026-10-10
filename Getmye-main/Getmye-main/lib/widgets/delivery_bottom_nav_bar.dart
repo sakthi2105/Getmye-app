@@ -49,7 +49,7 @@ class DeliveryBottomNavBar extends StatelessWidget {
         (route) => false,
       );
     } else {
-      Navigator.pushReplacement(
+      Navigator.push(
         context,
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => destination,

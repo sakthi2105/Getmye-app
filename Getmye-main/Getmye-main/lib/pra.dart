@@ -117,7 +117,7 @@ class DeliveryDetailsPage extends StatelessWidget {
                       Text("Customer: ${delivery['name']}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                       SizedBox(height: 5),
                       Text("Food Item: ${delivery['food']}", style: TextStyle(fontSize: 14)),
-                      Text("Budget: ${delivery['budget']}", style: TextStyle(fontSize: 14, color: Colors.green)),
+                      Text("Budget: ${delivery['budget']}", style: const TextStyle(fontSize: 14, color: AppColors.primary, fontWeight: FontWeight.bold)),
                       Text("Address: ${delivery['address']}", style: TextStyle(fontSize: 14)),
                       Text("Delivery Time: ${delivery['time']}", style: TextStyle(fontSize: 14, color: Colors.red)),
                     ],

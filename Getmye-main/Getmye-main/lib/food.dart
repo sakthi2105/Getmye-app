@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 void main() {
   runApp(MaterialApp(
@@ -42,20 +44,38 @@ class FoodComboPage extends StatelessWidget {
 
   FoodComboPage({super.key});
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAF9),
-      appBar: AppBar(
-        title: const Text("Food Combos", style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF17211B))),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF17211B)),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAF9),
+        appBar: AppBar(
+          title: const Text("Food Combos", style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF17211B))),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF17211B)),
+            onPressed: () => _handleBackNavigation(context),
+          ),
         ),
-      ),
       body: GridView.builder(
         padding: const EdgeInsets.all(16.0),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -108,14 +128,14 @@ class FoodComboPage extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         food["price"]!,
-                        style: const TextStyle(color: Color(0xFF15803D), fontWeight: FontWeight.w800, fontSize: 15),
+                        style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800, fontSize: 15),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF22C55E),
+                            backgroundColor: AppColors.primary,
                             elevation: 0,
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -137,27 +157,46 @@ class FoodComboPage extends StatelessWidget {
           );
         },
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class OrderDetailsPage extends StatelessWidget {
   final String foodName;
   const OrderDetailsPage({super.key, required this.foodName});
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAF9),
-      appBar: AppBar(
-        title: const Text("Order Details", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF17211B))),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF17211B)),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAF9),
+        appBar: AppBar(
+          title: const Text("Order Details", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF17211B))),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF17211B)),
+            onPressed: () => _handleBackNavigation(context),
+          ),
         ),
-      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -167,28 +206,28 @@ class OrderDetailsPage extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: const BoxDecoration(
-                  color: Color(0xFFDCFCE7),
+                  color: AppColors.primaryLight,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.check_circle_rounded, size: 60, color: Color(0xFF15803D)),
+                child: const Icon(Icons.check_circle_rounded, size: 60, color: AppColors.primary),
               ),
               const SizedBox(height: 20),
               Text(
                 "$foodName Ordered Successfully!",
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF17211B)),
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
               ),
               const SizedBox(height: 10),
               const Text(
                 "Your order has been sent to the kitchen and will be delivered shortly.",
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF6B756D), fontSize: 13),
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF22C55E),
+                  backgroundColor: AppColors.primary,
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
@@ -198,6 +237,7 @@ class OrderDetailsPage extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

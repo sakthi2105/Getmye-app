@@ -273,8 +273,7 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
               opacity: showGreenOverlay ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 500),
               child: Container(
-                // ignore: deprecated_member_use
-                color: Colors.green.withOpacity(0.9),
+                color: AppColors.primary.withValues(alpha: 0.95),
                 child: const Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

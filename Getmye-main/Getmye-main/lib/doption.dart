@@ -6,6 +6,7 @@ import 'package:flutter_application_1/wallet.dart';
 import 'package:flutter_application_1/main.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -49,6 +50,18 @@ class dOptionsPage extends StatelessWidget {
     }
   }
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final optionsList = [
@@ -61,37 +74,44 @@ class dOptionsPage extends StatelessWidget {
       'Advertisement',
     ];
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Partner Support & Settings',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.2,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: () => _handleBackNavigation(context),
           ),
+          title: const Text(
+            'Partner Support & Settings',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.2,
+            ),
+          ),
+          centerTitle: true,
         ),
-        centerTitle: true,
+        body: ListView.separated(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          itemCount: optionsList.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, index) {
+            final title = optionsList[index];
+            return _buildOption(context, title);
+          },
+        ),
+        bottomNavigationBar: const DeliveryBottomNavBar(currentIndex: 4),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        itemCount: optionsList.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          final title = optionsList[index];
-          return _buildOption(context, title);
-        },
-      ),
-      bottomNavigationBar: const DeliveryBottomNavBar(currentIndex: 4),
     );
   }
 
@@ -136,11 +156,28 @@ class dOptionsPage extends StatelessWidget {
           size: 16,
           color: AppColors.textMuted,
         ),
-        onTap: () {
+        onTap: () async {
           if (title == 'Switch to Customer Side') {
-            Navigator.push(
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('is_logged_in', false);
+            await prefs.remove('account_type');
+            await prefs.remove('user_id');
+            await prefs.remove('user_name');
+            await prefs.remove('user_email');
+            await prefs.remove('mobile_number');
+            await prefs.remove('active_order_id');
+            await prefs.remove('active_order_customer_name');
+            await prefs.remove('active_order_partner_name');
+            if (!context.mounted) return;
+            Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const LoginPage()),
+              MaterialPageRoute(
+                builder: (context) => const LoginPage(
+                  initialRole: 'customer',
+                  forceShowLogin: true,
+                ),
+              ),
+              (route) => false,
             );
             return;
           }

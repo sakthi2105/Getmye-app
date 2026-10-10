@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'services/route_service.dart';
 import 'package:flutter_application_1/dhome.dart';
 import 'package:flutter_application_1/options.dart';
 import 'package:flutter_application_1/pay.dart';
@@ -15,7 +17,6 @@ import 'package:flutter_application_1/profile.dart';
 import 'address.dart';
 import 'api_config.dart';
 import 'services/order_chat_sheet.dart';
-import 'services/app_notification_service.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 
@@ -53,6 +54,8 @@ class _HomePageState extends State<HomePage> {
   bool hasRiderAccepted = false;
   String assignedPartnerName = "Karthi (Partner)";
   String assignedPartnerPhone = "+91 98765 43210";
+  String? assignedPartnerProfileImage;
+  List<LatLng> _trackingRoutePoints = [];
   Timer? _searchRiderTimer;
   Timer? _riderTrackingTimer;
   Timer? _inOrderChatTimer;
@@ -178,15 +181,28 @@ class _HomePageState extends State<HomePage> {
     final prefs = await SharedPreferences.getInstance();
     final shortA = prefs.getString('customer_address_short');
     final fullA = prefs.getString('customer_address_full');
-    if (shortA != null && shortA.isNotEmpty && !shortA.contains('Coimbatore') && !shortA.contains('Gandhipuram')) {
+    final lat = prefs.getDouble('customer_latitude');
+    final lng = prefs.getDouble('customer_longitude');
+
+    if (shortA != null && shortA.isNotEmpty) {
       setState(() {
         _currentAddressShort = shortA;
-        _currentAddressFull = (fullA != null && !fullA.contains('Coimbatore') && !fullA.contains('Gandhipuram')) ? fullA : shortA;
+        _currentAddressFull = (fullA != null && fullA.isNotEmpty) ? fullA : shortA;
+      });
+    }
+
+    if (lat != null && lng != null) {
+      setState(() {
+        _customerLocation = LatLng(lat, lng);
+        _riderLocation = LatLng(lat + 0.003, lng + 0.003);
       });
     }
 
     final savedPName = prefs.getString('active_order_partner_name');
     final savedPPhone = prefs.getString('active_order_partner_phone');
+    final savedPic = prefs.getString('active_order_partner_pic') ??
+        prefs.getString('active_order_partner_image') ??
+        prefs.getString('d_profile_picture_base64');
     if (savedPName != null && savedPName.isNotEmpty) {
       setState(() {
         assignedPartnerName = "$savedPName (Partner)";
@@ -197,17 +213,23 @@ class _HomePageState extends State<HomePage> {
         assignedPartnerPhone = savedPPhone;
       });
     }
+    if (savedPic != null && savedPic.isNotEmpty) {
+      setState(() {
+        assignedPartnerProfileImage = savedPic;
+      });
+    }
 
     if (savedPName != null && savedPName.isNotEmpty) {
       _startRiderLocationPolling();
       _startOrderChatPolling();
+      _fetchTrackingRoadRoute();
     }
 
-    // Always request live location permission on app launch as required
-    await _requestLiveLocation(silent: false);
+    // Refresh GPS coordinates silently in background without wiping customer's saved address
+    await _requestLiveLocation(silent: true, forceOverrideAddress: false);
   }
 
-  Future<void> _requestLiveLocation({bool silent = false}) async {
+  Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = false}) async {
     try {
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -228,47 +250,63 @@ class _HomePageState extends State<HomePage> {
         if (position == null) return;
         final curPos = position;
 
-        String shortA = "Current Location";
-        String fullA = "Live Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
-
-        try {
-          final geoRes = await http.get(
-            Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}'),
-            headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
-          ).timeout(const Duration(seconds: 4));
-
-          if (geoRes.statusCode == 200) {
-            final geoData = jsonDecode(geoRes.body);
-            final address = geoData['address'];
-            if (address != null) {
-              final road = address['road'] ?? address['suburb'] ?? address['neighbourhood'] ?? '';
-              final city = address['city'] ?? address['town'] ?? address['village'] ?? address['state_district'] ?? '';
-              if (road.isNotEmpty && city.isNotEmpty) {
-                shortA = '$road, $city';
-              } else if (road.isNotEmpty) {
-                shortA = road;
-              } else if (city.isNotEmpty) {
-                shortA = city;
-              }
-              fullA = geoData['display_name'] ?? (shortA != "Current Location" ? shortA : fullA);
-            }
-          }
-        } catch (_) {}
-
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('customer_address_short', shortA);
-        await prefs.setString('customer_address_full', fullA);
-        await prefs.setString('active_order_customer_address', fullA);
+        await prefs.setDouble('customer_latitude', curPos.latitude);
+        await prefs.setDouble('customer_longitude', curPos.longitude);
+
         if (mounted) {
           setState(() {
             _customerLocation = LatLng(curPos.latitude, curPos.longitude);
             _riderLocation = LatLng(curPos.latitude + 0.003, curPos.longitude + 0.003);
-            _currentAddressShort = shortA;
-            _currentAddressFull = fullA;
           });
           _trackingMapController?.animateCamera(
             CameraUpdate.newLatLngZoom(_customerLocation, 15.0),
           );
+        }
+
+        final existingShort = prefs.getString('customer_address_short');
+        final hasCustomAddress = existingShort != null &&
+            existingShort.isNotEmpty &&
+            existingShort != "Current Location";
+
+        if (!hasCustomAddress || forceOverrideAddress) {
+          String shortA = "Current Location";
+          String fullA = "Live Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
+
+          try {
+            final geoRes = await http.get(
+              Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}'),
+              headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
+            ).timeout(const Duration(seconds: 4));
+
+            if (geoRes.statusCode == 200) {
+              final geoData = jsonDecode(geoRes.body);
+              final address = geoData['address'];
+              if (address != null) {
+                final road = address['road'] ?? address['suburb'] ?? address['neighbourhood'] ?? '';
+                final city = address['city'] ?? address['town'] ?? address['village'] ?? address['state_district'] ?? '';
+                if (road.isNotEmpty && city.isNotEmpty) {
+                  shortA = '$road, $city';
+                } else if (road.isNotEmpty) {
+                  shortA = road;
+                } else if (city.isNotEmpty) {
+                  shortA = city;
+                }
+                fullA = geoData['display_name'] ?? (shortA != "Current Location" ? shortA : fullA);
+              }
+            }
+          } catch (_) {}
+
+          await prefs.setString('customer_address_short', shortA);
+          await prefs.setString('customer_address_full', fullA);
+          await prefs.setString('active_order_customer_address', fullA);
+
+          if (mounted) {
+            setState(() {
+              _currentAddressShort = shortA;
+              _currentAddressFull = fullA;
+            });
+          }
         }
       }
     } catch (e) {
@@ -296,17 +334,6 @@ class _HomePageState extends State<HomePage> {
         final List remoteList = data['messages'] ?? [];
         if (mounted) {
           final mapped = remoteList.map((e) => Map<String, dynamic>.from(e)).toList();
-          if (mapped.length > _inOrderChatMessages.length && _inOrderChatMessages.isNotEmpty) {
-            for (int i = _inOrderChatMessages.length; i < mapped.length; i++) {
-              final m = mapped[i];
-              if (m['sender'] == 'partner') {
-                AppNotificationService.showChatMessageNotification(
-                  senderName: assignedPartnerName,
-                  message: m['text']?.toString() ?? '',
-                );
-              }
-            }
-          }
           setState(() {
             _inOrderChatMessages = mapped;
           });
@@ -323,9 +350,40 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<void> _fetchTrackingRoadRoute() async {
+    try {
+      final points = await RouteService.getRoadRoute(_riderLocation, _customerLocation);
+      if (mounted && points.isNotEmpty) {
+        setState(() {
+          _trackingRoutePoints = points;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _fitTrackingMapBounds() {
+    if (_trackingMapController == null) return;
+    try {
+      final southwest = LatLng(
+        min(_riderLocation.latitude, _customerLocation.latitude),
+        min(_riderLocation.longitude, _customerLocation.longitude),
+      );
+      final northeast = LatLng(
+        max(_riderLocation.latitude, _customerLocation.latitude),
+        max(_riderLocation.longitude, _customerLocation.longitude),
+      );
+      final bounds = LatLngBounds(southwest: southwest, northeast: northeast);
+      _trackingMapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 36));
+    } catch (_) {
+      _trackingMapController?.animateCamera(CameraUpdate.newLatLng(_riderLocation));
+    }
+  }
+
   Future<void> _fetchRiderLocation() async {
     try {
-      final res = await http.get(ApiConfig.trackingByPartner('DP001')).timeout(const Duration(seconds: 4));
+      final prefs = await SharedPreferences.getInstance();
+      final pId = prefs.getString('active_order_partner_id') ?? 'DP001';
+      final res = await http.get(ApiConfig.trackingByPartner(pId)).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final loc = data['location'];
@@ -336,6 +394,8 @@ class _HomePageState extends State<HomePage> {
             setState(() {
               _riderLocation = LatLng(lat, lng);
             });
+            _fitTrackingMapBounds();
+            _fetchTrackingRoadRoute();
           }
         }
       }
@@ -373,7 +433,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        backgroundColor: const Color(0xFF15803D),
+        backgroundColor: AppColors.primary,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 3),
@@ -528,96 +588,391 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _showLocationPickerSheet() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedShort = prefs.getString('customer_address_short') ?? _currentAddressShort;
-    final savedFull = prefs.getString('customer_address_full') ?? _currentAddressFull;
+    final userId = prefs.getString('user_id');
+    final activeAddId = prefs.getString('active_delivery_add_id');
+
+    List<dynamic> savedAddresses = [];
+    bool isFetchingList = true;
 
     if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      "Delivery Location",
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.manage_accounts_rounded, size: 16, color: AppColors.primary),
-                      label: const Text("Manage in Profile", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressScreen())).then((_) => _loadSavedLocation());
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            if (isFetchingList && userId != null && userId.isNotEmpty) {
+              http.get(ApiConfig.addressList(userId)).then((res) {
+                if (res.statusCode == 200) {
+                  final data = jsonDecode(res.body);
+                  if (data is Map && data['addresses'] is List) {
+                    if (modalCtx.mounted) {
+                      setModalState(() {
+                        savedAddresses = data['addresses'] as List;
+                        isFetchingList = false;
+                      });
+                    }
+                    return;
+                  }
+                }
+                if (modalCtx.mounted) setModalState(() => isFetchingList = false);
+              }).catchError((_) {
+                if (modalCtx.mounted) setModalState(() => isFetchingList = false);
+              });
+            } else if (isFetchingList) {
+              isFetchingList = false;
+            }
 
-                // Option 1: Live GPS Location Button
-                Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFF93C5FD)),
-                  ),
-                  child: ListTile(
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF2563EB),
-                        shape: BoxShape.circle,
+            return Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
                       ),
-                      child: const Icon(Icons.my_location_rounded, color: Colors.white, size: 18),
-                    ),
-                    title: const Text("Use Current Live Location (GPS)", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF1E40AF))),
-                    subtitle: const Text("Detect your location via phone GPS satellite", style: TextStyle(fontSize: 11, color: Color(0xFF3B82F6))),
-                    onTap: () async {
-                      Navigator.pop(ctx);
-                      await _requestLiveLocation(silent: false);
-                    },
-                  ),
-                ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Delivery Location",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                "Choose or add address for quick delivery",
+                                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                          TextButton.icon(
+                            icon: const Icon(Icons.settings_outlined, size: 16, color: AppColors.primary),
+                            label: const Text(
+                              "Manage",
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const AddressScreen()),
+                              ).then((_) => _loadSavedLocation());
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
 
-                // Option 2: Active Profile Address
-                Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.primary, width: 1.5),
-                  ),
-                  child: ListTile(
-                    leading: const Icon(Icons.home_rounded, color: AppColors.primary, size: 24),
-                    title: Text(savedShort, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
-                    subtitle: Text(savedFull, style: const TextStyle(fontSize: 12)),
-                    trailing: const Icon(Icons.check_circle_rounded, color: AppColors.primary),
-                    onTap: () => Navigator.pop(ctx),
+                      // Quick Option 1: Use Current Location (GPS)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFF93C5FD)),
+                        ),
+                        child: ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF2563EB),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.my_location_rounded, color: Colors.white, size: 18),
+                          ),
+                          title: const Text(
+                            "Use Current Location (GPS)",
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF1E40AF)),
+                          ),
+                          subtitle: const Text(
+                            "Auto-detect live GPS location and set as delivery address",
+                            style: TextStyle(fontSize: 11, color: Color(0xFF3B82F6)),
+                          ),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text("Detecting live GPS location..."),
+                                duration: Duration(seconds: 1),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                            await _requestLiveLocation(silent: false, forceOverrideAddress: true);
+                          },
+                        ),
+                      ),
+
+                      // Quick Option 2: Enter Location Manually
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.add_location_alt_rounded, color: AppColors.primary, size: 18),
+                          ),
+                          title: const Text(
+                            "Enter Location Manually",
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                          ),
+                          subtitle: const Text(
+                            "Type house number, street, landmark, and pincode",
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const AddressScreen()),
+                            ).then((_) => _loadSavedLocation());
+                          },
+                        ),
+                      ),
+
+                      const Text(
+                        "Saved Addresses",
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
+                      ),
+                      const SizedBox(height: 8),
+
+                      Flexible(
+                        child: isFetchingList
+                            ? const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2),
+                                ),
+                              )
+                            : savedAddresses.isEmpty
+                                ? Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.background,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.home_work_outlined, color: AppColors.textMuted, size: 22),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            "Current: $_currentAddressShort\nTap 'Enter Location Manually' above to save home/work.",
+                                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    shrinkWrap: true,
+                                    itemCount: savedAddresses.length,
+                                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                    itemBuilder: (itemCtx, index) {
+                                      final addr = Map<String, dynamic>.from(savedAddresses[index]);
+                                      final addId = addr['add_id']?.toString();
+                                      final line1 = addr['line1']?.toString() ?? 'Saved Address';
+                                      final city = addr['city']?.toString() ?? '';
+                                      final state = addr['state']?.toString() ?? '';
+                                      final pincode = addr['pincode']?.toString() ?? '';
+                                      final full = [line1, addr['line2'], city, state, pincode]
+                                          .where((p) => p != null && p.toString().trim().isNotEmpty)
+                                          .join(', ');
+
+                                      final isSelected = (addId != null && addId == activeAddId) ||
+                                          _currentAddressFull == full ||
+                                          _currentAddressShort == line1 ||
+                                          _currentAddressShort == city;
+
+                                      return InkWell(
+                                        borderRadius: BorderRadius.circular(12),
+                                        onTap: () async {
+                                          final p = await SharedPreferences.getInstance();
+                                          final shortA = city.isNotEmpty ? city : line1;
+                                          final fullA = full.isNotEmpty ? full : shortA;
+
+                                          await p.setString('customer_address_short', shortA);
+                                          await p.setString('customer_address_full', fullA);
+                                          await p.setString('active_order_customer_address', fullA);
+                                          if (addId != null) {
+                                            await p.setString('active_delivery_add_id', addId);
+                                          }
+
+                                          if (addr['latitude'] != null && addr['longitude'] != null) {
+                                            final lat = (addr['latitude'] as num).toDouble();
+                                            final lng = (addr['longitude'] as num).toDouble();
+                                            await p.setDouble('customer_latitude', lat);
+                                            await p.setDouble('customer_longitude', lng);
+                                            if (mounted) {
+                                              setState(() {
+                                                _customerLocation = LatLng(lat, lng);
+                                                _riderLocation = LatLng(lat + 0.003, lng + 0.003);
+                                              });
+                                            }
+                                          }
+
+                                          if (userId != null && addId != null) {
+                                            try {
+                                              await http.post(
+                                                ApiConfig.addressSetDefault,
+                                                headers: {'Content-Type': 'application/json'},
+                                                body: jsonEncode({'add_id': addId, 'user_id': userId}),
+                                              );
+                                            } catch (_) {}
+                                          }
+
+                                          if (mounted) {
+                                            setState(() {
+                                              _currentAddressShort = shortA;
+                                              _currentAddressFull = fullA;
+                                            });
+                                          }
+
+                                          if (modalCtx.mounted) {
+                                            Navigator.pop(modalCtx);
+                                          }
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text("Selected delivery location: $shortA"),
+                                              backgroundColor: AppColors.primary,
+                                              behavior: SnackBarBehavior.floating,
+                                            ),
+                                          );
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                          decoration: BoxDecoration(
+                                            color: isSelected ? const Color(0xFFE8F2FF) : Colors.white,
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: isSelected ? AppColors.primary : const Color(0xFFE2E8F0),
+                                              width: isSelected ? 1.5 : 1.0,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                isSelected ? Icons.check_circle_rounded : Icons.location_on_outlined,
+                                                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                                                size: 22,
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      line1,
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      full,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              if (isSelected)
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                  decoration: BoxDecoration(
+                                                    color: AppColors.primary,
+                                                    borderRadius: BorderRadius.circular(6),
+                                                  ),
+                                                  child: const Text(
+                                                    "ACTIVE",
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 10,
+                                                      fontWeight: FontWeight.w800,
+                                                      letterSpacing: 0.5,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
   }
 
+  DateTime? _lastBackPressTime;
+
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+          _lastBackPressTime = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Press back again to exit'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
@@ -670,8 +1025,9 @@ class _HomePageState extends State<HomePage> {
         ),
         bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 0),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // Top Wine Header
   Widget _buildWineHeader(BuildContext context) {
@@ -683,9 +1039,9 @@ class _HomePageState extends State<HomePage> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFF260117), // Deep maroon/wine
-            Color(0xFF380323), // Rich wine
-            Color(0xFF2B011A), // Dark wine
+            Color(0xFF0C1B30), // Deep Midnight Navy
+            Color(0xFF142B4A), // Primary Navy Blue (#142B4A)
+            Color(0xFF19355C), // Rich Navy
           ],
         ),
       ),
@@ -909,7 +1265,7 @@ class _HomePageState extends State<HomePage> {
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF15803D),
+                                        color: AppColors.primary,
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: const Text(
@@ -1174,6 +1530,8 @@ class _HomePageState extends State<HomePage> {
                       'item_name': itemText,
                       'budget': budgetVal,
                       'cod_otp': customerFixedOtp,
+                      'customer_latitude': _customerLocation.latitude,
+                      'customer_longitude': _customerLocation.longitude,
                     }),
                   );
                   if (res.statusCode == 200 || res.statusCode == 201) {
@@ -1219,11 +1577,15 @@ class _HomePageState extends State<HomePage> {
                         final pName = order['partner_name'] ?? 'Karthi';
                         final pPhone = order['partner_phone'] ?? '+91 98765 43210';
                         final pId = order['partner_id'] ?? 'DP001';
+                        final pPic = order['partner_profile_picture'] ?? order['partner_image'];
 
                         final p = await SharedPreferences.getInstance();
                         await p.setString('active_order_partner_name', pName);
                         await p.setString('active_order_partner_phone', pPhone);
                         await p.setString('active_order_partner_id', pId);
+                        if (pPic != null && pPic.isNotEmpty) {
+                          await p.setString('active_order_partner_image', pPic);
+                        }
                         await p.setString('active_order_status', order['status']);
                         await p.setBool('active_order_partner_accepted', true);
 
@@ -1233,8 +1595,12 @@ class _HomePageState extends State<HomePage> {
                             hasRiderAccepted = true;
                             assignedPartnerName = "$pName (Partner)";
                             assignedPartnerPhone = pPhone;
+                            if (pPic != null && pPic.isNotEmpty) {
+                              assignedPartnerProfileImage = pPic;
+                            }
                           });
                           _startRiderLocationPolling();
+                          _fetchTrackingRoadRoute();
                           scrollToBottom();
                         }
                       }
@@ -1344,12 +1710,12 @@ class _HomePageState extends State<HomePage> {
                 margin: const EdgeInsets.only(left: 6),
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFDCFCE7),
+                  color: AppColors.primaryLight,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
                   "Profile",
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF15803D)),
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.primary),
                 ),
               ),
               const SizedBox(width: 6),
@@ -1366,6 +1732,57 @@ class _HomePageState extends State<HomePage> {
       return const BikeRoadSearchingAnimation();
     }
     return _buildAssignedPartnerContainer();
+  }
+
+  Widget _buildAssignedPartnerAvatar() {
+    if (assignedPartnerProfileImage != null && assignedPartnerProfileImage!.isNotEmpty) {
+      final img = assignedPartnerProfileImage!.trim();
+      if (img.startsWith('http://') || img.startsWith('https://')) {
+        return Image.network(
+          img,
+          fit: BoxFit.cover,
+          width: 56,
+          height: 56,
+          errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
+        );
+      } else if (img.startsWith('/') || img.startsWith('file:') || img.contains('\\')) {
+        final f = File(img);
+        if (f.existsSync()) {
+          return Image.file(
+            f,
+            fit: BoxFit.cover,
+            width: 56,
+            height: 56,
+            errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
+          );
+        }
+      }
+      // 🖼️ Base64 Image Decoder (supports both raw base64 and data:image URI strings)
+      try {
+        final b64 = img.contains(',') ? img.split(',').last.trim() : img;
+        final bytes = base64Decode(b64);
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          width: 56,
+          height: 56,
+          errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
+        );
+      } catch (_) {}
+    }
+    return _buildFallbackPartnerAvatar();
+  }
+
+  Widget _buildFallbackPartnerAvatar() {
+    return Image.asset(
+      'assets/delivery_boy_toon.png',
+      fit: BoxFit.cover,
+      errorBuilder: (ctx, err, stack) => const CircleAvatar(
+        radius: 28,
+        backgroundColor: AppColors.primaryLight,
+        child: Icon(Icons.person_rounded, color: AppColors.primaryDark, size: 28),
+      ),
+    );
   }
 
   // Assigned delivery partner with live GPS map tracking
@@ -1399,15 +1816,7 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 child: ClipOval(
-                  child: Image.asset(
-                    'assets/delivery_boy_toon.png',
-                    fit: BoxFit.cover,
-                    errorBuilder: (ctx, err, stack) => const CircleAvatar(
-                      radius: 28,
-                      backgroundColor: AppColors.primaryLight,
-                      child: Icon(Icons.person_rounded, color: AppColors.primaryDark, size: 28),
-                    ),
-                  ),
+                  child: _buildAssignedPartnerAvatar(),
                 ),
               ),
               const SizedBox(width: 14),
@@ -1440,8 +1849,8 @@ class _HomePageState extends State<HomePage> {
               ),
               IconButton.filled(
                 style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFFDCFCE7),
-                  foregroundColor: const Color(0xFF15803D),
+                  backgroundColor: AppColors.primaryLight,
+                  foregroundColor: AppColors.primary,
                 ),
                 icon: const Icon(Icons.phone_rounded, size: 20),
                 tooltip: 'Call Delivery Partner',
@@ -1489,7 +1898,10 @@ class _HomePageState extends State<HomePage> {
                       target: _customerLocation,
                       zoom: 15.0,
                     ),
-                    onMapCreated: (ctrl) => _trackingMapController = ctrl,
+                    onMapCreated: (ctrl) {
+                      _trackingMapController = ctrl;
+                      _fitTrackingMapBounds();
+                    },
                     myLocationButtonEnabled: false,
                     zoomControlsEnabled: false,
                     markers: {
@@ -1509,7 +1921,7 @@ class _HomePageState extends State<HomePage> {
                     polylines: {
                       Polyline(
                         polylineId: const PolylineId('route'),
-                        points: [
+                        points: _trackingRoutePoints.isNotEmpty ? _trackingRoutePoints : [
                           _riderLocation,
                           _customerLocation,
                         ],
@@ -2246,8 +2658,8 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
           const SizedBox(
             width: 150,
             child: LinearProgressIndicator(
-              backgroundColor: Color(0xFFDCFCE7),
-              color: AppColors.primaryDark,
+              backgroundColor: AppColors.primaryLight,
+              color: AppColors.primary,
               minHeight: 4,
             ),
           ),
@@ -2257,19 +2669,19 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FDF4),
+              color: AppColors.primarySubtle,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFF86EFAC)),
+              border: Border.all(color: AppColors.border),
             ),
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.wifi_tethering_rounded, color: Color(0xFF15803D), size: 16),
+                Icon(Icons.wifi_tethering_rounded, color: AppColors.primary, size: 16),
                 SizedBox(width: 8),
                 Text(
                   "Waiting for Delivery Partner Acceptance",
                   style: TextStyle(
-                    color: Color(0xFF15803D),
+                    color: AppColors.primary,
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
                   ),

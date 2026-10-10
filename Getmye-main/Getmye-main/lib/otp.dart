@@ -150,7 +150,7 @@ class _OtpScreenState extends State<OtpScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text("A new OTP was dispatched to +91 ${widget.mobileNumber}"),
-                backgroundColor: const Color(0xFF15803D),
+                backgroundColor: AppColors.primary,
                 behavior: SnackBarBehavior.floating,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),

@@ -17,6 +17,7 @@ import 'theme/app_theme.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'ppp.dart';
 import 'homed.dart';
+import 'services/route_service.dart';
 
 class BillItem {
   String name;
@@ -59,6 +60,8 @@ class DeliveryOrder {
   final double deliveryFee;
   String status;
   final String? cancelReason;
+  final double? customerLatitude;
+  final double? customerLongitude;
 
   DeliveryOrder({
     required this.orderId,
@@ -71,6 +74,8 @@ class DeliveryOrder {
     this.deliveryFee = 0.0,
     this.status = "Ready for Pickup",
     this.cancelReason,
+    this.customerLatitude,
+    this.customerLongitude,
   });
 
   double get subtotal => items.fold(0.0, (sum, item) => sum + item.total);
@@ -193,6 +198,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                 deliveryFee: 0.0,
                 status: "cancelled",
                 cancelReason: cReason,
+                customerLatitude: (o['customer_latitude'] as num?)?.toDouble(),
+                customerLongitude: (o['customer_longitude'] as num?)?.toDouble(),
               ),
             );
             continue;
@@ -235,6 +242,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               ],
               deliveryFee: 0.0,
               status: isAccepted ? "Accepted" : (isDeclined ? "declined" : "New Customer Order"),
+              customerLatitude: (o['customer_latitude'] as num?)?.toDouble(),
+              customerLongitude: (o['customer_longitude'] as num?)?.toDouble(),
             ),
           );
         }
@@ -423,23 +432,41 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
     }
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text(
-          "New Orders",
-          style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w800),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text(
+            "New Orders",
+            style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w800),
+          ),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: _handleBackNavigation,
+          ),
         ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
       body: _orders.isEmpty
           ? Center(
               child: Column(
@@ -709,8 +736,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                 children: [
                                   IconButton.filled(
                                     style: IconButton.styleFrom(
-                                      backgroundColor: const Color(0xFFDCFCE7),
-                                      foregroundColor: const Color(0xFF15803D),
+                                      backgroundColor: AppColors.primaryLight,
+                                      foregroundColor: AppColors.primary,
                                       minimumSize: const Size(42, 42),
                                     ),
                                     icon: const Icon(Icons.phone_rounded, size: 18),
@@ -851,7 +878,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                                   Text("Order ${order.orderId} Accepted! Going to buy food."),
                                                 ],
                                               ),
-                                              backgroundColor: const Color(0xFF15803D),
+                                              backgroundColor: AppColors.primary,
                                               behavior: SnackBarBehavior.floating,
                                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                             ),
@@ -872,8 +899,9 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               },
             ),
       bottomNavigationBar: const DeliveryBottomNavBar(currentIndex: 3),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// 2. Delivery Partner Page to Confirm Order and Post Food Bill Image with Items & Prices
@@ -940,20 +968,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final orderData = data['order'] ?? data;
-        // Check for incoming customer chat messages
-        final List remoteMsgs = orderData['messages'] ?? [];
-        if (remoteMsgs.length > _lastSeenMsgCount) {
-          for (int i = _lastSeenMsgCount; i < remoteMsgs.length; i++) {
-            final msg = remoteMsgs[i];
-            if (msg['sender'] == 'customer') {
-              AppNotificationService.showChatMessageNotification(
-                senderName: _order.customerName.isNotEmpty ? _order.customerName : 'Customer',
-                message: msg['text']?.toString() ?? '',
-              );
-            }
-          }
-          _lastSeenMsgCount = remoteMsgs.length;
-        }
+        // Incoming chat messages are tracked globally and deduplicated via AppNotificationService
 
         if (orderData['status'] == 'cancelled') {
           _statusCheckTimer?.cancel();
@@ -1100,12 +1115,14 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
     }
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final currentPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
       await http.post(
         ApiConfig.billSubmit,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'order_id': _order.orderId,
-          'partner_id': 'DP001',
+          'partner_id': currentPartnerId,
           'user_id': 'usr_001',
           'shop_name': _order.restaurantName.isNotEmpty ? _order.restaurantName : 'Restaurant',
           'items': _items.map((i) => {
@@ -1554,6 +1571,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   // Real GPS live location for driver
   LatLng _driverLocation = const LatLng(10.9601, 79.3845);
   LatLng _destinationLocation = const LatLng(10.9625, 79.3870);
+  List<LatLng> _routePoints = [];
+  String? _partnerId;
   GoogleMapController? _navMapController;
   StreamSubscription<Position>? _gpsStreamSubscription;
   Timer? _trackingTimer;
@@ -1562,6 +1581,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   @override
   void initState() {
     super.initState();
+    _loadPartnerId();
+    _initCustomerLocation();
     _initRealGpsNavigation();
 
     // Update order status to in_transit
@@ -1581,6 +1602,34 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
     });
   }
 
+  Future<void> _loadPartnerId() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _partnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
+      });
+    }
+  }
+
+  void _initCustomerLocation() {
+    if (widget.order.customerLatitude != null &&
+        widget.order.customerLongitude != null &&
+        widget.order.customerLatitude != 0.0) {
+      _destinationLocation = LatLng(widget.order.customerLatitude!, widget.order.customerLongitude!);
+    }
+  }
+
+  Future<void> _fetchRoadRoute() async {
+    try {
+      final points = await RouteService.getRoadRoute(_driverLocation, _destinationLocation);
+      if (mounted && points.isNotEmpty) {
+        setState(() {
+          _routePoints = points;
+        });
+      }
+    } catch (_) {}
+  }
+
   Future<void> _initRealGpsNavigation() async {
     try {
       LocationPermission permission = await Geolocator.checkPermission();
@@ -1595,8 +1644,15 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
         if (mounted) {
           setState(() {
             _driverLocation = LatLng(pos.latitude, pos.longitude);
-            _destinationLocation = LatLng(pos.latitude + 0.003, pos.longitude + 0.003);
+            if (widget.order.customerLatitude != null &&
+                widget.order.customerLongitude != null &&
+                widget.order.customerLatitude != 0.0) {
+              _destinationLocation = LatLng(widget.order.customerLatitude!, widget.order.customerLongitude!);
+            } else {
+              _destinationLocation = LatLng(pos.latitude + 0.003, pos.longitude + 0.003);
+            }
           });
+          _fetchRoadRoute();
           _navMapController?.animateCamera(
             CameraUpdate.newLatLngZoom(_driverLocation, 16.0),
           );
@@ -1616,6 +1672,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
         setState(() {
           _driverLocation = LatLng(pos.latitude, pos.longitude);
         });
+        _fetchRoadRoute();
         _broadcastLocation();
       }
     });
@@ -1634,7 +1691,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
       ApiConfig.trackingUpdate,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'partner_id': 'DP001',
+        'partner_id': _partnerId ?? 'DP001',
         'order_id': widget.order.orderId,
         'latitude': _driverLocation.latitude,
         'longitude': _driverLocation.longitude,
@@ -1651,20 +1708,21 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final orderData = data['order'] ?? data;
-        // Check for incoming customer chat messages
-        final List remoteMsgs = orderData['messages'] ?? [];
-        if (remoteMsgs.length > _lastSeenMsgCount) {
-          for (int i = _lastSeenMsgCount; i < remoteMsgs.length; i++) {
-            final msg = remoteMsgs[i];
-            if (msg['sender'] == 'customer') {
-              AppNotificationService.showChatMessageNotification(
-                senderName: widget.order.customerName.isNotEmpty ? widget.order.customerName : 'Customer',
-                message: msg['text']?.toString() ?? '',
-              );
+
+        // Check if customer live GPS is available
+        if (orderData['customer_latitude'] != null && orderData['customer_longitude'] != null) {
+          final cLat = (orderData['customer_latitude'] as num).toDouble();
+          final cLng = (orderData['customer_longitude'] as num).toDouble();
+          if (cLat != 0.0 && (_destinationLocation.latitude != cLat || _destinationLocation.longitude != cLng)) {
+            if (mounted) {
+              setState(() {
+                _destinationLocation = LatLng(cLat, cLng);
+              });
+              _fetchRoadRoute();
             }
           }
-          _lastSeenMsgCount = remoteMsgs.length;
         }
+        // Incoming chat messages are tracked globally and deduplicated via AppNotificationService
 
         if (orderData['status'] == 'cancelled') {
           _trackingTimer?.cancel();
@@ -1970,7 +2028,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
             polylines: {
               Polyline(
                 polylineId: const PolylineId('nav_route'),
-                points: [
+                points: _routePoints.isNotEmpty ? _routePoints : [
                   _driverLocation,
                   _destinationLocation,
                 ],
@@ -2453,10 +2511,10 @@ class CodConfirmedScreen extends StatelessWidget {
                 width: 90,
                 height: 90,
                 decoration: const BoxDecoration(
-                  color: Color(0xFFDCFCE7),
+                  color: AppColors.primaryLight,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.check_circle_rounded, color: Color(0xFF15803D), size: 56),
+                child: const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 56),
               ),
               const SizedBox(height: 20),
               const Text("COD Confirmed!", style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: AppColors.textPrimary)),
@@ -2683,7 +2741,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Bill receipt photo updated successfully!"),
-              backgroundColor: Color(0xFF15803D),
+              backgroundColor: AppColors.primary,
               duration: Duration(seconds: 2),
             ),
           );

@@ -63,6 +63,8 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   @override
   void initState() {
     super.initState();
+    AppNotificationService.isChatOpen = true;
+    AppNotificationService.activeChatOrderId = widget.orderId;
     _loadLocalMessages();
     _fetchRemoteMessages();
     _pollTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
@@ -72,6 +74,8 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
 
   @override
   void dispose() {
+    AppNotificationService.isChatOpen = false;
+    AppNotificationService.activeChatOrderId = null;
     _pollTimer?.cancel();
     _msgController.dispose();
     _scrollController.dispose();
@@ -119,6 +123,8 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
       final prefs = await SharedPreferences.getInstance();
       final key = 'order_${widget.orderId}_chat_messages';
       await prefs.setString(key, jsonEncode(_messages));
+      await prefs.setInt('global_last_seen_msg_count_${widget.orderId}', _messages.length);
+      await prefs.setInt('global_last_seen_msg_count_${widget.senderRole}_${widget.orderId}', _messages.length);
     } catch (_) {}
   }
 
@@ -132,18 +138,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
           final mapped = remoteList.map((e) => Map<String, dynamic>.from(e)).toList();
           final hadChange = _messages.length != mapped.length;
 
-          // Notify user of new incoming messages from the opposite role
-          if (remoteList.length > _messages.length && _messages.isNotEmpty) {
-            for (int i = _messages.length; i < remoteList.length; i++) {
-              final msg = remoteList[i];
-              if (msg['sender'] != widget.senderRole) {
-                AppNotificationService.showChatMessageNotification(
-                  senderName: widget.otherPartyName,
-                  message: msg['text']?.toString() ?? '',
-                );
-              }
-            }
-          }
+
 
           setState(() {
             _messages.clear();

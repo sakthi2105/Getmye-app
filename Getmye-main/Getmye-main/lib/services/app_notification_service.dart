@@ -1,10 +1,21 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import '../api_config.dart';
 
 class AppNotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
   static bool _isInitialized = false;
+
+  // Track chat state so notifications don't spam if user is actively looking at the chat sheet
+  static bool isChatOpen = false;
+  static String? activeChatOrderId;
+
+  static Timer? _globalChatPollingTimer;
 
   static Future<void> init() async {
     if (_isInitialized) return;
@@ -22,7 +33,12 @@ class AppNotificationService {
         iOS: iosSettings,
       );
 
-      await _notificationsPlugin.initialize(initSettings);
+      await _notificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          debugPrint("🔔 Notification clicked with payload: ${response.payload}");
+        },
+      );
 
       final androidPlugin = _notificationsPlugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
@@ -108,8 +124,9 @@ class AppNotificationService {
     required String senderName,
     required String message,
   }) async {
+    final uniqueId = DateTime.now().millisecondsSinceEpoch % 100000;
     await showNotification(
-      id: 2002,
+      id: uniqueId,
       title: '💬 Message from $senderName',
       body: message,
     );
@@ -128,5 +145,177 @@ class AppNotificationService {
       title: '🚨 Order Cancelled!',
       body: 'Order $orderId has been cancelled. $rText',
     );
+  }
+
+  // 4. Global Background Chat Polling System for Both Models (Customer & Partner)
+  static void startGlobalChatPolling() {
+    _globalChatPollingTimer?.cancel();
+    // Run immediately once
+    checkAndNotifyNewMessages();
+    // Then poll periodically every 2 seconds
+    _globalChatPollingTimer = Timer.periodic(const Duration(milliseconds: 2000), (_) async {
+      await checkAndNotifyNewMessages();
+    });
+  }
+
+  // Set of message signature keys that have already shown a system notification
+  static final Set<String> _notifiedMessageKeys = {};
+
+  /// Checks whether a message has already been notified on this device.
+  /// If NOT, marks it as notified and returns true. If already notified, returns false.
+  static Future<bool> shouldNotifyMessage(String uniqueKey) async {
+    if (_notifiedMessageKeys.contains(uniqueKey)) return false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> saved = prefs.getStringList('notified_chat_message_keys') ?? [];
+      if (saved.contains(uniqueKey)) {
+        _notifiedMessageKeys.add(uniqueKey);
+        return false;
+      }
+      _notifiedMessageKeys.add(uniqueKey);
+      saved.add(uniqueKey);
+      if (saved.length > 250) {
+        saved.removeRange(0, saved.length - 250);
+      }
+      await prefs.setStringList('notified_chat_message_keys', saved);
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Generates a unique signature for a message
+  static String getMessageKey(String orderId, Map msg, int index) {
+    final sender = msg['sender']?.toString() ?? '';
+    final text = msg['text']?.toString() ?? '';
+    final time = msg['time']?.toString() ?? '';
+    final timestamp = msg['timestamp']?.toString() ?? '';
+    return '${orderId}_${sender}_${index}_${timestamp.isNotEmpty ? timestamp : time}_${text.hashCode}';
+  }
+
+  static Future<void> checkAndNotifyNewMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+      if (!isLoggedIn) return;
+
+      final String accountType = prefs.getString('account_type') ?? 'customer';
+      String? activeOrderId = prefs.getString('active_order_id');
+
+      // For Customer: If activeOrderId not cached, check active order API
+      if (accountType == 'customer' && (activeOrderId == null || activeOrderId.isEmpty)) {
+        final userId = prefs.getString('user_id');
+        if (userId != null && userId.isNotEmpty) {
+          try {
+            final activeRes = await http.get(ApiConfig.orderActive(userId)).timeout(const Duration(seconds: 3));
+            if (activeRes.statusCode == 200) {
+              final aData = jsonDecode(activeRes.body);
+              if (aData != null && aData['order_id'] != null) {
+                activeOrderId = aData['order_id'].toString();
+                await prefs.setString('active_order_id', activeOrderId);
+                if (aData['partner_name'] != null && aData['partner_name'].toString().isNotEmpty) {
+                  await prefs.setString('active_order_partner_name', aData['partner_name'].toString());
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      // For Partner: If activeOrderId not cached, check partner orders API
+      if (accountType == 'partner' && (activeOrderId == null || activeOrderId.isEmpty)) {
+        final dId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id');
+        if (dId != null && dId.isNotEmpty) {
+          try {
+            final pRes = await http.get(ApiConfig.orderPartner(dId)).timeout(const Duration(seconds: 3));
+            if (pRes.statusCode == 200) {
+              final pList = jsonDecode(pRes.body);
+              if (pList is List && pList.isNotEmpty) {
+                final inProgress = pList.firstWhere(
+                  (o) => o['status'] != 'delivered' && o['status'] != 'cancelled' && o['status'] != 'declined',
+                  orElse: () => null,
+                );
+                if (inProgress != null && inProgress['order_id'] != null) {
+                  activeOrderId = inProgress['order_id'].toString();
+                  await prefs.setString('active_order_id', activeOrderId);
+                  if (inProgress['customer_name'] != null) {
+                    await prefs.setString('active_order_customer_name', inProgress['customer_name'].toString());
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (activeOrderId == null || activeOrderId.isEmpty) return;
+
+      // Query latest messages for the active order
+      final msgRes = await http.get(ApiConfig.orderMessages(activeOrderId)).timeout(const Duration(seconds: 3));
+      if (msgRes.statusCode != 200) return;
+
+      final data = jsonDecode(msgRes.body);
+      final List remoteMessages = data['messages'] ?? [];
+      if (remoteMessages.isEmpty) return;
+
+      final String countKey = 'global_last_seen_msg_count_${accountType}_$activeOrderId';
+      final int lastSeenCount = prefs.getInt(countKey) ?? -1;
+
+      // First time observing this order in this login session / account:
+      // Establish baseline and pre-mark existing messages so NO notifications fire on login!
+      if (lastSeenCount == -1) {
+        for (int i = 0; i < remoteMessages.length; i++) {
+          final m = remoteMessages[i];
+          if (m is Map) {
+            final key = getMessageKey(activeOrderId, m, i);
+            _notifiedMessageKeys.add(key);
+          }
+        }
+        await prefs.setInt(countKey, remoteMessages.length);
+        return;
+      }
+
+      if (remoteMessages.length > lastSeenCount) {
+        for (int i = lastSeenCount; i < remoteMessages.length; i++) {
+          final msg = remoteMessages[i];
+          if (msg is! Map) continue;
+          final sender = msg['sender']?.toString();
+          final text = msg['text']?.toString() ?? '';
+
+          if (text.trim().isEmpty) continue;
+
+          // Unique message key for deduplication across restarts and logins
+          final key = getMessageKey(activeOrderId, msg, i);
+          final canNotify = await shouldNotifyMessage(key);
+          if (!canNotify) continue;
+
+          // 1. Customer receives message from Partner
+          if (accountType == 'customer' && sender == 'partner') {
+            // Only suppress if user currently has this exact chat sheet open on screen
+            if (!isChatOpen || activeChatOrderId != activeOrderId) {
+              final pName = prefs.getString('active_order_partner_name') ?? 'Delivery Partner';
+              await showChatMessageNotification(
+                senderName: pName,
+                message: text,
+              );
+            }
+          }
+
+          // 2. Partner receives message from Customer
+          if (accountType == 'partner' && sender == 'customer') {
+            // Only suppress if user currently has this exact chat sheet open on screen
+            if (!isChatOpen || activeChatOrderId != activeOrderId) {
+              final cName = prefs.getString('active_order_customer_name') ?? 'Customer';
+              await showChatMessageNotification(
+                senderName: cName,
+                message: text,
+              );
+            }
+          }
+        }
+
+        await prefs.setInt(countKey, remoteMessages.length);
+      }
+    } catch (_) {}
   }
 }

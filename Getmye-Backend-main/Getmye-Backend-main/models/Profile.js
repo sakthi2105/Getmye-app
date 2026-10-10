@@ -41,6 +41,14 @@ const ProfileSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  reset_otp: {
+    type: String,
+    default: null
+  },
+  reset_otp_expires_at: {
+    type: Date,
+    default: null
+  },
   created_at: {
     type: Date,
     default: Date.now

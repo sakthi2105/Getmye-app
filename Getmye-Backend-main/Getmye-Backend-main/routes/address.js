@@ -13,9 +13,12 @@ function formatAddress(doc) {
     line2: doc.line2 || '',
     city: doc.city,
     district: doc.district || '',
-    state: doc.state,
-    country: doc.country,
-    pincode: doc.pincode
+    state: doc.state || 'Tamil Nadu',
+    country: doc.country || 'India',
+    pincode: doc.pincode || '',
+    latitude: doc.latitude !== undefined ? doc.latitude : null,
+    longitude: doc.longitude !== undefined ? doc.longitude : null,
+    is_default: Boolean(doc.is_default)
   };
 }
 
@@ -25,33 +28,64 @@ router.get('/list', async (req, res) => {
     const userId = req.query.user_id;
     if (!userId) return res.status(400).json({ message: 'Missing user_id' });
 
-    const addresses = await Address.find({ user_id: userId }).sort({ created_at: -1 });
+    const addresses = await Address.find({ user_id: userId }).sort({ is_default: -1, created_at: -1 });
 
-    res.json({ addresses: addresses.map(formatAddress) });
+    res.json({ success: true, addresses: addresses.map(formatAddress) });
   } catch (err) {
     console.error('❌ GET /api/address/list error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+// POST /api/address/set-default
+router.post('/set-default', async (req, res) => {
+  try {
+    const { add_id, user_id } = req.body;
+    if (!add_id || !user_id) {
+      return res.status(400).json({ message: 'Missing add_id or user_id' });
+    }
+
+    // Unset current defaults for user
+    await Address.updateMany({ user_id }, { is_default: false });
+
+    const updated = await Address.findOneAndUpdate(
+      { add_id, user_id },
+      { is_default: true },
+      { returnDocument: 'after' }
+    );
+
+    res.json({ success: true, message: 'Default address updated', address: formatAddress(updated) });
+  } catch (err) {
+    console.error('❌ Set default address error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // PUT /api/address/update
 router.put('/update', async (req, res) => {
-  const { add_id, user_id, line1, line2, city, district, state, country, pincode } = req.body;
-  if (!add_id || !user_id || !line1 || !city || !state || !country || !pincode) {
-    return res.status(400).json({ message: 'Missing required fields' });
+  const { add_id, user_id, line1, line2, city, district, state, country, pincode, latitude, longitude, is_default } = req.body;
+  if (!add_id || !user_id || !line1) {
+    return res.status(400).json({ message: 'Missing required fields: add_id, user_id, line1' });
   }
 
   try {
+    if (is_default) {
+      await Address.updateMany({ user_id }, { is_default: false });
+    }
+
     const updated = await Address.findOneAndUpdate(
       { add_id, user_id },
       {
-        line1,
-        line2: line2 || '',
-        city,
-        district: district || '',
-        state,
-        country,
-        pincode
+        line1: line1.trim(),
+        line2: (line2 || '').trim(),
+        city: (city || line1).trim(),
+        district: (district || '').trim(),
+        state: (state || 'Tamil Nadu').trim(),
+        country: (country || 'India').trim(),
+        pincode: (pincode || '').toString().trim(),
+        latitude: latitude !== undefined && latitude !== null ? Number(latitude) : null,
+        longitude: longitude !== undefined && longitude !== null ? Number(longitude) : null,
+        is_default: Boolean(is_default)
       },
       { returnDocument: 'after' }
     );
@@ -61,6 +95,7 @@ router.put('/update', async (req, res) => {
     }
 
     res.json({
+      success: true,
       message: 'Address updated successfully',
       updated: formatAddress(updated)
     });
@@ -80,7 +115,7 @@ router.delete('/delete/:add_id', async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ message: 'Address not found' });
     }
-    res.json({ message: 'Address deleted successfully' });
+    res.json({ success: true, message: 'Address deleted successfully' });
   } catch (err) {
     console.error('❌ Delete address error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -89,29 +124,36 @@ router.delete('/delete/:add_id', async (req, res) => {
 
 // POST /api/address/add
 router.post('/add', async (req, res) => {
-  console.log('✅ Received add request body:', req.body);
-  const { user_id, line1, line2, city, district, state, country, pincode } = req.body;
+  const { user_id, line1, line2, city, district, state, country, pincode, latitude, longitude, is_default } = req.body;
 
-  if (!user_id || !line1 || !city || !state || !country || !pincode) {
-    return res.status(400).json({ message: 'Missing required fields' });
+  if (!user_id || !line1) {
+    return res.status(400).json({ message: 'user_id and line1 (address/location) are required' });
   }
 
   try {
     const addId = await getNextSequence('add_id', 'add_', 3);
 
+    if (is_default) {
+      await Address.updateMany({ user_id }, { is_default: false });
+    }
+
     const newAddress = await Address.create({
       add_id: addId,
       user_id,
-      line1,
-      line2: line2 || '',
-      city,
-      district: district || '',
-      state,
-      country,
-      pincode
+      line1: line1.trim(),
+      line2: (line2 || '').trim(),
+      city: (city || line1).trim(),
+      district: (district || '').trim(),
+      state: (state || 'Tamil Nadu').trim(),
+      country: (country || 'India').trim(),
+      pincode: (pincode || '').toString().trim(),
+      latitude: latitude !== undefined && latitude !== null ? Number(latitude) : null,
+      longitude: longitude !== undefined && longitude !== null ? Number(longitude) : null,
+      is_default: Boolean(is_default)
     });
 
     res.json({
+      success: true,
       message: 'Address added successfully',
       added: formatAddress(newAddress)
     });

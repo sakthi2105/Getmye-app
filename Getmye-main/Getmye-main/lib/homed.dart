@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_application_1/deliveryhistroy.dart';
 import 'package:flutter_application_1/delivery_bill_flow.dart';
+import 'package:flutter_application_1/dprofile.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
@@ -36,6 +40,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int totalDeliveries = 120;
   int todayDeliveries = 8;
   String partnerName = "Karthi";
+  String? profileImagePath;
+  String? profileImageBase64;
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   final Set<String> _knownOrderIds = {};
@@ -62,48 +68,95 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     });
   }
 
+  Future<void> _updateLiveLocationToBackend() async {
+    if (!isOnline) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+      final pos = await Geolocator.getLastKnownPosition() ??
+          await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+            timeLimit: const Duration(seconds: 4),
+          );
+      await http.post(
+        ApiConfig.trackingUpdate,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'partner_id': pId,
+          'latitude': pos.latitude,
+          'longitude': pos.longitude,
+          'is_online': isOnline,
+          'status': 'idle',
+        }),
+      );
+    } catch (_) {}
+  }
+
   Future<void> _checkPendingOrders() async {
     if (!isOnline) {
       AlarmService.stopAlarm();
       return;
     }
     try {
-      final res = await http.get(ApiConfig.orderPending);
+      final prefs = await SharedPreferences.getInstance();
+      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
+
+      // 📍 Retrieve live GPS coordinates to enforce 2 KM radius matching
+      double? lat;
+      double? lng;
+      try {
+        final pos = await Geolocator.getLastKnownPosition();
+        if (pos != null) {
+          lat = pos.latitude;
+          lng = pos.longitude;
+        }
+      } catch (_) {}
+
+      final uri = ApiConfig.orderPendingWithParams(
+        partnerId: pId,
+        latitude: lat,
+        longitude: lng,
+      );
+
+      final res = await http.get(uri);
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
+
+        // If backend reports partner is busy on active delivery or offline, stop alarm
+        if (data['is_online'] == false || data['has_active_delivery'] == true) {
+          AlarmService.stopAlarm();
+          if (mounted) {
+            setState(() {
+              pendingOrderCount = 0;
+            });
+          }
+          return;
+        }
+
         final List orders = data['orders'] ?? [];
-        final prefs = await SharedPreferences.getInstance();
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
         final activeId = prefs.getString('active_order_id');
 
-        // Check if any order is cancelled and stop alarm immediately
-        final hasCancelled = orders.any((o) => (o['status']?.toString() ?? '').toLowerCase() == 'cancelled');
-        if (hasCancelled) {
-          AlarmService.stopAlarm();
-        }
-
+        // Only consider pending orders strictly within 2 KM radius
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';
           final status = (o['status']?.toString() ?? '').toLowerCase();
           return !declinedIds.contains(id) &&
               !AlarmService.isOrderSilenced(id) &&
               id != activeId &&
-              status != 'declined' &&
-              status != 'rejected' &&
-              status != 'accepted' &&
-              status != 'cancelled' &&
-              status != 'delivered';
+              status == 'pending';
         }).toList();
 
-        // 🚨 CRITICAL FIX: On initial login/app boot, DO NOT trigger alarm for pre-existing orders!
-        // Only sound the alarm if a BRAND NEW order arrives AFTER login.
+        // 🚨 On initial check, mark pre-existing orders as known
         if (!AlarmService.hasCompletedInitialCheck) {
           for (final o in orders) {
             final id = o['order_id']?.toString();
             if (id != null) _knownOrderIds.add(id);
           }
           AlarmService.hasCompletedInitialCheck = true;
-          AlarmService.stopAlarm();
+          if (unhandledOrders.isEmpty) {
+            AlarmService.stopAlarm();
+          }
           if (mounted) {
             setState(() {
               pendingOrderCount = unhandledOrders.length;
@@ -112,25 +165,21 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           return;
         }
 
-        // Detect brand-new orders that arrived after delivery person opened the app
-        final brandNewOrders = unhandledOrders.where((o) {
-          final id = o['order_id']?.toString() ?? '';
-          return !_knownOrderIds.contains(id) && !AlarmService.isOrderSilenced(id);
-        }).toList();
-
         if (mounted) {
           setState(() {
             pendingOrderCount = unhandledOrders.length;
           });
-          if (brandNewOrders.isNotEmpty && isOnline) {
-            final firstOrder = brandNewOrders.first;
+
+          // 🚨 ALARM SOUND: Notify partner for available orders within 2 KM radius
+          if (unhandledOrders.isNotEmpty && isOnline) {
+            final firstOrder = unhandledOrders.first;
             final newId = firstOrder['order_id']?.toString();
             if (newId != null) _knownOrderIds.add(newId);
             AlarmService.startAlarm(
               orderId: newId,
               item: firstOrder['item_name']?.toString(),
             );
-          } else if (unhandledOrders.isEmpty) {
+          } else {
             AlarmService.stopAlarm();
           }
         }
@@ -140,6 +189,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
   Future<void> _loadPartnerData() async {
     final prefs = await SharedPreferences.getInstance();
+    final dId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
+    final dPhone = prefs.getString('d_phone') ?? '';
+    final localPath = prefs.getString('d_profile_image');
+    final localBase64 = prefs.getString('d_profile_picture_base64');
+
     setState(() {
       partnerName = prefs.getString('d_name') ?? "Karthi";
       totalEarnings = prefs.getDouble('total_earnings') ?? 10000.00;
@@ -149,13 +203,121 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       todayDeliveries = prefs.getInt('today_deliveries') ?? 8;
       touchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 18;
       isOnline = prefs.getBool('d_is_online') ?? true;
+      profileImagePath = localPath;
+      profileImageBase64 = localBase64;
     });
+
+    final identifier = dId.isNotEmpty ? dId : dPhone;
+    if (identifier.isNotEmpty && (profileImagePath == null || !File(profileImagePath!).existsSync())) {
+      _fetchPartnerProfileFromBackend(identifier);
+    }
+
     _checkPendingOrders();
   }
 
+  Future<void> _fetchPartnerProfileFromBackend(String identifier) async {
+    try {
+      final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/$identifier'));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final b64 = data['profile_picture']?.toString();
+        if (b64 != null && b64.isNotEmpty && mounted) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('d_profile_picture_base64', b64);
+          setState(() {
+            profileImageBase64 = b64;
+          });
+        }
+        if (data['name'] != null && data['name'].toString().isNotEmpty && mounted) {
+          setState(() {
+            partnerName = data['name'].toString();
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Widget _buildProfileAvatar() {
+    ImageProvider? imageProvider;
+
+    // 1. Try local file path (from camera/gallery in dprofile or registration)
+    if (profileImagePath != null && profileImagePath!.isNotEmpty) {
+      final file = File(profileImagePath!);
+      if (file.existsSync()) {
+        imageProvider = FileImage(file);
+      }
+    }
+
+    // 2. Try base64 from backend MongoDB
+    if (imageProvider == null && profileImageBase64 != null && profileImageBase64!.isNotEmpty) {
+      try {
+        final bytes = base64Decode(profileImageBase64!);
+        imageProvider = MemoryImage(bytes);
+      } catch (_) {}
+    }
+
+    // 3. Fallback toon asset
+    imageProvider ??= const AssetImage('assets/delivery_boy_toon.png');
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const dEditProfilePage()),
+        ).then((_) => _loadPartnerData());
+      },
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.15),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(36),
+          child: Image(
+            image: imageProvider,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.two_wheeler_rounded, size: 36, color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  DateTime? _lastBackPressTime;
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+          _lastBackPressTime = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Press back again to exit'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Row(
@@ -246,8 +408,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [
-                    Color(0xFF064E3B), // Deep Forest Green
-                    Color(0xFF047857), // Emerald Green
+                    Color(0xFF0C1B30), // Deep Midnight Navy
+                    Color(0xFF142B4A), // Primary Navy Blue (#142B4A)
                   ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -327,33 +489,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           ],
                         ),
                       ),
-                      // Toon delivery boy image in box
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.15),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(36),
-                          child: Image.asset(
-                            'assets/delivery_boy_toon.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Center(
-                              child: Icon(Icons.two_wheeler_rounded, size: 36, color: Colors.white),
-                            ),
-                          ),
-                        ),
-                      ),
+                      // Delivery Partner Profile Picture (Dynamic from storage/backend)
+                      _buildProfileAvatar(),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -405,7 +542,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 "Today Earnings",
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: Color(0xFF86EFAC),
+                                  color: Color(0xFFE8F2FF),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -415,7 +552,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 style: const TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.w900,
-                                  color: Color(0xFF86EFAC),
+                                  color: Color(0xFFE8F2FF),
                                   letterSpacing: -0.5,
                                 ),
                               ),
@@ -478,9 +615,27 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                       onChanged: (val) async {
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setBool('d_is_online', val);
+                        final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
                         setState(() {
                           isOnline = val;
                         });
+
+                        // 📡 Sync online/offline status with backend MongoDB
+                        try {
+                          http.post(
+                            ApiConfig.partnerStatus,
+                            headers: {'Content-Type': 'application/json'},
+                            body: jsonEncode({
+                              'partner_id': pId,
+                              'status': val ? 'online' : 'offline',
+                            }),
+                          ).catchError((_) => http.Response('', 500));
+
+                          if (val) {
+                            _updateLiveLocationToBackend();
+                          }
+                        } catch (_) {}
+
                         if (!val) {
                           AlarmService.stopAlarm();
                         } else {
@@ -500,7 +655,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               child: isOnline
                   ? InkWell(
                       onTap: () {
-                        AlarmService.stopAlarm();
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => const NewOrdersPage()),
@@ -786,8 +940,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ),
       ),
       bottomNavigationBar: const DeliveryBottomNavBar(currentIndex: 2),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildClickableCard(
     String title,

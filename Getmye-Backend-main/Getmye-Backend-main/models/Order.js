@@ -20,6 +20,14 @@ const OrderSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  customer_latitude: {
+    type: Number,
+    default: null
+  },
+  customer_longitude: {
+    type: Number,
+    default: null
+  },
   delivery_address: {
     type: String,
     required: true
@@ -42,6 +50,10 @@ const OrderSchema = new mongoose.Schema({
     default: null
   },
   partner_phone: {
+    type: String,
+    default: null
+  },
+  partner_profile_picture: {
     type: String,
     default: null
   },

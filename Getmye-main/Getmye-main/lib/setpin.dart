@@ -12,7 +12,7 @@ class WalletPinApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Wallet PIN Setup',
-      theme: ThemeData(primarySwatch: Colors.green),
+      theme: AppTheme.lightTheme,
       home: const WalletPinSetupScreen(),
       debugShowCheckedModeBanner: false,
     );
