@@ -79,6 +79,7 @@ class DeliveryOrder {
   });
 
   double get subtotal => items.fold(0.0, (sum, item) => sum + item.total);
+  double get itemTotal => subtotal;
   double get grandTotal => subtotal + deliveryFee;
 }
 
@@ -1583,10 +1584,12 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   bool _isBroadcasting = false;
   bool _isCheckingCancel = false;
   int _lastSeenMsgCount = 0;
+  double _liveGrandTotal = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _liveGrandTotal = widget.totalAmount;
     _loadPartnerId();
     _initCustomerLocation();
     _initRealGpsNavigation();
@@ -1734,6 +1737,16 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
             }
           }
         }
+
+        // Live Grand Total sync (incorporating customer tips in real-time)
+        if (orderData['grand_total'] != null && (orderData['grand_total'] as num) > 0) {
+          final gTot = (orderData['grand_total'] as num).toDouble();
+          if (mounted && _liveGrandTotal != gTot) {
+            setState(() {
+              _liveGrandTotal = gTot;
+            });
+          }
+        }
         // Incoming chat messages are tracked globally and deduplicated via AppNotificationService
 
         if (orderData['status'] == 'cancelled') {
@@ -1836,7 +1849,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text("Bill Amount to Collect", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                    Text("₹${widget.totalAmount.toStringAsFixed(0)}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppColors.primaryDark)),
+                    Text("₹${(_liveGrandTotal > 0 ? _liveGrandTotal : widget.totalAmount).toStringAsFixed(0)}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppColors.primaryDark)),
                   ],
                 ),
               ),
@@ -1863,12 +1876,13 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                       await prefs.setString('active_cod_otp', savedOtp);
                     }
                     if (!mounted) return;
+                    final effectiveTot = _liveGrandTotal > 0 ? _liveGrandTotal : widget.totalAmount;
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => DeliveryCodVerificationPage(
                           order: widget.order,
-                          totalAmount: widget.totalAmount,
+                          totalAmount: effectiveTot,
                           expectedOtp: savedOtp!,
                           isOnlinePayment: true,
                           paymentMethod: "Online UPI",
@@ -1900,7 +1914,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                       savedOtp = (1000 + random.nextInt(9000)).toString();
                       await prefs.setString('active_cod_otp', savedOtp);
                     }
-                    await prefs.setDouble('active_cod_amount', widget.totalAmount);
+                    final effectiveTot = _liveGrandTotal > 0 ? _liveGrandTotal : widget.totalAmount;
+                    await prefs.setDouble('active_cod_amount', effectiveTot);
                     await prefs.setBool('is_cod_selected', true);
 
                     if (!mounted) return;
@@ -1909,7 +1924,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                       MaterialPageRoute(
                         builder: (_) => DeliveryCodVerificationPage(
                           order: widget.order,
-                          totalAmount: widget.totalAmount,
+                          totalAmount: effectiveTot,
                           expectedOtp: savedOtp!,
                           isOnlinePayment: false,
                           paymentMethod: "Cash on Delivery (COD)",
@@ -2196,11 +2211,16 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
   bool _isVerifying = false;
   String _effectiveOtp = "";
   Timer? _refreshTimer;
+  double _liveFoodPrice = 0.0;
+  double _liveTipAmount = 0.0;
+  double _liveTotalAmount = 0.0;
 
   @override
   void initState() {
     super.initState();
     _effectiveOtp = widget.expectedOtp;
+    _liveFoodPrice = widget.order.itemTotal > 0 ? widget.order.itemTotal : (widget.totalAmount);
+    _liveTotalAmount = widget.totalAmount;
     _loadSavedOtp();
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) => _loadSavedOtp());
   }
@@ -2222,23 +2242,38 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
         });
       }
     }
-    // Cross-device sync: Fetch live OTP stored in MongoDB from customer's device
+    // Cross-device sync: Fetch live OTP and tip/bill breakdown from backend
     try {
       final res = await http.get(ApiConfig.orderById(widget.order.orderId));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final order = data['order'];
-        if (order != null && order['cod_otp'] != null && order['cod_otp'].toString().isNotEmpty) {
-          final backendOtp = order['cod_otp'].toString();
-          if (mounted && _effectiveOtp != backendOtp) {
+        if (order != null) {
+          final backendOtp = order['cod_otp']?.toString();
+          final num? bFood = order['item_total'] ?? order['budget'];
+          final num? bTip = order['tip_amount'];
+          final num? bGrand = order['grand_total'];
+
+          double food = bFood != null && bFood > 0
+              ? bFood.toDouble()
+              : (widget.order.itemTotal > 0 ? widget.order.itemTotal : widget.totalAmount);
+          double tip = bTip != null ? bTip.toDouble() : 0.0;
+          double total = bGrand != null && bGrand > 0 ? bGrand.toDouble() : (food + tip);
+
+          if (mounted) {
             setState(() {
-              _effectiveOtp = backendOtp;
+              if (backendOtp != null && backendOtp.isNotEmpty) {
+                _effectiveOtp = backendOtp;
+              }
+              _liveFoodPrice = food;
+              _liveTipAmount = tip;
+              _liveTotalAmount = total;
             });
           }
         }
       }
     } catch (e) {
-      debugPrint("Error fetching OTP from backend: $e");
+      debugPrint("Error fetching OTP and bill from backend: $e");
     }
   }
 
@@ -2339,13 +2374,16 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
       setState(() => _isVerifying = false);
 
       if (!mounted) return;
+      final double finalSuccessAmount = _liveTotalAmount > 0 ? _liveTotalAmount : widget.totalAmount;
       // Show full-screen green Payment Successful celebration screen without overlapping
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
           builder: (_) => FullScreenPaymentSuccessScreen(
             orderId: widget.order.orderId,
-            totalAmount: widget.totalAmount,
+            totalAmount: finalSuccessAmount,
+            foodPrice: _liveFoodPrice,
+            tipAmount: _liveTipAmount,
             paymentMethod: widget.paymentMethod,
             isDeliveryPartner: true,
             earnedAmount: partnerEarnings,
@@ -2368,6 +2406,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
   @override
   Widget build(BuildContext context) {
     final bool isOnline = widget.isOnlinePayment;
+    final double displayTotal = _liveTotalAmount > 0 ? _liveTotalAmount : widget.totalAmount;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -2416,8 +2455,8 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
                   const SizedBox(height: 6),
                   Text(
                     isOnline
-                        ? "Customer paid ₹${widget.totalAmount.toStringAsFixed(0)} online.\nAsk customer for their 4-digit Delivery OTP"
-                        : "Ask customer for ₹${widget.totalAmount.toStringAsFixed(0)} cash and their 4-digit Delivery OTP",
+                        ? "Customer paid ₹${displayTotal.toStringAsFixed(0)} online.\nAsk customer for their 4-digit Delivery OTP"
+                        : "Ask customer for ₹${displayTotal.toStringAsFixed(0)} cash and their 4-digit Delivery OTP",
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
@@ -2430,14 +2469,126 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
                     ),
                     child: Text(
                       isOnline
-                          ? "Online Paid: ₹${widget.totalAmount.toStringAsFixed(0)}"
-                          : "Amount to Collect: ₹${widget.totalAmount.toStringAsFixed(0)}",
+                          ? "Online Paid: ₹${displayTotal.toStringAsFixed(0)}"
+                          : "Amount to Collect: ₹${displayTotal.toStringAsFixed(0)}",
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
                         color: isOnline ? const Color(0xFF047857) : AppColors.primaryDark,
                       ),
                     ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Dedicated Live Bill & Tip Breakdown Card (Food Price + Customer Tips + Total)
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.border),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 3)),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.receipt_long_rounded, color: AppColors.primaryDark, size: 20),
+                          SizedBox(width: 8),
+                          Text(
+                            "Bill Breakdown",
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                          ),
+                        ],
+                      ),
+                      if (_liveTipAmount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.volunteer_activism_rounded, size: 14, color: Color(0xFF16A34A)),
+                              const SizedBox(width: 4),
+                              Text(
+                                "Tip Added! +₹${_liveTipAmount.toStringAsFixed(0)}",
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF16A34A)),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Divider(height: 1, thickness: 1),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Food Price",
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                      ),
+                      Text(
+                        "₹${_liveFoodPrice.toStringAsFixed(0)}",
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            "Customer Tips",
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                          ),
+                          if (_liveTipAmount > 0) ...[
+                            const SizedBox(width: 6),
+                            const Icon(Icons.favorite_rounded, size: 14, color: Color(0xFFEA580C)),
+                          ],
+                        ],
+                      ),
+                      Text(
+                        "₹${_liveTipAmount.toStringAsFixed(0)}",
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _liveTipAmount > 0 ? const Color(0xFF16A34A) : AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1, thickness: 1),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Total Amount",
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppColors.textPrimary),
+                      ),
+                      Text(
+                        "₹${displayTotal.toStringAsFixed(0)}",
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.primaryDark),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -3164,6 +3315,8 @@ class FullScreenPaymentSuccessScreen extends StatefulWidget {
   final String paymentMethod;
   final bool isDeliveryPartner;
   final double? earnedAmount;
+  final double? foodPrice;
+  final double? tipAmount;
 
   const FullScreenPaymentSuccessScreen({
     super.key,
@@ -3172,6 +3325,8 @@ class FullScreenPaymentSuccessScreen extends StatefulWidget {
     this.paymentMethod = "Payment Successful",
     this.isDeliveryPartner = false,
     this.earnedAmount,
+    this.foodPrice,
+    this.tipAmount,
   });
 
   @override
@@ -3367,6 +3522,26 @@ class _FullScreenPaymentSuccessScreenState extends State<FullScreenPaymentSucces
                           ),
                         ),
                       ),
+                      if (widget.tipAmount != null && widget.tipAmount! > 0) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                          ),
+                          child: Text(
+                            "Food Price: ₹${(widget.foodPrice ?? (widget.totalAmount - widget.tipAmount!)).toStringAsFixed(0)}  •  Tip: ₹${widget.tipAmount!.toStringAsFixed(0)}",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 18),
                       Divider(color: Colors.white.withValues(alpha: 0.25), height: 1),
                       const SizedBox(height: 14),

@@ -84,22 +84,8 @@ router.get('/active/:user_id', async (req, res) => {
     }
 
     const orderObj = activeOrder.toObject();
-    // 👤 Dynamically populate partner profile picture if missing
-    if (orderObj.partner_id && !orderObj.partner_profile_picture) {
-      try {
-        const dp = await DeliveryPerson.findOne({
-          $or: [
-            { DP_id: orderObj.partner_id },
-            { DP_id: new RegExp(`^${orderObj.partner_id}$`, 'i') },
-            { mobile_number: orderObj.partner_phone || orderObj.partner_id }
-          ]
-        });
-        if (dp && dp.profile_picture) {
-          orderObj.partner_profile_picture = Buffer.isBuffer(dp.profile_picture)
-            ? Buffer.from(dp.profile_picture).toString('base64')
-            : dp.profile_picture.toString();
-        }
-      } catch (_) {}
+    if (orderObj.partner_id) {
+      orderObj.partner_photo_url = `/api/deliveryperson/photo/${orderObj.partner_id}`;
     }
 
     res.json({ success: true, order: orderObj });
@@ -205,12 +191,14 @@ router.post('/decline', async (req, res) => {
 // POST /api/order/update-status - Update order lifecycle status
 router.post('/update-status', async (req, res) => {
   try {
-    const { order_id, status, grand_total, cod_otp, payment_method, payment_status } = req.body;
+    const { order_id, status, grand_total, tip_amount, item_total, cod_otp, payment_method, payment_status } = req.body;
     const updateData = {};
     if (status) updateData.status = status;
     if (status === 'picked_up') updateData.picked_up_at = new Date();
     if (status === 'delivered') updateData.delivered_at = new Date();
-    if (grand_total !== undefined) updateData.grand_total = grand_total;
+    if (grand_total !== undefined) updateData.grand_total = Number(grand_total);
+    if (tip_amount !== undefined) updateData.tip_amount = Number(tip_amount);
+    if (item_total !== undefined) updateData.item_total = Number(item_total);
     if (cod_otp) updateData.cod_otp = cod_otp;
     if (payment_method) updateData.payment_method = payment_method;
     if (payment_status) updateData.payment_status = payment_status;
@@ -347,6 +335,9 @@ router.get('/:order_id', async (req, res) => {
       .select('-bill_image_url -partner_profile_picture')
       .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (order.partner_id) {
+      order.partner_photo_url = `/api/deliveryperson/photo/${order.partner_id}`;
+    }
     res.json({ success: true, order });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch order' });

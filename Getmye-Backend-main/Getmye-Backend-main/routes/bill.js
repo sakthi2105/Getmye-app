@@ -52,12 +52,15 @@ router.post('/submit', async (req, res) => {
 
     await newBill.save();
 
-    // Update order status to 'bill_sent' / 'purchasing_food' with bill_image_url
+    // Update order status to 'bill_sent' / 'purchasing_food' with item_total, tip_amount, grand_total, and bill_image_url
     await Order.findOneAndUpdate(
       { order_id },
       {
         status: 'bill_sent',
         grand_total: Number(grand_total),
+        item_total: Number(item_total) || 0,
+        tip_amount: Number(tip_amount) || 0,
+        delivery_fee: Number(delivery_fee) || 0,
         bill_image_url: bill_image_url || null
       }
     );
@@ -78,18 +81,34 @@ router.post('/tip', async (req, res) => {
     }
     const tip = Number(tip_amount) || 0;
     const bill = await Bill.findOne({ order_id }).sort({ created_at: -1 });
+    let foodPrice = 0;
+    let delFee = 0;
     if (bill) {
       bill.tip_amount = tip;
       bill.grand_total = (Number(bill.item_total) || 0) + (Number(bill.delivery_fee) || 0) + tip;
       await bill.save();
-      // Also update Order grand_total
-      await Order.findOneAndUpdate(
-        { order_id },
-        { grand_total: bill.grand_total }
-      );
+      foodPrice = Number(bill.item_total) || 0;
+      delFee = Number(bill.delivery_fee) || 0;
+    }
+
+    const order = await Order.findOne({ order_id });
+    if (order) {
+      if (!foodPrice && order.item_total) foodPrice = order.item_total;
+      if (!foodPrice && order.budget) foodPrice = order.budget;
+      if (!delFee && order.delivery_fee) delFee = order.delivery_fee;
+
+      order.tip_amount = tip;
+      order.item_total = foodPrice;
+      order.delivery_fee = delFee;
+      order.grand_total = foodPrice + delFee + tip;
+      await order.save();
+      return res.json({ success: true, message: 'Tip updated', bill: bill || null, order });
+    }
+
+    if (bill) {
       return res.json({ success: true, message: 'Tip updated', bill });
     }
-    res.status(404).json({ error: 'Bill not found' });
+    res.status(404).json({ error: 'Order and bill not found' });
   } catch (err) {
     console.error('Error updating tip:', err);
     res.status(500).json({ error: 'Failed to update tip', details: err.message });

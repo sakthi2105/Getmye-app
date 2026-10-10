@@ -86,6 +86,14 @@ const OrderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  item_total: {
+    type: Number,
+    default: 0
+  },
+  tip_amount: {
+    type: Number,
+    default: 0
+  },
   grand_total: {
     type: Number,
     default: 0

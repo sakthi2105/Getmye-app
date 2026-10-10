@@ -54,8 +54,38 @@ class _HomePageState extends State<HomePage> {
   bool hasRiderAccepted = false;
   String assignedPartnerName = "";
   String assignedPartnerPhone = "";
+  String assignedPartnerId = "";
+  String assignedOrderOtp = "";
   String? assignedPartnerProfileImage;
+  double _riderDistanceMeters = 0.0;
   List<LatLng> _trackingRoutePoints = [];
+
+  String _formatRiderDistance() {
+    double dist = _riderDistanceMeters;
+    if (dist <= 0) {
+      try {
+        dist = Geolocator.distanceBetween(
+          _riderLocation.latitude,
+          _riderLocation.longitude,
+          _customerLocation.latitude,
+          _customerLocation.longitude,
+        );
+      } catch (_) {
+        dist = 0;
+      }
+    }
+    if (dist <= 50) {
+      return "Arrived at your doorstep!";
+    } else if (dist < 1000) {
+      final m = dist.round();
+      final mins = (dist / 350).ceil().clamp(1, 30);
+      return "$m m away • ~$mins min${mins > 1 ? 's' : ''}";
+    } else {
+      final km = (dist / 1000).toStringAsFixed(1);
+      final mins = (dist / 350).ceil().clamp(1, 60);
+      return "$km km away • ~$mins mins";
+    }
+  }
   Timer? _searchRiderTimer;
   Timer? _riderTrackingTimer;
   Timer? _inOrderChatTimer;
@@ -307,8 +337,13 @@ class _HomePageState extends State<HomePage> {
     final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
     final savedPName = prefs.getString('active_order_partner_name');
     final savedPPhone = prefs.getString('active_order_partner_phone');
-    final savedPic = prefs.getString('active_order_partner_image') ??
+    final savedPId = prefs.getString('active_order_partner_id') ?? '';
+    final savedOtp = prefs.getString('active_cod_otp') ?? '';
+    var savedPic = prefs.getString('active_order_partner_image') ??
         prefs.getString('active_order_partner_pic');
+    if ((savedPic == null || savedPic.isEmpty) && savedPId.isNotEmpty) {
+      savedPic = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$savedPId';
+    }
 
     if (hasAccepted &&
         savedPName != null &&
@@ -318,6 +353,8 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         hasRiderAccepted = true;
         assignedPartnerName = "$savedPName (Partner)";
+        assignedPartnerId = savedPId;
+        if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
         if (savedPPhone != null && savedPPhone.isNotEmpty) {
           assignedPartnerPhone = savedPPhone;
         }
@@ -333,6 +370,8 @@ class _HomePageState extends State<HomePage> {
         hasRiderAccepted = false;
         assignedPartnerName = "";
         assignedPartnerPhone = "";
+        assignedPartnerId = "";
+        assignedOrderOtp = "";
         assignedPartnerProfileImage = null;
       });
     }
@@ -535,7 +574,8 @@ class _HomePageState extends State<HomePage> {
     _isFetchingRiderLoc = true;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final pId = prefs.getString('active_order_partner_id') ?? 'DP001';
+      final pId = prefs.getString('active_order_partner_id') ?? assignedPartnerId;
+      if (pId.isEmpty) return;
       final res = await http.get(ApiConfig.trackingByPartner(pId)).timeout(const Duration(seconds: 2));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -543,12 +583,22 @@ class _HomePageState extends State<HomePage> {
         if (loc != null && loc['latitude'] != null && loc['longitude'] != null) {
           final lat = (loc['latitude'] as num).toDouble();
           final lng = (loc['longitude'] as num).toDouble();
-          if (mounted && (_riderLocation.latitude != lat || _riderLocation.longitude != lng)) {
+          if (mounted) {
+            final double dist = Geolocator.distanceBetween(
+              lat,
+              lng,
+              _customerLocation.latitude,
+              _customerLocation.longitude,
+            );
+            final bool locChanged = (_riderLocation.latitude != lat || _riderLocation.longitude != lng);
             setState(() {
               _riderLocation = LatLng(lat, lng);
+              _riderDistanceMeters = dist;
             });
-            _fitTrackingMapBounds();
-            _fetchTrackingRoadRoute();
+            if (locChanged) {
+              _fitTrackingMapBounds();
+              _fetchTrackingRoadRoute();
+            }
           }
         }
       }
@@ -1917,14 +1967,17 @@ class _HomePageState extends State<HomePage> {
                           final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
                               ? order['partner_phone'].toString().trim()
                               : '';
-                          final pPic = order['partner_profile_picture'] ?? order['partner_image'];
+                          final pPic = order['partner_photo_url'] ??
+                              '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId';
+                          final pOtp = (order['cod_otp'] ?? '').toString();
 
                           final p = await SharedPreferences.getInstance();
                           await p.setString('active_order_partner_name', pName);
                           await p.setString('active_order_partner_phone', pPhone);
                           await p.setString('active_order_partner_id', pId);
-                          if (pPic != null && pPic.isNotEmpty) {
-                            await p.setString('active_order_partner_image', pPic);
+                          await p.setString('active_order_partner_image', pPic);
+                          if (pOtp.isNotEmpty) {
+                            await p.setString('active_cod_otp', pOtp);
                           }
                           await p.setString('active_order_status', order['status']);
                           await p.setBool('active_order_partner_accepted', true);
@@ -1935,9 +1988,9 @@ class _HomePageState extends State<HomePage> {
                               hasRiderAccepted = true;
                               assignedPartnerName = "$pName (Partner)";
                               assignedPartnerPhone = pPhone;
-                              if (pPic != null && pPic.isNotEmpty) {
-                                assignedPartnerProfileImage = pPic;
-                              }
+                              assignedPartnerId = pId;
+                              assignedPartnerProfileImage = pPic;
+                              if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
                             });
                             _startRiderLocationPolling();
                             _fetchTrackingRoadRoute();
@@ -2078,8 +2131,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildAssignedPartnerAvatar() {
-    if (assignedPartnerProfileImage != null && assignedPartnerProfileImage!.isNotEmpty) {
-      final img = assignedPartnerProfileImage!.trim();
+    String? img = assignedPartnerProfileImage?.trim();
+    if ((img == null || img.isEmpty) && assignedPartnerId.isNotEmpty) {
+      img = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$assignedPartnerId';
+    }
+    if (img != null && img.isNotEmpty) {
       if (img.startsWith('http://') || img.startsWith('https://')) {
         return Image.network(
           img,
@@ -2173,20 +2229,54 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 3),
                     Row(
-                      children: List.generate(
-                        5,
-                        (_) => const Icon(
-                          Icons.star_rounded,
-                          color: AppColors.warning,
-                          size: 16,
+                      children: [
+                        ...List.generate(
+                          5,
+                          (_) => const Icon(
+                            Icons.star_rounded,
+                            color: AppColors.warning,
+                            size: 15,
+                          ),
                         ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          "4.9",
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Live distance and ETA pill
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDCFCE7),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF86EFAC)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.directions_bike_rounded, size: 12, color: Color(0xFF15803D)),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatRiderDistance(),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF15803D),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      assignedPartnerPhone,
-                      style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
-                    ),
+                    if (assignedPartnerPhone.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        assignedPartnerPhone,
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2289,14 +2379,14 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ],
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.navigation_rounded, color: AppColors.primaryDark, size: 14),
-                          SizedBox(width: 4),
+                          const Icon(Icons.navigation_rounded, color: AppColors.primaryDark, size: 14),
+                          const SizedBox(width: 4),
                           Text(
-                            "Live GPS Tracking • 7 mins away",
-                            style: TextStyle(
+                            "Live GPS • ${_formatRiderDistance()}",
+                            style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                               color: AppColors.textPrimary,
@@ -2310,6 +2400,74 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+
+          // Prominent Delivery OTP Card for customer
+          if (assignedOrderOtp.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF3C7),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFD97706),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.key_rounded, color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "DELIVERY OTP",
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                            color: Color(0xFF92400E),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          "Share this code with partner to receive delivery",
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF78350F),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFD97706), width: 1.5),
+                    ),
+                    child: Text(
+                      assignedOrderOtp,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2,
+                        color: Color(0xFFD97706),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(12),

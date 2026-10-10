@@ -263,6 +263,41 @@ router.put('/update', upload.single('profile_picture'), async (req, res) => {
   }
 });
 
+// ✅ GET /api/deliveryperson/photo/:identifier — Stream binary profile picture directly
+router.get('/photo/:identifier', async (req, res) => {
+  try {
+    const id = req.params.identifier.toString().trim();
+    if (!id || id === 'missing-kyp') return res.status(400).send('Invalid identifier');
+
+    const partner = await DeliveryPerson.findOne({
+      $or: [
+        { DP_id: id },
+        { DP_id: new RegExp(`^${id}$`, 'i') },
+        { mobile_number: id },
+        { email: id.toLowerCase() }
+      ]
+    }).select('profile_picture').lean();
+
+    if (!partner || !partner.profile_picture) {
+      return res.status(404).send('Photo not found');
+    }
+
+    const buffer = Buffer.isBuffer(partner.profile_picture)
+      ? partner.profile_picture
+      : Buffer.from(partner.profile_picture);
+
+    res.set({
+      'Content-Type': 'image/jpeg',
+      'Content-Length': buffer.length,
+      'Cache-Control': 'public, max-age=3600'
+    });
+    return res.end(buffer);
+  } catch (err) {
+    console.error('Fetch partner photo error:', err);
+    res.status(500).send('Server error');
+  }
+});
+
 // ✅ GET /api/deliveryperson/:identifier — Fetch partner profile & photo
 router.get('/:identifier', async (req, res) => {
   try {
@@ -272,6 +307,7 @@ router.get('/:identifier', async (req, res) => {
     const partner = await DeliveryPerson.findOne({
       $or: [
         { DP_id: id },
+        { DP_id: new RegExp(`^${id}$`, 'i') },
         { mobile_number: id },
         { email: id.toLowerCase() }
       ]
@@ -287,6 +323,7 @@ router.get('/:identifier', async (req, res) => {
       mobile_number: partner.mobile_number,
       email: partner.email || '',
       address: partner.address || '',
+      profile_picture_url: `/api/deliveryperson/photo/${partner.DP_id}`,
       profile_picture: partner.profile_picture ? Buffer.from(partner.profile_picture).toString('base64') : null
     });
   } catch (err) {

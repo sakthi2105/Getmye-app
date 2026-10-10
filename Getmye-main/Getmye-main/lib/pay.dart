@@ -230,7 +230,9 @@ class _PaymentPageState extends State<PaymentPage> {
                   MaterialPageRoute(
                     builder: (_) => FullScreenPaymentSuccessScreen(
                       orderId: currentOrderId,
-                      totalAmount: totalAmount > 0 ? totalAmount : (gTot.toDouble()),
+                      totalAmount: (gTot > 0) ? gTot.toDouble() : (totalAmount > 0 ? totalAmount : 0.0),
+                      foodPrice: itemTotal,
+                      tipAmount: tipAmount,
                       paymentMethod: paymentMethod.isNotEmpty ? paymentMethod : "Payment Successful",
                       isDeliveryPartner: false,
                     ),
@@ -2504,6 +2506,7 @@ class _PaymentPageState extends State<PaymentPage> {
                         setState(() => tipAmount = newTip);
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setDouble('order_${orderId}_tip', newTip);
+                        final newTotal = itemTotal + deliveryEarnings + newTip;
                         try {
                           await http.post(
                             ApiConfig.billTip,
@@ -2511,6 +2514,16 @@ class _PaymentPageState extends State<PaymentPage> {
                             body: jsonEncode({
                               'order_id': orderId,
                               'tip_amount': newTip,
+                            }),
+                          );
+                          await http.post(
+                            ApiConfig.orderUpdateStatus,
+                            headers: {'Content-Type': 'application/json'},
+                            body: jsonEncode({
+                              'order_id': orderId,
+                              'grand_total': newTotal,
+                              'tip_amount': newTip,
+                              'item_total': itemTotal,
                             }),
                           );
                         } catch (_) {}
