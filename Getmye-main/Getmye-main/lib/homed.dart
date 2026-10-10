@@ -610,9 +610,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           AlarmService.silenceOrder(orderId);
                           AlarmService.stopAlarm();
                           final prefs = await SharedPreferences.getInstance();
-                          final pName = prefs.getString('d_name') ?? "Karthi";
-                          final pPhone = prefs.getString('d_phone') ?? "+91 98765 43210";
-                          final pId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
+                          final pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
+                          final pPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
+                          final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
 
                           try {
                             await http.post(

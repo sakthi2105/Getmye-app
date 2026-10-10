@@ -52,8 +52,8 @@ class _HomePageState extends State<HomePage> {
 
   bool isSearchingRider = false;
   bool hasRiderAccepted = false;
-  String assignedPartnerName = "Karthi (Partner)";
-  String assignedPartnerPhone = "+91 98765 43210";
+  String assignedPartnerName = "";
+  String assignedPartnerPhone = "";
   String? assignedPartnerProfileImage;
   List<LatLng> _trackingRoutePoints = [];
   Timer? _searchRiderTimer;
@@ -300,31 +300,38 @@ class _HomePageState extends State<HomePage> {
       });
     }
 
+    final hasAccepted = prefs.getBool('active_order_partner_accepted') ?? false;
+    final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
     final savedPName = prefs.getString('active_order_partner_name');
     final savedPPhone = prefs.getString('active_order_partner_phone');
-    final savedPic = prefs.getString('active_order_partner_pic') ??
-        prefs.getString('active_order_partner_image') ??
-        prefs.getString('d_profile_picture_base64');
-    if (savedPName != null && savedPName.isNotEmpty) {
-      setState(() {
-        assignedPartnerName = "$savedPName (Partner)";
-      });
-    }
-    if (savedPPhone != null && savedPPhone.isNotEmpty) {
-      setState(() {
-        assignedPartnerPhone = savedPPhone;
-      });
-    }
-    if (savedPic != null && savedPic.isNotEmpty) {
-      setState(() {
-        assignedPartnerProfileImage = savedPic;
-      });
-    }
+    final savedPic = prefs.getString('active_order_partner_image') ??
+        prefs.getString('active_order_partner_pic');
 
-    if (savedPName != null && savedPName.isNotEmpty) {
+    if (hasAccepted &&
+        savedPName != null &&
+        savedPName.isNotEmpty &&
+        activeStatus != 'cancelled' &&
+        activeStatus != 'delivered') {
+      setState(() {
+        hasRiderAccepted = true;
+        assignedPartnerName = "$savedPName (Partner)";
+        if (savedPPhone != null && savedPPhone.isNotEmpty) {
+          assignedPartnerPhone = savedPPhone;
+        }
+        if (savedPic != null && savedPic.isNotEmpty) {
+          assignedPartnerProfileImage = savedPic;
+        }
+      });
       _startRiderLocationPolling();
       _startOrderChatPolling();
       _fetchTrackingRoadRoute();
+    } else {
+      setState(() {
+        hasRiderAccepted = false;
+        assignedPartnerName = "";
+        assignedPartnerPhone = "";
+        assignedPartnerProfileImage = null;
+      });
     }
 
     // Refresh live device GPS position in background without wiping user's saved/selected address text
@@ -1740,11 +1747,14 @@ class _HomePageState extends State<HomePage> {
                     : "Current Delivery Location";
                 final budgetVal = double.tryParse(_budgetController.text.trim()) ?? 150.0;
 
-                // Show searching immediately
+                // Show searching immediately with clean partner state
                 setState(() {
                   showDeliveryDetails = true;
                   isSearchingRider = true;
                   hasRiderAccepted = false;
+                  assignedPartnerName = "";
+                  assignedPartnerPhone = "";
+                  assignedPartnerProfileImage = null;
                 });
                 scrollToBottom();
 
@@ -1838,6 +1848,11 @@ class _HomePageState extends State<HomePage> {
                 await prefs.setString('active_order_status', 'pending');
                 await prefs.setBool('active_order_partner_accepted', false);
                 await prefs.setBool('active_order_bill_sent', false);
+                await prefs.remove('active_order_partner_name');
+                await prefs.remove('active_order_partner_phone');
+                await prefs.remove('active_order_partner_id');
+                await prefs.remove('active_order_partner_image');
+                await prefs.remove('active_order_partner_pic');
 
                 // Poll real backend order endpoint until partner accepts on Device 2
                 _searchRiderTimer?.cancel();
@@ -1880,12 +1895,23 @@ class _HomePageState extends State<HomePage> {
                           return;
                         }
 
-                        if (st != 'pending') {
-                          // Delivery partner has ACCEPTED the order on Device 2!
+                        // 🛑 STRICT: Only transition to accepted if partner has ACTUALLY accepted!
+                        final isAccepted = (st == 'accepted' ||
+                            st == 'purchasing_food' ||
+                            st == 'bill_sent' ||
+                            st == 'picked_up' ||
+                            st == 'in_transit');
+                        final pId = order['partner_id']?.toString() ?? '';
+
+                        if (isAccepted && pId.isNotEmpty) {
+                          // Real delivery partner has ACCEPTED the order on Device 2!
                           timer.cancel();
-                          final pName = order['partner_name'] ?? 'Karthi';
-                          final pPhone = order['partner_phone'] ?? '+91 98765 43210';
-                          final pId = order['partner_id'] ?? 'DP001';
+                          final pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
+                              ? order['partner_name'].toString().trim()
+                              : 'Delivery Partner';
+                          final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
+                              ? order['partner_phone'].toString().trim()
+                              : '';
                           final pPic = order['partner_profile_picture'] ?? order['partner_image'];
 
                           final p = await SharedPreferences.getInstance();
@@ -2038,7 +2064,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildExpandedContainer() {
-    if (isSearchingRider) {
+    if (!hasRiderAccepted || isSearchingRider || assignedPartnerName.isEmpty) {
       return const BikeRoadSearchingAnimation();
     }
     return _buildAssignedPartnerContainer();

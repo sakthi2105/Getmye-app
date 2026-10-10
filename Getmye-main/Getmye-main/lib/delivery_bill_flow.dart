@@ -840,9 +840,9 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                             savedDeclined.remove(order.orderId);
                                             await prefs.setStringList('partner_declined_order_ids', savedDeclined);
                                           }
-                                          final partnerName = prefs.getString('d_name') ?? "Karthi";
-                                          final partnerPhone = prefs.getString('d_phone') ?? "+91 98765 43210";
-                                          final partnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
+                                          final partnerName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
+                                          final partnerPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
+                                          final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
                                           try {
                                             await http.post(
                                               ApiConfig.orderAccept,

@@ -123,7 +123,7 @@ function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// GET /api/order/pending - Delivery partners view available pending orders
+// GET /api/order/pending - Delivery partners view available pending orders within 10 km
 // Enforces:
 // 1. Online la Irukanum (Partner must be online)
 // 2. Already delivery la Irukura person ku Order po koodathu (Partner cannot have active delivery, max 1 order at a time)
@@ -131,22 +131,37 @@ function calculateHaversineDistanceKm(lat1, lon1, lat2, lon2) {
 router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
-    const reqLat = req.query.latitude || req.query.lat ? Number(req.query.latitude || req.query.lat) : null;
-    const reqLng = req.query.longitude || req.query.lng ? Number(req.query.longitude || req.query.lng) : null;
+    let partnerLat = req.query.latitude || req.query.lat ? Number(req.query.latitude || req.query.lat) : null;
+    let partnerLng = req.query.longitude || req.query.lng ? Number(req.query.longitude || req.query.lng) : null;
 
     if (partnerId) {
-      // 1. ONLINE STATUS FILTER:
-      const dp = await DeliveryPerson.findOne({
-        $or: [
-          { DP_id: partnerId },
-          { DP_id: new RegExp(`^${partnerId}$`, 'i') },
-          { mobile_number: partnerId }
-        ]
-      });
       const LiveLocation = require('../models/LiveLocation');
-      const liveLoc = await LiveLocation.findOne({ partner_id: partnerId });
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
 
-      const isDpOnline = (dp && dp.dp_status === 'online') || (liveLoc && liveLoc.is_online === true);
+      // Run status, location, and busy checks concurrently
+      const [dp, liveLoc, activeDelivery] = await Promise.all([
+        DeliveryPerson.findOne({
+          $or: [{ DP_id: partnerId }, { mobile_number: partnerId }]
+        }).select('DP_id dp_status').lean(),
+        LiveLocation.findOne({ partner_id: partnerId }).select('is_online latitude longitude').lean(),
+        Order.findOne({
+          partner_id: partnerId,
+          status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+          updated_at: { $gte: fourHoursAgo }
+        }).select('order_id status partner_id item_name budget customer_name customer_phone delivery_address').lean()
+      ]);
+
+      if (liveLoc) {
+        if (partnerLat === null && liveLoc.latitude !== undefined && liveLoc.latitude !== null) {
+          partnerLat = liveLoc.latitude;
+        }
+        if (partnerLng === null && liveLoc.longitude !== undefined && liveLoc.longitude !== null) {
+          partnerLng = liveLoc.longitude;
+        }
+      }
+
+      // 1. ONLINE CHECK
+      const isOnline = (dp && dp.dp_status === 'online') || (liveLoc && liveLoc.is_online === true);
       if (dp && dp.dp_status === 'offline' && (!liveLoc || !liveLoc.is_online)) {
         return res.json({
           success: true,
@@ -156,19 +171,11 @@ router.get('/pending', async (req, res) => {
         });
       }
 
-      // 2. BUSY CHECK: Partner already in an active delivery
-      // "Already delivery la Irukura person ku Order po koodathu / ore nerathula 2 order vara koodathu"
-      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
-      const activeDelivery = await Order.findOne({
-        partner_id: partnerId,
-        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
-        updated_at: { $gte: fourHoursAgo }
-      }).sort({ updated_at: -1 });
-
+      // 2. BUSY CHECK (Max 1 active delivery at a time)
       if (activeDelivery) {
         return res.json({
           success: true,
-          orders: [], // 🛑 STRICT: Return 0 new pending orders to a busy delivery person
+          orders: [],
           has_active_delivery: true,
           active_order: activeDelivery,
           reason: 'Partner is currently engaged in an active delivery.'
@@ -176,45 +183,29 @@ router.get('/pending', async (req, res) => {
       }
     }
 
-    // Determine partner current coordinates:
-    let partnerLat = reqLat;
-    let partnerLng = reqLng;
-    if ((partnerLat === null || partnerLng === null) && partnerId) {
-      const LiveLocation = require('../models/LiveLocation');
-      const loc = await LiveLocation.findOne({ partner_id: partnerId });
-      if (loc && loc.latitude && loc.longitude) {
-        partnerLat = loc.latitude;
-        partnerLng = loc.longitude;
-      }
-    }
-
-    let query = {
+    // 3. RETRIEVE PENDING ORDERS (Orders within 10 km that are pending, or cancelled in last 5 min)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const orderQuery = {
       $or: [
         { status: 'pending' },
-        { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
+        { status: 'cancelled', cancelled_at: { $gte: fiveMinutesAgo } }
       ]
     };
     if (partnerId) {
-      query = {
-        $or: [
-          { status: 'pending' },
-          { partner_id: partnerId, status: { $in: ['accepted', 'purchasing_food'] } },
-          { declined_by: partnerId, status: 'declined' },
-          { partner_id: partnerId, status: 'cancelled' },
-          { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
-        ]
-      };
+      orderQuery.declined_by = { $ne: partnerId };
     }
 
-    const allOrders = await Order.find(query).sort({ created_at: -1 });
+    const allOrders = await Order.find(orderQuery)
+      .select('order_id user_id customer_name customer_phone customer_latitude customer_longitude delivery_address item_name budget status decline_reason declined_by partner_id partner_name partner_phone cancel_reason cancelled_at created_at')
+      .sort({ created_at: -1 })
+      .limit(30)
+      .lean();
 
-    // 3. STRICT 10 KM RADIUS FILTER:
-    // "Order potta Location la Irunthu 10 Km radius surrounding-la irukavangaluku mattum order poganum"
+    // 4. STRICT 10 KM RADIUS FILTER
     const mappedOrders = [];
     for (const order of allOrders) {
-      const o = order.toObject();
+      const o = { ...order };
       if (o.status === 'cancelled') {
-        // Always include recently cancelled orders so partner app can dismiss them & clear alarms
         mappedOrders.push(o);
         continue;
       }
@@ -225,7 +216,7 @@ router.get('/pending', async (req, res) => {
           o.distance_km = Number(dist.toFixed(2));
           if (dist <= 10.0) {
             o.is_within_10km = true;
-            o.is_within_2km = true;
+            o.is_within_2km = dist <= 2.0;
             mappedOrders.push(o);
           }
         } else {
@@ -234,15 +225,17 @@ router.get('/pending', async (req, res) => {
           mappedOrders.push(o);
         }
       } else {
-        // Fallback when GPS not yet resolved on either end
+        // Fallback if coordinates are pending GPS resolution
         o.is_within_10km = true;
         o.is_within_2km = true;
         mappedOrders.push(o);
       }
     }
 
-    // Sort: nearest distance first, then latest
+    // Sort: Pending orders first, then nearest distance, then newest
     mappedOrders.sort((a, b) => {
+      if (a.status === 'pending' && b.status !== 'pending') return -1;
+      if (b.status === 'pending' && a.status !== 'pending') return 1;
       if (a.distance_km !== null && a.distance_km !== undefined && b.distance_km !== null && b.distance_km !== undefined) {
         return a.distance_km - b.distance_km;
       }
@@ -310,10 +303,9 @@ router.post('/accept', async (req, res) => {
       const dp = await DeliveryPerson.findOne({
         $or: [
           { DP_id: partner_id },
-          { DP_id: new RegExp(`^${partner_id}$`, 'i') },
           { mobile_number: partner_phone || partner_id }
         ]
-      });
+      }).select('name mobile_number profile_picture').lean();
       if (dp) {
         if (!actualPartnerName || actualPartnerName === 'Delivery Partner') actualPartnerName = dp.name;
         if (!actualPartnerPhone) actualPartnerPhone = dp.mobile_number;
@@ -331,7 +323,7 @@ router.post('/accept', async (req, res) => {
       partner_id,
       order_id: { $ne: order_id },
       status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-    });
+    }).select('order_id').lean();
 
     if (alreadyDelivering) {
       return res.status(400).json({
@@ -389,11 +381,10 @@ router.post('/decline', async (req, res) => {
     const order = await Order.findOneAndUpdate(
       { order_id },
       {
-        status: 'declined',
         decline_reason: decline_reason || 'Partner unavailable',
         declined_by: partner_id || 'DP001'
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -609,4 +600,39 @@ router.get('/:order_id/messages', async (req, res) => {
   }
 });
 
+// GET /api/order/debug/list-all - Inspect all recent orders for diagnostics
+router.get('/debug/list-all', async (req, res) => {
+  try {
+    const orders = await Order.find({}).select('order_id user_id customer_name customer_phone status partner_id partner_name customer_latitude customer_longitude created_at updated_at').sort({ created_at: -1 }).limit(20);
+    const LiveLocation = require('../models/LiveLocation');
+    const locations = await LiveLocation.find({}).select('partner_id is_online status latitude longitude');
+    const dps = await DeliveryPerson.find({}).select('DP_id name mobile_number dp_status');
+    res.json({
+      success: true,
+      orders,
+      locations,
+      delivery_persons: dps
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/order/debug/reset-all - Cancel all stuck/abandoned test orders
+router.post('/debug/reset-all', async (req, res) => {
+  try {
+    const result = await Order.updateMany(
+      { status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } },
+      { status: 'cancelled', cancel_reason: 'Admin test cleanup', cancelled_at: new Date() }
+    );
+    const LiveLocation = require('../models/LiveLocation');
+    await LiveLocation.updateMany({}, { is_online: true, status: 'idle' });
+    await DeliveryPerson.updateMany({}, { dp_status: 'online' });
+    res.json({ success: true, message: 'All stuck test orders cancelled', modifiedCount: result.modifiedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+
