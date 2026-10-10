@@ -1607,37 +1607,71 @@ class _HomePageState extends State<HomePage> {
                     if (response.statusCode == 200) {
                       final data = jsonDecode(response.body);
                       final order = data['order'];
-                      if (order != null && order['status'] != 'pending') {
-                        // Delivery partner has ACCEPTED the order on Device 2!
-                        timer.cancel();
-                        final pName = order['partner_name'] ?? 'Karthi';
-                        final pPhone = order['partner_phone'] ?? '+91 98765 43210';
-                        final pId = order['partner_id'] ?? 'DP001';
-                        final pPic = order['partner_profile_picture'] ?? order['partner_image'];
-
-                        final p = await SharedPreferences.getInstance();
-                        await p.setString('active_order_partner_name', pName);
-                        await p.setString('active_order_partner_phone', pPhone);
-                        await p.setString('active_order_partner_id', pId);
-                        if (pPic != null && pPic.isNotEmpty) {
-                          await p.setString('active_order_partner_image', pPic);
+                      if (order != null) {
+                        final st = (order['status']?.toString() ?? '').toLowerCase();
+                        if (st == 'cancelled') {
+                          timer.cancel();
+                          final reason = order['cancel_reason'] ?? 'Order was cancelled';
+                          final p = await SharedPreferences.getInstance();
+                          await p.setBool('has_active_order', false);
+                          await p.setString('active_order_status', 'cancelled');
+                          await p.remove('active_order_id');
+                          if (mounted) {
+                            setState(() {
+                              isSearchingRider = false;
+                              hasRiderAccepted = false;
+                              showDeliveryDetails = false;
+                              showCancelButtonContainer = false;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Row(
+                                  children: [
+                                    const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
+                                    const SizedBox(width: 8),
+                                    Expanded(child: Text("Order cancelled: $reason")),
+                                  ],
+                                ),
+                                backgroundColor: AppColors.danger,
+                                duration: const Duration(seconds: 4),
+                              ),
+                            );
+                          }
+                          return;
                         }
-                        await p.setString('active_order_status', order['status']);
-                        await p.setBool('active_order_partner_accepted', true);
 
-                        if (mounted) {
-                          setState(() {
-                            isSearchingRider = false;
-                            hasRiderAccepted = true;
-                            assignedPartnerName = "$pName (Partner)";
-                            assignedPartnerPhone = pPhone;
-                            if (pPic != null && pPic.isNotEmpty) {
-                              assignedPartnerProfileImage = pPic;
-                            }
-                          });
-                          _startRiderLocationPolling();
-                          _fetchTrackingRoadRoute();
-                          scrollToBottom();
+                        if (st != 'pending') {
+                          // Delivery partner has ACCEPTED the order on Device 2!
+                          timer.cancel();
+                          final pName = order['partner_name'] ?? 'Karthi';
+                          final pPhone = order['partner_phone'] ?? '+91 98765 43210';
+                          final pId = order['partner_id'] ?? 'DP001';
+                          final pPic = order['partner_profile_picture'] ?? order['partner_image'];
+
+                          final p = await SharedPreferences.getInstance();
+                          await p.setString('active_order_partner_name', pName);
+                          await p.setString('active_order_partner_phone', pPhone);
+                          await p.setString('active_order_partner_id', pId);
+                          if (pPic != null && pPic.isNotEmpty) {
+                            await p.setString('active_order_partner_image', pPic);
+                          }
+                          await p.setString('active_order_status', order['status']);
+                          await p.setBool('active_order_partner_accepted', true);
+
+                          if (mounted) {
+                            setState(() {
+                              isSearchingRider = false;
+                              hasRiderAccepted = true;
+                              assignedPartnerName = "$pName (Partner)";
+                              assignedPartnerPhone = pPhone;
+                              if (pPic != null && pPic.isNotEmpty) {
+                                assignedPartnerProfileImage = pPic;
+                              }
+                            });
+                            _startRiderLocationPolling();
+                            _fetchTrackingRoadRoute();
+                            scrollToBottom();
+                          }
                         }
                       }
                     }
@@ -2378,35 +2412,114 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showReasonDialog() {
-    TextEditingController reasonController = TextEditingController();
+    String selectedReason = "Placed order by mistake";
+    final TextEditingController reasonController = TextEditingController();
+    final List<String> reasons = [
+      "Placed order by mistake",
+      "Wait time is too long",
+      "Wrong delivery location / items",
+      "Change of mind",
+      "Other reason",
+    ];
+
     showDialog(
       context: context,
-      builder:
-          (_) => AlertDialog(
+      builder: (dlgCtx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('Reason for cancellation', style: AppTypography.cardTitle),
-            content: TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                hintText: 'Enter reason...',
+            title: const Row(
+              children: [
+                Icon(Icons.cancel_rounded, color: AppColors.danger, size: 22),
+                SizedBox(width: 8),
+                Text('Reason for cancellation', style: AppTypography.cardTitle),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Please select a reason for cancelling your order:",
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 12),
+                  ...reasons.map((r) {
+                    final isSel = selectedReason == r;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          selectedReason = r;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSel ? const Color(0xFFFEE2E2) : const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSel ? const Color(0xFFEF4444) : const Color(0xFFE2E8F0),
+                            width: isSel ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isSel ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                              size: 18,
+                              color: isSel ? const Color(0xFFDC2626) : AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                r,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+                                  color: isSel ? const Color(0xFF991B1B) : AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  if (selectedReason == "Other reason") ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: reasonController,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        hintText: 'Enter specific reason...',
+                        hintStyle: const TextStyle(fontSize: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        contentPadding: const EdgeInsets.all(10),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             actions: [
               TextButton(
                 child: const Text('Back', style: TextStyle(color: AppColors.textSecondary)),
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(dlgCtx),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: AppColors.danger,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                child: const Text('Submit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: const Text('Cancel Order', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 onPressed: () async {
-                  final reason = reasonController.text.trim().isNotEmpty
+                  final finalReason = selectedReason == "Other reason" && reasonController.text.trim().isNotEmpty
                       ? reasonController.text.trim()
-                      : "Cancelled by customer";
-                  Navigator.pop(context);
+                      : selectedReason;
+                  Navigator.pop(dlgCtx);
 
                   final prefs = await SharedPreferences.getInstance();
                   final curOrderId = prefs.getString('active_order_id') ?? 'ORD-8492';
@@ -2417,7 +2530,8 @@ class _HomePageState extends State<HomePage> {
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode({
                         'order_id': curOrderId,
-                        'cancel_reason': reason,
+                        'cancel_reason': finalReason,
+                        'cancelled_by': 'customer',
                       }),
                     );
                   } catch (e) {
@@ -2444,19 +2558,21 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
                             const SizedBox(width: 8),
-                            Expanded(child: Text('Order $curOrderId cancelled: $reason')),
+                            Expanded(child: Text('Order $curOrderId cancelled: $finalReason')),
                           ],
                         ),
                         backgroundColor: AppColors.danger,
                         behavior: SnackBarBehavior.floating,
-                        duration: const Duration(seconds: 3),
+                        duration: const Duration(seconds: 4),
                       ),
                     );
                   }
                 },
               ),
             ],
-          ),
+          );
+        },
+      ),
     );
   }
 }

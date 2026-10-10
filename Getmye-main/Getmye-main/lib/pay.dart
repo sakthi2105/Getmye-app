@@ -1162,13 +1162,132 @@ class _PaymentPageState extends State<PaymentPage> {
 
     if (confirmed != true) return;
 
+    String selectedReason = "Placed order by mistake";
+    final TextEditingController reasonController = TextEditingController();
+    final List<String> reasons = [
+      "Placed order by mistake",
+      "Wait time is too long",
+      "Wrong delivery location / items",
+      "Change of mind",
+      "Other reason",
+    ];
+
+    if (!mounted) return;
+    final reasonConfirmed = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.cancel_rounded, color: AppColors.danger, size: 22),
+                SizedBox(width: 8),
+                Text('Reason for cancellation', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Please select why you want to cancel:",
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 12),
+                  ...reasons.map((r) {
+                    final isSel = selectedReason == r;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          selectedReason = r;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSel ? const Color(0xFFFEE2E2) : const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSel ? const Color(0xFFEF4444) : const Color(0xFFE2E8F0),
+                            width: isSel ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isSel ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                              size: 18,
+                              color: isSel ? const Color(0xFFDC2626) : AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                r,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+                                  color: isSel ? const Color(0xFF991B1B) : AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  if (selectedReason == "Other reason") ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: reasonController,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        hintText: 'Enter specific reason...',
+                        hintStyle: const TextStyle(fontSize: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        contentPadding: const EdgeInsets.all(10),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                child: const Text('Back', style: TextStyle(color: AppColors.textSecondary)),
+                onPressed: () => Navigator.pop(dlgCtx, false),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.danger,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('Confirm Cancel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                onPressed: () => Navigator.pop(dlgCtx, true),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (reasonConfirmed != true) return;
+
+    final finalReason = selectedReason == "Other reason" && reasonController.text.trim().isNotEmpty
+        ? reasonController.text.trim()
+        : selectedReason;
+
     try {
       await http.post(
         ApiConfig.orderCancel,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'order_id': orderId,
-          'cancel_reason': 'Customer requested cancellation',
+          'cancel_reason': finalReason,
+          'cancelled_by': 'customer',
         }),
       );
     } catch (_) {}

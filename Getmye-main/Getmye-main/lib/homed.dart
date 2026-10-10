@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
 import 'services/alarm_service.dart';
+import 'services/app_notification_service.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 
@@ -45,6 +46,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   final Set<String> _knownOrderIds = {};
+  final Set<String> _notifiedCancelledOrderIds = {};
   bool _isShowingIncomingModal = false;
   int _pollCount = 0;
   Map<String, dynamic>? activeDeliveryOrder;
@@ -152,6 +154,49 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
         final List orders = data['orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
+
+        // 🚨 CANCELLATION DETECTOR: Alert delivery partner immediately with Reason if order cancelled
+        for (final o in orders) {
+          final oStatus = (o['status']?.toString() ?? '').toLowerCase();
+          final oId = o['order_id']?.toString() ?? '';
+          final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
+          if (oStatus == 'cancelled' && !_notifiedCancelledOrderIds.contains(oId)) {
+            _notifiedCancelledOrderIds.add(oId);
+
+            // 1. Immediately stop and silence any ringing alarm
+            AlarmService.stopAlarm();
+            AlarmService.silenceOrder(oId);
+
+            // 2. High-priority local notification with the exact cancellation reason
+            AppNotificationService.showOrderCancelledNotification(
+              orderId: oId,
+              reason: cReason,
+            );
+
+            // 3. If incoming order modal is currently open on screen, dismiss it
+            if (_isShowingIncomingModal && mounted) {
+              Navigator.of(context, rootNavigator: true).pop();
+              _isShowingIncomingModal = false;
+            }
+
+            // 4. If this order was partner's ongoing delivery, clear it immediately
+            if (activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == oId) {
+              if (mounted) {
+                setState(() {
+                  activeDeliveryOrder = null;
+                });
+              }
+              final p = await SharedPreferences.getInstance();
+              await p.remove('partner_active_order_id');
+              await p.remove('active_order_id');
+            }
+
+            // 5. Show prominent cancellation notice dialog on partner screen
+            if (mounted) {
+              _showCancellationNoticeDialog(oId, cReason);
+            }
+          }
+        }
 
         // Only consider pending orders strictly unhandled
         final unhandledOrders = orders.where((o) {
@@ -1030,16 +1075,43 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                     ],
                                   ),
                                 ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF1D4ED8),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: const Text(
-                                    "Continue",
-                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                                  ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    InkWell(
+                                      onTap: () {
+                                        final oId = activeDeliveryOrder?['order_id']?.toString() ?? '';
+                                        if (oId.isNotEmpty) {
+                                          _showPartnerCancelDeliveryDialog(oId);
+                                        }
+                                      },
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFEE2E2),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: const Color(0xFFFCA5A5)),
+                                        ),
+                                        child: const Text(
+                                          "Cancel",
+                                          style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold, fontSize: 12),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1D4ED8),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Text(
+                                        "Continue",
+                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
@@ -1400,5 +1472,281 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ],
       ),
     );
+  }
+
+  void _showCancellationNoticeDialog(String orderId, String reason) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEE2E2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.cancel_rounded, color: Color(0xFFDC2626), size: 24),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                "Order Cancelled",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Color(0xFFDC2626)),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Customer has cancelled Order #$orderId.",
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Reason Provided:",
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    reason.isNotEmpty ? reason : "No reason provided",
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF991B1B)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              "You are now free to accept incoming orders.",
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryDark,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () {
+                Navigator.pop(ctx);
+                _loadPartnerData();
+              },
+              child: const Text("OK, Got It", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPartnerCancelDeliveryDialog(String orderId) {
+    String selectedReason = "Emergency / Vehicle issue";
+    final customReasonController = TextEditingController();
+    final reasons = [
+      "Emergency / Vehicle issue",
+      "Store is closed / items unavailable",
+      "Unable to reach customer",
+      "Heavy rain / road blocked",
+      "Other reason",
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.cancel_rounded, color: Color(0xFFDC2626), size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Cancel Ongoing Delivery",
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        ),
+                        Text(
+                          "Order #$orderId",
+                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Please select why you need to cancel:",
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: reasons.map((r) {
+                  final isSelected = selectedReason == r;
+                  return ChoiceChip(
+                    label: Text(r),
+                    selected: isSelected,
+                    selectedColor: const Color(0xFFFEE2E2),
+                    backgroundColor: const Color(0xFFF1F5F9),
+                    labelStyle: TextStyle(
+                      fontSize: 12,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? const Color(0xFFDC2626) : AppColors.textPrimary,
+                    ),
+                    onSelected: (_) {
+                      setModalState(() {
+                        selectedReason = r;
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              if (selectedReason == "Other reason") ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: customReasonController,
+                  maxLines: 2,
+                  decoration: InputDecoration(
+                    hintText: "Enter specific reason...",
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text("Keep Order", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFDC2626),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () async {
+                        final finalReason = selectedReason == "Other reason" && customReasonController.text.trim().isNotEmpty
+                            ? customReasonController.text.trim()
+                            : selectedReason;
+                        Navigator.pop(ctx);
+                        await _cancelDeliveryAsPartner(orderId, finalReason);
+                      },
+                      child: const Text("Confirm Cancel", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _cancelDeliveryAsPartner(String orderId, String reason) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final partnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
+
+      await http.post(
+        ApiConfig.orderCancel,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'order_id': orderId,
+          'cancel_reason': reason,
+          'cancelled_by': 'partner',
+          'partner_id': partnerId,
+        }),
+      );
+
+      await prefs.remove('partner_active_order_id');
+      await prefs.remove('active_order_id');
+      await prefs.setString('order_${orderId}_status', 'cancelled');
+
+      AlarmService.stopAlarm();
+      AlarmService.silenceOrder(orderId);
+
+      if (mounted) {
+        setState(() {
+          activeDeliveryOrder = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Order #$orderId has been cancelled ($reason)"),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+      _loadPartnerData();
+    } catch (e) {
+      debugPrint("Error cancelling delivery as partner: $e");
+    }
   }
 }

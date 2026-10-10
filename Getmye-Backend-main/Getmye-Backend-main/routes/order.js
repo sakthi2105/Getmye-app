@@ -414,26 +414,43 @@ router.get('/user/:user_id', async (req, res) => {
   }
 });
 
-// POST /api/order/cancel - Customer cancels an active order
+// POST /api/order/cancel - Customer or delivery partner cancels an active order
 router.post('/cancel', async (req, res) => {
   try {
-    const { order_id, cancel_reason } = req.body;
+    const { order_id, cancel_reason, cancelled_by } = req.body;
     if (!order_id) {
       return res.status(400).json({ error: 'order_id is required' });
     }
+
+    const defaultReason = cancelled_by === 'partner'
+      ? 'Cancelled by delivery partner'
+      : 'Cancelled by customer';
 
     const order = await Order.findOneAndUpdate(
       { order_id },
       {
         status: 'cancelled',
-        cancel_reason: cancel_reason || 'Cancelled by customer',
+        cancel_reason: cancel_reason || defaultReason,
+        cancelled_by: cancelled_by || 'customer',
         cancelled_at: new Date()
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    console.log(`❌ Order ${order_id} cancelled by customer: ${cancel_reason}`);
+    console.log(`❌ Order ${order_id} cancelled by ${cancelled_by || 'customer'}: ${cancel_reason || defaultReason}`);
+
+    // Free the partner's LiveLocation if partner was assigned
+    try {
+      if (order.partner_id) {
+        const LiveLocation = require('../models/LiveLocation');
+        await LiveLocation.updateMany(
+          { partner_id: order.partner_id },
+          { status: 'idle', order_id: null }
+        );
+      }
+    } catch (_) {}
+
     res.json({ success: true, message: 'Order cancelled successfully', order });
   } catch (err) {
     console.error('Error cancelling order:', err);
