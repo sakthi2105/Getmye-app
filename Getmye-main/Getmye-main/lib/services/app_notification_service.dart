@@ -147,13 +147,12 @@ class AppNotificationService {
     );
   }
 
+  static bool _isCheckingMessages = false;
+
   // 4. Global Background Chat Polling System for Both Models (Customer & Partner)
   static void startGlobalChatPolling() {
     _globalChatPollingTimer?.cancel();
-    // Run immediately once
-    checkAndNotifyNewMessages();
-    // Then poll periodically every 2 seconds
-    _globalChatPollingTimer = Timer.periodic(const Duration(milliseconds: 2000), (_) async {
+    _globalChatPollingTimer = Timer.periodic(const Duration(milliseconds: 3000), (_) async {
       await checkAndNotifyNewMessages();
     });
   }
@@ -194,60 +193,16 @@ class AppNotificationService {
   }
 
   static Future<void> checkAndNotifyNewMessages() async {
+    if (_isCheckingMessages) return;
+    _isCheckingMessages = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
       if (!isLoggedIn) return;
 
       final String accountType = prefs.getString('account_type') ?? 'customer';
-      String? activeOrderId = prefs.getString('active_order_id');
-
-      // For Customer: If activeOrderId not cached, check active order API
-      if (accountType == 'customer' && (activeOrderId == null || activeOrderId.isEmpty)) {
-        final userId = prefs.getString('user_id');
-        if (userId != null && userId.isNotEmpty) {
-          try {
-            final activeRes = await http.get(ApiConfig.orderActive(userId)).timeout(const Duration(seconds: 3));
-            if (activeRes.statusCode == 200) {
-              final aData = jsonDecode(activeRes.body);
-              if (aData != null && aData['order_id'] != null) {
-                activeOrderId = aData['order_id'].toString();
-                await prefs.setString('active_order_id', activeOrderId);
-                if (aData['partner_name'] != null && aData['partner_name'].toString().isNotEmpty) {
-                  await prefs.setString('active_order_partner_name', aData['partner_name'].toString());
-                }
-              }
-            }
-          } catch (_) {}
-        }
-      }
-
-      // For Partner: If activeOrderId not cached, check partner orders API
-      if (accountType == 'partner' && (activeOrderId == null || activeOrderId.isEmpty)) {
-        final dId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id');
-        if (dId != null && dId.isNotEmpty) {
-          try {
-            final pRes = await http.get(ApiConfig.orderPartner(dId)).timeout(const Duration(seconds: 3));
-            if (pRes.statusCode == 200) {
-              final pList = jsonDecode(pRes.body);
-              if (pList is List && pList.isNotEmpty) {
-                final inProgress = pList.firstWhere(
-                  (o) => o['status'] != 'delivered' && o['status'] != 'cancelled' && o['status'] != 'declined',
-                  orElse: () => null,
-                );
-                if (inProgress != null && inProgress['order_id'] != null) {
-                  activeOrderId = inProgress['order_id'].toString();
-                  await prefs.setString('active_order_id', activeOrderId);
-                  if (inProgress['customer_name'] != null) {
-                    await prefs.setString('active_order_customer_name', inProgress['customer_name'].toString());
-                  }
-                }
-              }
-            }
-          } catch (_) {}
-        }
-      }
-
+      final String? activeOrderId = prefs.getString('active_order_id');
+      // If user has no active order in progress, no chat messages exist to poll
       if (activeOrderId == null || activeOrderId.isEmpty) return;
 
       // Query latest messages for the active order
@@ -316,6 +271,9 @@ class AppNotificationService {
 
         await prefs.setInt(countKey, remoteMessages.length);
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isCheckingMessages = false;
+    }
   }
 }

@@ -96,6 +96,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
   final Set<String> _acceptedOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
   Timer? _pollingTimer;
+  bool _isFetchingOrders = false;
 
   @override
   void initState() {
@@ -114,6 +115,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
   }
 
   Future<void> _fetchPendingOrders() async {
+    if (_isFetchingOrders) return;
+    _isFetchingOrders = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final isOnline = prefs.getBool('d_is_online') ?? true;
@@ -135,7 +138,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
       }
 
       final pId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
-      final res = await http.get(Uri.parse("${ApiConfig.orderPending}?partner_id=$pId"));
+      final res = await http.get(Uri.parse("${ApiConfig.orderPending}?partner_id=$pId")).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List ordersList = data['orders'] ?? [];
@@ -281,6 +284,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
       }
     } catch (e) {
       debugPrint("Error fetching pending orders from backend: $e");
+    } finally {
+      _isFetchingOrders = false;
     }
   }
 
@@ -913,6 +918,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
   late List<BillItem> _items;
   double _deliveryFee = 0.0;
   Timer? _statusCheckTimer;
+  bool _isCheckingStatus = false;
   int _lastSeenMsgCount = 0;
 
   @override
@@ -956,8 +962,10 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
   }
 
   Future<void> _checkOrderCancelled() async {
+    if (_isCheckingStatus) return;
+    _isCheckingStatus = true;
     try {
-      final res = await http.get(ApiConfig.orderById(_order.orderId));
+      final res = await http.get(ApiConfig.orderById(_order.orderId)).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final orderData = data['order'] ?? data;
@@ -1008,7 +1016,10 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isCheckingStatus = false;
+    }
   }
 
   double get _subtotal => _items.fold(0.0, (sum, item) => sum + item.total);
@@ -1569,6 +1580,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   GoogleMapController? _navMapController;
   StreamSubscription<Position>? _gpsStreamSubscription;
   Timer? _trackingTimer;
+  bool _isBroadcasting = false;
+  bool _isCheckingCancel = false;
   int _lastSeenMsgCount = 0;
 
   @override
@@ -1680,6 +1693,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
 
   void _broadcastLocation() {
     _checkOrderCancelled();
+    if (_isBroadcasting) return;
+    _isBroadcasting = true;
     http.post(
       ApiConfig.trackingUpdate,
       headers: {'Content-Type': 'application/json'},
@@ -1692,12 +1707,16 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
         'speed': 25.0,
         'status': 'in_transit',
       }),
-    ).catchError((_) => http.Response('', 500));
+    ).timeout(const Duration(seconds: 3)).catchError((_) => http.Response('', 500)).whenComplete(() {
+      _isBroadcasting = false;
+    });
   }
 
   Future<void> _checkOrderCancelled() async {
+    if (_isCheckingCancel) return;
+    _isCheckingCancel = true;
     try {
-      final res = await http.get(ApiConfig.orderById(widget.order.orderId));
+      final res = await http.get(ApiConfig.orderById(widget.order.orderId)).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final orderData = data['order'] ?? data;
@@ -1762,7 +1781,10 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isCheckingCancel = false;
+    }
   }
 
   void _showArrivedBottomSheet() {

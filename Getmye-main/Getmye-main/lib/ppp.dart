@@ -59,6 +59,9 @@ class _HomePageState extends State<HomePage> {
   Timer? _searchRiderTimer;
   Timer? _riderTrackingTimer;
   Timer? _inOrderChatTimer;
+  bool _isPollingRider = false;
+  bool _isFetchingChat = false;
+  bool _isFetchingRiderLoc = false;
   List<Map<String, dynamic>> _inOrderChatMessages = [];
   GoogleMapController? _trackingMapController;
   LatLng _customerLocation = const LatLng(10.9601, 79.3845);
@@ -466,12 +469,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _fetchInOrderChat() async {
+    if (_isFetchingChat) return;
+    _isFetchingChat = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final curOrderId = prefs.getString('active_order_id');
       if (curOrderId == null || curOrderId.isEmpty) return;
 
-      final res = await http.get(ApiConfig.orderMessages(curOrderId)).timeout(const Duration(seconds: 3));
+      final res = await http.get(ApiConfig.orderMessages(curOrderId)).timeout(const Duration(seconds: 2));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List remoteList = data['messages'] ?? [];
@@ -482,7 +487,10 @@ class _HomePageState extends State<HomePage> {
           });
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isFetchingChat = false;
+    }
   }
 
   void _startRiderLocationPolling() {
@@ -523,10 +531,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _fetchRiderLocation() async {
+    if (_isFetchingRiderLoc) return;
+    _isFetchingRiderLoc = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('active_order_partner_id') ?? 'DP001';
-      final res = await http.get(ApiConfig.trackingByPartner(pId)).timeout(const Duration(seconds: 4));
+      final res = await http.get(ApiConfig.trackingByPartner(pId)).timeout(const Duration(seconds: 2));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final loc = data['location'];
@@ -542,7 +552,10 @@ class _HomePageState extends State<HomePage> {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isFetchingRiderLoc = false;
+    }
   }
 
   void _applyBannerOffer(Map<String, dynamic> banner) {
@@ -1773,18 +1786,8 @@ class _HomePageState extends State<HomePage> {
                 }
 
                 // ⚡ Fast: Use live GPS coordinates without blocking delay
-                double orderLat = _customerLocation.latitude;
-                double orderLng = _customerLocation.longitude;
-                try {
-                  final pos = await Geolocator.getLastKnownPosition();
-                  if (pos != null) {
-                    orderLat = pos.latitude;
-                    orderLng = pos.longitude;
-                    _customerLocation = LatLng(orderLat, orderLng);
-                    await prefs.setDouble('customer_latitude', orderLat);
-                    await prefs.setDouble('customer_longitude', orderLng);
-                  }
-                } catch (_) {}
+                final orderLat = _customerLocation.latitude;
+                final orderLng = _customerLocation.longitude;
 
                 try {
                   // Call backend to create the real order in MongoDB with customer's fixed OTP
@@ -1802,7 +1805,7 @@ class _HomePageState extends State<HomePage> {
                       'customer_latitude': orderLat,
                       'customer_longitude': orderLng,
                     }),
-                  );
+                  ).timeout(const Duration(seconds: 4));
                   if (res.statusCode == 200 || res.statusCode == 201) {
                     final data = jsonDecode(res.body);
                     if (data['order'] != null) {
@@ -1856,9 +1859,11 @@ class _HomePageState extends State<HomePage> {
 
                 // Poll real backend order endpoint until partner accepts on Device 2
                 _searchRiderTimer?.cancel();
-                _searchRiderTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+                _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
+                  if (_isPollingRider) return;
+                  _isPollingRider = true;
                   try {
-                    final response = await http.get(ApiConfig.orderById(newOrderId));
+                    final response = await http.get(ApiConfig.orderById(newOrderId)).timeout(const Duration(seconds: 2));
                     if (response.statusCode == 200) {
                       final data = jsonDecode(response.body);
                       final order = data['order'];
@@ -1943,6 +1948,8 @@ class _HomePageState extends State<HomePage> {
                     }
                   } catch (err) {
                     debugPrint("Order status polling error: $err");
+                  } finally {
+                    _isPollingRider = false;
                   }
                 });
               },

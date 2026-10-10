@@ -8,30 +8,13 @@ const { getNextSequence } = require('../models/Counter');
 // POST /api/order/create - Customer places a new order
 router.post('/create', async (req, res) => {
   try {
-    const { user_id, customer_name, customer_phone, delivery_address, item_name, budget } = req.body;
+    const { user_id, customer_name, customer_phone, delivery_address, item_name, budget, cod_otp, customer_latitude, customer_longitude } = req.body;
     if (!user_id || !delivery_address || !item_name) {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
 
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
-
-    // Retrieve or establish customer's fixed OTP
-    let fixedOtp = req.body.cod_otp;
-    try {
-      let profile = await Profile.findOne({ user_id });
-      if (!profile && customer_phone) {
-        profile = await Profile.findOne({ mobile_number: customer_phone });
-      }
-      if (profile) {
-        if (!profile.fixed_order_otp) {
-          profile.fixed_order_otp = fixedOtp || (Math.floor(1000 + Math.random() * 9000)).toString();
-          await profile.save();
-        }
-        fixedOtp = profile.fixed_order_otp;
-      }
-    } catch (_) {}
-
-    const codOtp = (fixedOtp || (Math.floor(1000 + Math.random() * 9000))).toString();
+    const finalOtp = (cod_otp || (Math.floor(1000 + Math.random() * 9000))).toString();
 
     const newOrder = new Order({
       order_id: orderId,
@@ -41,8 +24,10 @@ router.post('/create', async (req, res) => {
       delivery_address,
       item_name,
       budget: Number(budget) || 0,
+      customer_latitude: customer_latitude != null ? Number(customer_latitude) : null,
+      customer_longitude: customer_longitude != null ? Number(customer_longitude) : null,
       status: 'pending',
-      cod_otp: codOtp
+      cod_otp: finalOtp
     });
 
     await newOrder.save();
@@ -74,7 +59,11 @@ router.get('/pending', async (req, res) => {
         declined_by: { $ne: partnerId }
       };
     }
-    const orders = await Order.find(query).sort({ created_at: -1 }).limit(20).lean();
+    const orders = await Order.find(query)
+      .select('-partner_profile_picture -bill_image_url -messages')
+      .sort({ created_at: -1 })
+      .limit(20)
+      .lean();
     res.json({ success: true, count: orders.length, orders });
   } catch (err) {
     console.error('Error fetching pending orders:', err);
@@ -351,26 +340,14 @@ router.get('/partner/:partner_id', async (req, res) => {
   }
 });
 
-// GET /api/order/:order_id - Get specific order
+// GET /api/order/:order_id - Get specific order (fast lightweight query)
 router.get('/:order_id', async (req, res) => {
   try {
-    const order = await Order.findOne({ order_id: req.params.order_id });
+    const order = await Order.findOne({ order_id: req.params.order_id })
+      .select('-bill_image_url -partner_profile_picture')
+      .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    const orderObj = order.toObject();
-    if (orderObj.partner_id && !orderObj.partner_profile_picture) {
-      try {
-        const dp = await DeliveryPerson.findOne({
-          $or: [
-            { DP_id: orderObj.partner_id },
-            { mobile_number: orderObj.partner_phone || orderObj.partner_id }
-          ]
-        });
-        if (dp && dp.profile_picture) {
-          orderObj.partner_profile_picture = Buffer.from(dp.profile_picture).toString('base64');
-        }
-      } catch (_) {}
-    }
-    res.json({ success: true, order: orderObj });
+    res.json({ success: true, order });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch order' });
   }

@@ -56,6 +56,7 @@ class _PaymentPageState extends State<PaymentPage> {
   LatLng _customerLocation = const LatLng(10.9601, 79.3845);
   List<LatLng> _routePoints = [];
   bool _isLoadingRoute = false;
+  bool _isPollingBackend = false;
 
   Future<void> _fetchRoadRoute() async {
     if (_isLoadingRoute) return;
@@ -162,24 +163,27 @@ class _PaymentPageState extends State<PaymentPage> {
   }
 
   Future<void> _pollFromBackend() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentOrderId = prefs.getString('active_order_id');
-    final activeStatus = prefs.getString('active_order_status');
-
-    // If there is no active order or order is already delivered, do not poll past order
-    if (currentOrderId == null || activeStatus == 'delivered' || activeStatus == 'completed' || !hasActiveOrder) {
-      if (mounted && hasActiveOrder) {
-        setState(() {
-          hasActiveOrder = false;
-        });
-      }
-      return;
-    }
-
-    // 1. Fetch Order Status from backend MongoDB
-    String? orderBillImg;
+    if (_isPollingBackend) return;
+    _isPollingBackend = true;
     try {
-      final orderRes = await http.get(ApiConfig.orderById(currentOrderId));
+      final prefs = await SharedPreferences.getInstance();
+      final currentOrderId = prefs.getString('active_order_id');
+      final activeStatus = prefs.getString('active_order_status');
+
+      // If there is no active order or order is already delivered, do not poll past order
+      if (currentOrderId == null || activeStatus == 'delivered' || activeStatus == 'completed' || !hasActiveOrder) {
+        if (mounted && hasActiveOrder) {
+          setState(() {
+            hasActiveOrder = false;
+          });
+        }
+        return;
+      }
+
+      // 1. Fetch Order Status from backend MongoDB
+      String? orderBillImg;
+      try {
+        final orderRes = await http.get(ApiConfig.orderById(currentOrderId)).timeout(const Duration(seconds: 2));
       if (orderRes.statusCode == 200) {
         final orderData = jsonDecode(orderRes.body);
         final order = orderData['order'];
@@ -295,7 +299,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
     // 2. Fetch Bill Data from backend MongoDB
     try {
-      final billRes = await http.get(ApiConfig.billByOrder(currentOrderId));
+      final billRes = await http.get(ApiConfig.billByOrder(currentOrderId)).timeout(const Duration(seconds: 2));
       if (billRes.statusCode == 200) {
         final billData = jsonDecode(billRes.body);
         final bill = billData['bill'];
@@ -334,7 +338,7 @@ class _PaymentPageState extends State<PaymentPage> {
     // 3. Fetch Live Tracking Location from backend using dynamic partner ID
     try {
       final effectivePid = partnerId ?? prefs.getString('active_order_partner_id') ?? 'DP001';
-      final locRes = await http.get(ApiConfig.trackingByPartner(effectivePid));
+      final locRes = await http.get(ApiConfig.trackingByPartner(effectivePid)).timeout(const Duration(seconds: 2));
       if (locRes.statusCode == 200) {
         final locData = jsonDecode(locRes.body);
         final loc = locData['location'];
@@ -355,7 +359,10 @@ class _PaymentPageState extends State<PaymentPage> {
     } catch (e) {
       debugPrint("Error polling tracking from backend: $e");
     }
+  } finally {
+    _isPollingBackend = false;
   }
+}
 
   void _showPaymentOptions() {
     final payAmount = totalAmount > 0 ? totalAmount : 195.0;

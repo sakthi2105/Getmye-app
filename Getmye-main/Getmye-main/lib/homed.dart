@@ -48,6 +48,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   final Set<String> _knownOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
   bool _isShowingIncomingModal = false;
+  bool _isCheckingPendingOrders = false;
+  bool _isUpdatingLocation = false;
+  Position? _lastKnownPosition;
   int _pollCount = 0;
   Map<String, dynamic>? activeDeliveryOrder;
 
@@ -181,28 +184,31 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   }
 
   Future<void> _updateLiveLocationToBackend() async {
-    if (!isOnline) return;
+    if (!isOnline || _isUpdatingLocation) return;
+    _isUpdatingLocation = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
-      final pos = await Geolocator.getLastKnownPosition() ??
-          await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.medium,
-            timeLimit: const Duration(seconds: 4),
-          );
+      final pos = await Geolocator.getLastKnownPosition();
+      if (pos != null) _lastKnownPosition = pos;
+      final lat = _lastKnownPosition?.latitude ?? 13.0827;
+      final lng = _lastKnownPosition?.longitude ?? 80.2707;
       await http.post(
         ApiConfig.trackingUpdate,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'partner_id': pId,
-          'latitude': pos.latitude,
-          'longitude': pos.longitude,
+          'latitude': lat,
+          'longitude': lng,
           'is_online': isOnline,
           'status': activeDeliveryOrder != null ? 'delivering' : 'idle',
           'order_id': activeDeliveryOrder?['order_id'],
         }),
-      );
-    } catch (_) {}
+      ).timeout(const Duration(seconds: 3));
+    } catch (_) {
+    } finally {
+      _isUpdatingLocation = false;
+    }
   }
 
   Future<void> _checkPendingOrders() async {
@@ -210,14 +216,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       AlarmService.stopAlarm();
       return;
     }
-
+    if (_isCheckingPendingOrders) return;
+    _isCheckingPendingOrders = true;
 
     try {
-      final res = await http.get(ApiConfig.orderPending);
+      final prefs = await SharedPreferences.getInstance();
+      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+      final uri = Uri.parse('${ApiConfig.orderPending}?partner_id=$pId');
+      final res = await http.get(uri).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
-        final prefs = await SharedPreferences.getInstance();
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
         final activeId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
 
@@ -252,9 +261,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                   activeDeliveryOrder = null;
                 });
               }
-              final p = await SharedPreferences.getInstance();
-              await p.remove('partner_active_order_id');
-              await p.remove('active_order_id');
+              await prefs.remove('partner_active_order_id');
+              await prefs.remove('active_order_id');
             }
 
             // 5. Show prominent cancellation notice dialog on partner screen
@@ -299,7 +307,10 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isCheckingPendingOrders = false;
+    }
   }
 
   Future<void> _showIncomingOrderModal(Map<String, dynamic> order) async {
@@ -509,7 +520,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 'decline_reason': 'Declined from alert modal',
                                 'partner_id': pId,
                               }),
-                            );
+                            ).timeout(const Duration(seconds: 3));
                           } catch (_) {}
                           if (modalCtx.mounted) Navigator.pop(modalCtx);
                           _checkPendingOrders();
@@ -553,7 +564,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 'partner_name': pName,
                                 'partner_phone': pPhone,
                               }),
-                            );
+                            ).timeout(const Duration(seconds: 4));
                           } catch (e) {
                             debugPrint("Error accepting order: $e");
                           }
