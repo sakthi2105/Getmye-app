@@ -108,7 +108,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
 
-      // 📍 Retrieve live GPS coordinates to enforce 2 KM radius matching
+      // 📍 Retrieve live GPS coordinates to enforce 10 KM radius matching
       double? lat;
       double? lng;
       try {
@@ -162,7 +162,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             pendingOrderCount = unhandledOrders.length;
           });
 
-          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (2 KM match or online broadcast)
+          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (10 KM match or online broadcast)
           if (unhandledOrders.isNotEmpty && isOnline) {
             final firstOrder = unhandledOrders.first;
             final newId = firstOrder['order_id']?.toString();
@@ -192,7 +192,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final customerName = order['customer_name']?.toString() ?? 'Customer';
     final customerPhone = order['customer_phone']?.toString() ?? '';
     final address = order['delivery_address']?.toString() ?? 'Customer Delivery Location';
-    final isWithin2km = order['is_within_2km'] == true;
+    final isWithin10km = order['is_within_10km'] == true || order['is_within_2km'] == true;
     final distanceKm = order['distance_km'];
 
     await showModalBottomSheet(
@@ -263,18 +263,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: isWithin2km ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                        color: isWithin10km ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: isWithin2km ? const Color(0xFF86EFAC) : const Color(0xFFFDE68A),
+                          color: isWithin10km ? const Color(0xFF86EFAC) : const Color(0xFFFDE68A),
                         ),
                       ),
                       child: Text(
-                        isWithin2km ? "⚡ < 2 KM" : (distanceKm != null ? "📡 ${distanceKm}km" : "Online Alert"),
+                        isWithin10km
+                            ? (distanceKm != null ? "⚡ ${distanceKm}km (< 10 KM)" : "⚡ < 10 KM")
+                            : (distanceKm != null ? "📡 ${distanceKm}km" : "Online Alert"),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
-                          color: isWithin2km ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                          color: isWithin10km ? const Color(0xFF15803D) : const Color(0xFFB45309),
                         ),
                       ),
                     ),

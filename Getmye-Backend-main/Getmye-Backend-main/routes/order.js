@@ -49,7 +49,7 @@ router.post('/create', async (req, res) => {
 
     await newOrder.save();
 
-    // 🛰️ Geofence Dispatch: Log online partners within 2 km radius
+    // 🛰️ Geofence Dispatch: Log online partners within 10 km radius
     try {
       const cLat = newOrder.customer_latitude;
       const cLng = newOrder.customer_longitude;
@@ -59,7 +59,7 @@ router.post('/create', async (req, res) => {
         const nearbyPartners = [];
         for (const loc of onlineLocations) {
           const d = calculateHaversineDistanceKm(cLat, cLng, loc.latitude, loc.longitude);
-          if (d !== null && d <= 2.0) {
+          if (d !== null && d <= 10.0) {
             const busy = await Order.findOne({
               partner_id: loc.partner_id,
               status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
@@ -69,7 +69,7 @@ router.post('/create', async (req, res) => {
             }
           }
         }
-        console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 2 km:`, nearbyPartners);
+        console.log(`📡 New Order ${orderId} placed at [${cLat}, ${cLng}]. Eligible partners within 10 km:`, nearbyPartners);
       }
     } catch (dispatchErr) {
       console.warn('Geofence partner scan notice:', dispatchErr.message);
@@ -180,8 +180,8 @@ router.get('/pending', async (req, res) => {
 
     const allOrders = await Order.find(query).sort({ created_at: -1 });
 
-    // 3. 2 KM RADIUS PRIORITY & BROADCAST TO ALL ONLINE FREE PARTNERS
-    // "Order potta Location la Irunthu 2 Km radius sourronding la yaaru online status la irukanga nu pakanum.
+    // 3. 10 KM RADIUS PRIORITY & BROADCAST TO ALL ONLINE FREE PARTNERS
+    // "Order potta Location la Irunthu 10 Km radius sourronding la yaaru online status la irukanga nu pakanum.
     // Itha thaandi online la irukura ella d.person kum alert poidanum."
     const mappedOrders = allOrders.map(order => {
       const o = order.toObject();
@@ -189,20 +189,25 @@ router.get('/pending', async (req, res) => {
         const dist = calculateHaversineDistanceKm(partnerLat, partnerLng, o.customer_latitude, o.customer_longitude);
         if (dist !== null) {
           o.distance_km = Number(dist.toFixed(2));
-          o.is_within_2km = dist <= 2.0;
+          o.is_within_10km = dist <= 10.0;
+          o.is_within_2km = dist <= 10.0; // Backward compatible for existing UI checks
         } else {
+          o.is_within_10km = true;
           o.is_within_2km = true;
         }
       } else {
-        o.is_within_2km = true; // Fallback when coords not yet resolved
+        o.is_within_10km = true; // Fallback when coords not yet resolved
+        o.is_within_2km = true;
       }
       return o;
     });
 
-    // Sort: 2km radius orders first, then nearest distance, then latest
+    // Sort: 10km radius orders first, then nearest distance, then latest
     mappedOrders.sort((a, b) => {
-      if (a.is_within_2km && !b.is_within_2km) return -1;
-      if (!a.is_within_2km && b.is_within_2km) return 1;
+      const aWithin = a.is_within_10km || a.is_within_2km;
+      const bWithin = b.is_within_10km || b.is_within_2km;
+      if (aWithin && !bWithin) return -1;
+      if (!aWithin && bWithin) return 1;
       if (a.distance_km !== null && b.distance_km !== null) {
         return a.distance_km - b.distance_km;
       }
