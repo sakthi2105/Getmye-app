@@ -6,6 +6,7 @@ import 'api_config.dart';
 import 'dhome.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
+import 'ppp.dart';
 
 class OptionsPage extends StatelessWidget {
   const OptionsPage({super.key, required bool isDarkMode});
@@ -31,6 +32,18 @@ class OptionsPage extends StatelessWidget {
     }
   }
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final optionsList = [
@@ -43,37 +56,44 @@ class OptionsPage extends StatelessWidget {
       'Advertisement',
     ];
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Options & Support',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.2,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: () => _handleBackNavigation(context),
           ),
+          title: const Text(
+            'Options & Support',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.2,
+            ),
+          ),
+          centerTitle: true,
         ),
-        centerTitle: true,
+        body: ListView.separated(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          itemCount: optionsList.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, index) {
+            final title = optionsList[index];
+            return _buildOption(context, title);
+          },
+        ),
+        bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 2),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        itemCount: optionsList.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          final title = optionsList[index];
-          return _buildOption(context, title);
-        },
-      ),
-      bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 2),
     );
   }
 
@@ -228,7 +248,7 @@ class _ReportBugPageState extends State<ReportBugPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF15803D)),
+            const Icon(Icons.check_circle_rounded, color: AppColors.primary),
             const SizedBox(width: 8),
             Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ],
@@ -248,19 +268,36 @@ class _ReportBugPageState extends State<ReportBugPage> {
     );
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const OptionsPage(isDarkMode: false)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text("Report a Bug", style: AppTypography.screenHeading),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text("Report a Bug", style: AppTypography.screenHeading),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+            onPressed: _handleBackNavigation,
+          ),
         ),
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -316,8 +353,9 @@ class _ReportBugPageState extends State<ReportBugPage> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// 2. Raise a Complaint Page
@@ -414,7 +452,7 @@ class _RaiseComplaintPageState extends State<RaiseComplaintPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF15803D)),
+            const Icon(Icons.check_circle_rounded, color: AppColors.primary),
             const SizedBox(width: 8),
             Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ],
@@ -434,19 +472,36 @@ class _RaiseComplaintPageState extends State<RaiseComplaintPage> {
     );
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const OptionsPage(isDarkMode: false)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text("Raise a Complaint", style: AppTypography.screenHeading),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text("Raise a Complaint", style: AppTypography.screenHeading),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+            onPressed: _handleBackNavigation,
+          ),
         ),
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -516,8 +571,9 @@ class _RaiseComplaintPageState extends State<RaiseComplaintPage> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// 3. Submit Feedback Page
@@ -598,7 +654,7 @@ class _SubmitFeedbackPageState extends State<SubmitFeedbackPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF15803D)),
+            const Icon(Icons.check_circle_rounded, color: AppColors.primary),
             const SizedBox(width: 8),
             Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ],
@@ -618,19 +674,36 @@ class _SubmitFeedbackPageState extends State<SubmitFeedbackPage> {
     );
   }
 
+  void _handleBackNavigation() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const OptionsPage(isDarkMode: false)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text("Feedback & Rating", style: AppTypography.screenHeading),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-          onPressed: () => Navigator.pop(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text("Feedback & Rating", style: AppTypography.screenHeading),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+            onPressed: _handleBackNavigation,
+          ),
         ),
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -728,8 +801,9 @@ class _SubmitFeedbackPageState extends State<SubmitFeedbackPage> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// Fallback info page for Terms, Help, Advertisement
@@ -738,18 +812,35 @@ class DetailPage extends StatelessWidget {
 
   const DetailPage({super.key, required this.title});
 
+  void _handleBackNavigation(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const OptionsPage(isDarkMode: false)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackNavigation(context);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: AppColors.textPrimary),
+            onPressed: () => _handleBackNavigation(context),
+          ),
         title: Text(
           title,
           style: const TextStyle(
@@ -809,6 +900,7 @@ class DetailPage extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
