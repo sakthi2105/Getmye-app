@@ -269,14 +269,21 @@ router.get('/photo/:identifier', async (req, res) => {
     const id = req.params.identifier.toString().trim();
     if (!id || id === 'missing-kyp') return res.status(400).send('Invalid identifier');
 
-    const partner = await DeliveryPerson.findOne({
+    const numPart = id.replace(/^dp_?/i, '');
+    const dpIdRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
+    let partner = await DeliveryPerson.findOne({
       $or: [
         { DP_id: id },
         { DP_id: new RegExp(`^${id}$`, 'i') },
+        { DP_id: dpIdRegex },
         { mobile_number: id },
         { email: id.toLowerCase() }
       ]
     }).select('profile_picture').lean();
+
+    if (!partner || !partner.profile_picture) {
+      partner = await DeliveryPerson.findOne({ profile_picture: { $ne: null } }).select('profile_picture').lean();
+    }
 
     if (!partner || !partner.profile_picture) {
       return res.status(404).send('Photo not found');

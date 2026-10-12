@@ -46,13 +46,14 @@ router.get('/pending', async (req, res) => {
       status: 'pending'
     };
     if (partnerId) {
+      const numPart = partnerId.toString().replace(/^dp_?/i, '');
+      const pRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
       query = {
         $or: [
-          { status: 'pending' },
-          { partner_id: partnerId, status: { $in: ['accepted', 'purchasing_food'] } },
-          { partner_id: partnerId, status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 60 * 1000) } }
-        ],
-        declined_by: { $ne: partnerId }
+          { status: 'pending', declined_by: { $ne: partnerId } },
+          { partner_id: { $in: [partnerId, pRegex] }, status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } },
+          { partner_id: { $in: [partnerId, pRegex] }, status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 60 * 1000) } }
+        ]
       };
     }
     const orders = await Order.find(query)
@@ -84,6 +85,28 @@ router.get('/active/:user_id', async (req, res) => {
       const host = req.get('host');
       const protocol = req.protocol;
       orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
+
+      if (!orderObj.partner_name || orderObj.partner_name === 'Delivery Partner' || !orderObj.partner_phone) {
+        try {
+          const numPart = orderObj.partner_id.toString().replace(/^dp_?/i, '');
+          const dp = await DeliveryPerson.findOne({
+            $or: [
+              { DP_id: orderObj.partner_id },
+              { DP_id: new RegExp(`^${orderObj.partner_id}$`, 'i') },
+              { DP_id: new RegExp(`^dp_?0*${numPart}$`, 'i') }
+            ]
+          }).select('DP_id name mobile_number profile_picture').lean();
+          if (dp) {
+            if (!orderObj.partner_name || orderObj.partner_name === 'Delivery Partner') orderObj.partner_name = dp.name;
+            if (!orderObj.partner_phone) orderObj.partner_phone = dp.mobile_number;
+            if (!orderObj.partner_profile_picture && dp.profile_picture) {
+              orderObj.partner_profile_picture = Buffer.isBuffer(dp.profile_picture)
+                ? Buffer.from(dp.profile_picture).toString('base64')
+                : dp.profile_picture.toString();
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     res.json({ success: true, order: orderObj });
@@ -96,7 +119,7 @@ router.get('/active/:user_id', async (req, res) => {
 // POST /api/order/accept - Partner accepts an order
 router.post('/accept', async (req, res) => {
   try {
-    const { order_id, partner_id, partner_name, partner_phone, partner_profile_picture } = req.body;
+    let { order_id, partner_id, partner_name, partner_phone, partner_profile_picture } = req.body;
     if (!order_id || !partner_id) {
       return res.status(400).json({ error: 'order_id and partner_id are required' });
     }
@@ -104,30 +127,43 @@ router.post('/accept', async (req, res) => {
     let partnerPic = partner_profile_picture || null;
     let actualPartnerName = partner_name;
     let actualPartnerPhone = partner_phone;
+    let resolvedPartnerId = partner_id;
 
     try {
-      const dp = await DeliveryPerson.findOne({
+      const numPart = partner_id.toString().replace(/^dp_?/i, '');
+      const dpIdRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
+      let dp = await DeliveryPerson.findOne({
         $or: [
           { DP_id: partner_id },
           { DP_id: new RegExp(`^${partner_id}$`, 'i') },
-          { mobile_number: partner_phone || partner_id }
+          { DP_id: dpIdRegex },
+          { mobile_number: partner_phone || partner_id },
+          { mobile_number: partner_id.toString().replace(/\D/g, '') }
         ]
-      }).select('name mobile_number profile_picture').lean();
+      }).select('DP_id name mobile_number profile_picture').lean();
+
+      if (!dp) {
+        dp = await DeliveryPerson.findOne({}).select('DP_id name mobile_number profile_picture').lean();
+      }
+
       if (dp) {
-        if (!actualPartnerName || actualPartnerName === 'Delivery Partner') actualPartnerName = dp.name;
-        if (!actualPartnerPhone || actualPartnerPhone === '+91 98765 43210') actualPartnerPhone = dp.mobile_number;
+        resolvedPartnerId = dp.DP_id || partner_id;
+        actualPartnerName = dp.name || actualPartnerName;
+        actualPartnerPhone = dp.mobile_number || actualPartnerPhone;
         if (!partnerPic && dp.profile_picture) {
           partnerPic = Buffer.isBuffer(dp.profile_picture)
             ? Buffer.from(dp.profile_picture).toString('base64')
             : dp.profile_picture.toString();
         }
       }
-    } catch (_) {}
+    } catch (dpErr) {
+      console.warn('DeliveryPerson lookup warning:', dpErr);
+    }
 
     const order = await Order.findOneAndUpdate(
-      { order_id, status: 'pending' },
+      { order_id, status: { $in: ['pending', 'accepted', 'purchasing_food'] } },
       {
-        partner_id,
+        partner_id: resolvedPartnerId,
         partner_name: actualPartnerName || 'Delivery Partner',
         partner_phone: actualPartnerPhone || '',
         partner_profile_picture: partnerPic || null,
@@ -149,7 +185,7 @@ router.post('/accept', async (req, res) => {
     try {
       const LiveLocation = require('../models/LiveLocation');
       await LiveLocation.updateMany(
-        { partner_id },
+        { partner_id: resolvedPartnerId },
         { status: 'delivering', order_id: order.order_id }
       );
     } catch (_) {}
@@ -157,6 +193,9 @@ router.post('/accept', async (req, res) => {
     const host = req.get('host');
     const protocol = req.protocol;
     const orderObj = order.toObject();
+    orderObj.partner_name = actualPartnerName || orderObj.partner_name || 'Delivery Partner';
+    orderObj.partner_phone = actualPartnerPhone || orderObj.partner_phone || '';
+    if (partnerPic) orderObj.partner_profile_picture = partnerPic;
     if (orderObj.partner_id) {
       orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
     }
@@ -344,6 +383,28 @@ router.get('/:order_id', async (req, res) => {
       const host = req.get('host');
       const protocol = req.protocol;
       order.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${order.partner_id}`;
+
+      if (!order.partner_name || order.partner_name === 'Delivery Partner' || !order.partner_phone) {
+        try {
+          const numPart = order.partner_id.toString().replace(/^dp_?/i, '');
+          const dp = await DeliveryPerson.findOne({
+            $or: [
+              { DP_id: order.partner_id },
+              { DP_id: new RegExp(`^${order.partner_id}$`, 'i') },
+              { DP_id: new RegExp(`^dp_?0*${numPart}$`, 'i') }
+            ]
+          }).select('DP_id name mobile_number profile_picture').lean();
+          if (dp) {
+            if (!order.partner_name || order.partner_name === 'Delivery Partner') order.partner_name = dp.name;
+            if (!order.partner_phone) order.partner_phone = dp.mobile_number;
+            if (!order.partner_profile_picture && dp.profile_picture) {
+              order.partner_profile_picture = Buffer.isBuffer(dp.profile_picture)
+                ? Buffer.from(dp.profile_picture).toString('base64')
+                : dp.profile_picture.toString();
+            }
+          }
+        } catch (_) {}
+      }
     }
     res.json({ success: true, order });
   } catch (err) {
