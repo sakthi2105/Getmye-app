@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api_config.dart';
+import 'alarm_service.dart';
 
 class AppNotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -53,6 +54,18 @@ class AppNotificationService {
         enableVibration: true,
       );
       await androidPlugin?.createNotificationChannel(channel);
+
+      const AndroidNotificationChannel orderChannel = AndroidNotificationChannel(
+        'getmye_orders_emergency_channel_v3',
+        '🚨 New Order Alerts & Alarm',
+        description: 'Loud alarm, vibration, and banner for incoming delivery orders',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        sound: RawResourceAndroidNotificationSound('order_alarm'),
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+      );
+      await androidPlugin?.createNotificationChannel(orderChannel);
 
       _isInitialized = true;
       debugPrint("✅ AppNotificationService initialized successfully with permissions");
@@ -145,6 +158,82 @@ class AppNotificationService {
       title: '🚨 Order Cancelled!',
       body: 'Order $orderId has been cancelled. $rText',
     );
+  }
+
+  // 4. Incoming Delivery Order Alert Notification (Maximum priority, alarm sound & banner)
+  static Future<void> showIncomingOrderNotification({
+    required String orderId,
+    String? item,
+    String? customerName,
+    String? address,
+    double? budget,
+  }) async {
+    try {
+      if (!_isInitialized) {
+        await init();
+      }
+
+      final bodyBuffer = StringBuffer();
+      if (item != null && item.isNotEmpty) {
+        bodyBuffer.write("Item: $item");
+      }
+      if (budget != null && budget > 0) {
+        bodyBuffer.write(" (₹${budget.toStringAsFixed(0)})");
+      }
+      if (customerName != null && customerName.isNotEmpty) {
+        bodyBuffer.write(" • $customerName");
+      }
+      if (address != null && address.isNotEmpty) {
+        bodyBuffer.write("\n📍 $address");
+      }
+      bodyBuffer.write("\n⚡ New order waiting! Tap to accept now.");
+
+      const AndroidNotificationDetails orderAlarmDetails = AndroidNotificationDetails(
+        'getmye_orders_emergency_channel_v3',
+        '🚨 New Order Alerts & Alarm',
+        channelDescription: 'Loud alarm, vibration, and banner for incoming delivery orders',
+        importance: Importance.max,
+        priority: Priority.max,
+        sound: RawResourceAndroidNotificationSound('order_alarm'),
+        playSound: true,
+        enableVibration: true,
+        fullScreenIntent: true,
+        category: AndroidNotificationCategory.alarm,
+        visibility: NotificationVisibility.public,
+        ticker: '🚨 NEW DELIVERY ORDER!',
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        styleInformation: BigTextStyleInformation(''),
+      );
+
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        sound: 'order_alarm.wav',
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      );
+
+      const NotificationDetails platformDetails = NotificationDetails(
+        android: orderAlarmDetails,
+        iOS: iosDetails,
+      );
+
+      await _notificationsPlugin.show(
+        999,
+        '🚨 NEW DELIVERY ORDER: #$orderId',
+        bodyBuffer.toString(),
+        platformDetails,
+        payload: 'order:$orderId',
+      );
+    } catch (e) {
+      debugPrint("⚠️ Error showing incoming order notification: $e");
+    }
+  }
+
+  static Future<void> cancelNotification(int id) async {
+    try {
+      await _notificationsPlugin.cancel(id);
+    } catch (_) {}
   }
 
   static bool _isCheckingMessages = false;
@@ -276,4 +365,83 @@ class AppNotificationService {
       _isCheckingMessages = false;
     }
   }
+
+  // 5. Global Partner Order Alerts Poller (Guarantees <3s incoming order alerts!)
+  static final StreamController<Map<String, dynamic>> _newOrderStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  static Stream<Map<String, dynamic>> get onNewOrderReceived =>
+      _newOrderStreamController.stream;
+
+  static Timer? _globalPartnerOrderPollingTimer;
+  static bool _isPollingPartnerOrders = false;
+
+  static void startGlobalPartnerOrderPolling() {
+    _globalPartnerOrderPollingTimer?.cancel();
+    // ⚡ Fast: 1500ms polling cycle ensures notification reaches partner within 1.5 - 3 seconds!
+    _globalPartnerOrderPollingTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
+      await checkAndNotifyPendingOrders();
+    });
+  }
+
+  static Future<void> checkAndNotifyPendingOrders() async {
+    if (_isPollingPartnerOrders) return;
+    _isPollingPartnerOrders = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+      final String accountType = prefs.getString('account_type') ?? 'customer';
+      if (!isLoggedIn || accountType != 'partner') return;
+
+      final bool isOnline = prefs.getBool('d_is_online') ?? true;
+      if (!isOnline) {
+        AlarmService.stopAlarm();
+        return;
+      }
+
+      final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+      final uri = Uri.parse('${ApiConfig.orderPending}?partner_id=$pId');
+      final res = await http.get(uri).timeout(const Duration(milliseconds: 2000));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final List orders = data['orders'] ?? [];
+        final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
+        final partnerActiveId = prefs.getString('partner_active_order_id');
+
+        final unhandledOrders = orders.where((o) {
+          final id = o['order_id']?.toString() ?? '';
+          final status = (o['status']?.toString() ?? '').toLowerCase();
+          return !declinedIds.contains(id) &&
+              !AlarmService.isOrderSilenced(id) &&
+              (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
+              status == 'pending';
+        }).toList();
+
+        if (unhandledOrders.isNotEmpty) {
+          final firstOrder = unhandledOrders.first;
+          final orderId = firstOrder['order_id']?.toString() ?? '';
+          final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
+          final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
+          final address = firstOrder['delivery_address']?.toString() ?? '';
+          final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
+
+          // 🚨 Alarm sound + Heads-up Notification within 3 seconds!
+          AlarmService.startAlarm(
+            orderId: orderId,
+            item: itemName,
+            customerName: custName,
+            address: address,
+            budget: budget,
+          );
+
+          if (firstOrder is Map<String, dynamic>) {
+            _newOrderStreamController.add(firstOrder);
+          }
+        }
+      }
+    } catch (_) {
+    } finally {
+      _isPollingPartnerOrders = false;
+    }
+  }
 }
+

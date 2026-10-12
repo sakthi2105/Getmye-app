@@ -26,6 +26,7 @@ void main() async {
   await initNotifications();
   await AppNotificationService.init();
   AppNotificationService.startGlobalChatPolling();
+  AppNotificationService.startGlobalPartnerOrderPolling();
 
   // Persistent login check: If customer or partner is already logged in on this device,
   // skip the login page and go straight to the respective home page.

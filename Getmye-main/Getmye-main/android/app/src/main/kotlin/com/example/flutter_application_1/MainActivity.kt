@@ -42,21 +42,65 @@ class MainActivity : FlutterActivity() {
         isAlarmRunning = true
 
         try {
-            val resId = resources.getIdentifier("order_alarm", "raw", packageName)
-            if (resId != 0) {
-                val afd = resources.openRawResourceFd(resId)
-                if (afd != null) {
+            var playerStarted = false
+            try {
+                val resId = resources.getIdentifier("order_alarm", "raw", packageName)
+                if (resId != 0) {
+                    val afd = resources.openRawResourceFd(resId)
+                    if (afd != null) {
+                        mediaPlayer?.release()
+                        mediaPlayer = MediaPlayer().apply {
+                            setAudioAttributes(
+                                AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_ALARM)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                    .build()
+                            )
+                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                            afd.close()
+                            isLooping = true
+                            setVolume(1.0f, 1.0f)
+                            setOnCompletionListener { mp ->
+                                if (isAlarmRunning) {
+                                    try {
+                                        mp.seekTo(0)
+                                        mp.start()
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
+                            }
+                            prepare()
+                            start()
+                        }
+                        playerStarted = true
+                    }
+                }
+            } catch (rawEx: Exception) {
+                rawEx.printStackTrace()
+            }
+
+            if (!playerStarted) {
+                var alertUri: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                if (alertUri == null) {
+                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                }
+                if (alertUri == null) {
+                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                }
+
+                if (alertUri != null) {
                     mediaPlayer?.release()
                     mediaPlayer = MediaPlayer().apply {
+                        setDataSource(applicationContext, alertUri)
                         setAudioAttributes(
                             AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_ALARM)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .build()
                         )
-                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                        afd.close()
                         isLooping = true
+                        setVolume(1.0f, 1.0f)
                         setOnCompletionListener { mp ->
                             if (isAlarmRunning) {
                                 try {
@@ -70,38 +114,6 @@ class MainActivity : FlutterActivity() {
                         prepare()
                         start()
                     }
-                }
-            } else {
-                var alertUri: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                if (alertUri == null) {
-                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                }
-                if (alertUri == null) {
-                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                }
-
-                mediaPlayer?.release()
-                mediaPlayer = MediaPlayer().apply {
-                    setDataSource(applicationContext, alertUri!!)
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                    isLooping = true
-                    setOnCompletionListener { mp ->
-                        if (isAlarmRunning) {
-                            try {
-                                mp.seekTo(0)
-                                mp.start()
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                        }
-                    }
-                    prepare()
-                    start()
                 }
             }
 

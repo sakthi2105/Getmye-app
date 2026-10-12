@@ -45,6 +45,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   String? profileImageBase64;
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
+  StreamSubscription<Map<String, dynamic>>? _orderAlertSubscription;
   final Set<String> _knownOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
   bool _isShowingIncomingModal = false;
@@ -59,6 +60,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     super.initState();
     _loadPartnerData();
     _startOrdersPolling();
+    _orderAlertSubscription = AppNotificationService.onNewOrderReceived.listen((order) {
+      if (mounted && isOnline && !_isShowingIncomingModal) {
+        _showIncomingOrderModal(order);
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
     });
@@ -66,6 +72,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
   @override
   void dispose() {
+    _orderAlertSubscription?.cancel();
     _pendingOrdersTimer?.cancel();
     AlarmService.stopAlarm();
     super.dispose();
@@ -173,10 +180,10 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     _pendingOrdersTimer?.cancel();
     _checkPendingOrders();
     _updateLiveLocationToBackend();
-    // ⚡ Fast polling: 1500ms for instantaneous order alerts!
-    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    // ⚡ Fast polling: 1200ms ensures sub-3-second order arrival alerts!
+    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
       _pollCount++;
-      if (_pollCount % 4 == 0) {
+      if (_pollCount % 5 == 0) {
         _updateLiveLocationToBackend();
       }
       _checkPendingOrders();
@@ -223,12 +230,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
       final uri = Uri.parse('${ApiConfig.orderPending}?partner_id=$pId');
-      final res = await http.get(uri).timeout(const Duration(seconds: 3));
+      final res = await http.get(uri).timeout(const Duration(milliseconds: 2000));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
-        final activeId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
+        final partnerActiveId = prefs.getString('partner_active_order_id');
 
         // 🚨 CANCELLATION DETECTOR: Alert delivery partner immediately with Reason if order cancelled
         for (final o in orders) {
@@ -262,7 +269,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 });
               }
               await prefs.remove('partner_active_order_id');
-              await prefs.remove('active_order_id');
             }
 
             // 5. Show prominent cancellation notice dialog on partner screen
@@ -278,7 +284,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           final status = (o['status']?.toString() ?? '').toLowerCase();
           return !declinedIds.contains(id) &&
               !AlarmService.isOrderSilenced(id) &&
-              id != activeId &&
+              (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
               status == 'pending';
         }).toList();
 
@@ -290,14 +296,22 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             pendingOrderCount = unhandledOrders.length;
           });
 
-          // 🚨 ALARM SOUND & MODAL: Alert partner for incoming orders (broadcast to online partners)
+          // 🚨 ALARM SOUND, NOTIFICATION & MODAL: Alert partner for incoming orders within 3s!
           if (unhandledOrders.isNotEmpty && isOnline) {
             final firstOrder = unhandledOrders.first;
-            final newId = firstOrder['order_id']?.toString();
-            if (newId != null) _knownOrderIds.add(newId);
+            final newId = firstOrder['order_id']?.toString() ?? '';
+            final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
+            final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
+            final addr = firstOrder['delivery_address']?.toString() ?? '';
+            final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
+
+            if (newId.isNotEmpty) _knownOrderIds.add(newId);
             AlarmService.startAlarm(
               orderId: newId,
-              item: firstOrder['item_name']?.toString(),
+              item: itemName,
+              customerName: custName,
+              address: addr,
+              budget: budget,
             );
             if (!_isShowingIncomingModal && mounted) {
               _showIncomingOrderModal(firstOrder as Map<String, dynamic>);

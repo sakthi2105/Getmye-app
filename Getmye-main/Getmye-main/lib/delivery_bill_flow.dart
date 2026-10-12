@@ -103,7 +103,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
   void initState() {
     super.initState();
     _fetchPendingOrders();
-    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       _fetchPendingOrders();
     });
   }
@@ -276,7 +276,21 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                 o.status != "rejected" &&
                 o.status != "cancelled");
             if (hasPending && isOnline) {
-              AlarmService.startAlarm();
+              final pendingOrder = _orders.firstWhere((o) =>
+                  !_declinedOrderIds.contains(o.orderId) &&
+                  !_acceptedOrderIds.contains(o.orderId) &&
+                  !AlarmService.isOrderSilenced(o.orderId) &&
+                  o.status != "Accepted" &&
+                  o.status != "declined" &&
+                  o.status != "rejected" &&
+                  o.status != "cancelled");
+              AlarmService.startAlarm(
+                orderId: pendingOrder.orderId,
+                item: pendingOrder.items.isNotEmpty ? pendingOrder.items.first.name : 'Food Order',
+                customerName: pendingOrder.customerName,
+                address: pendingOrder.deliveryAddress,
+                budget: pendingOrder.grandTotal,
+              );
             } else {
               AlarmService.stopAlarm();
             }
