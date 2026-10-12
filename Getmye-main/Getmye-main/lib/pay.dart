@@ -115,8 +115,10 @@ class _PaymentPageState extends State<PaymentPage> {
     final prefs = await SharedPreferences.getInstance();
     final activeId = prefs.getString('active_order_id');
     final activeItem = prefs.getString('active_order_item');
-    final pName = prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
-    final pPhone = prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? "";
+    final rawPName = prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? "";
+    final pName = (rawPName.isNotEmpty && rawPName != "Delivery Partner") ? rawPName : "Sivaprakash";
+    final rawPPhone = prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? "";
+    final pPhone = rawPPhone.isNotEmpty ? rawPPhone : "8754805750";
     String cAddress = prefs.getString('active_order_customer_address') ?? prefs.getString('customer_address_full') ?? "Live Delivery Location";
     final savedOtp = prefs.getString('active_cod_otp');
     final savedMethod = prefs.getString('payment_method');
@@ -149,9 +151,9 @@ class _PaymentPageState extends State<PaymentPage> {
         final savedPartnerPic = prefs.getString('active_order_partner_pic') ??
             prefs.getString('active_order_partner_image') ??
             prefs.getString('d_profile_picture_base64');
-        final savedPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id');
+        final savedPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'dp_007';
         if (savedPartnerPic != null) partnerProfilePicture = savedPartnerPic;
-        if (savedPartnerId != null) partnerId = savedPartnerId;
+        if (savedPartnerId.isNotEmpty) partnerId = savedPartnerId;
         partnerPhone = pPhone;
         customerAddress = cAddress;
         if (savedOtp != null && savedOtp.isNotEmpty) activeOtp = savedOtp;
@@ -196,14 +198,14 @@ class _PaymentPageState extends State<PaymentPage> {
               ? rawName
               : (partnerName.isNotEmpty && partnerName != 'Delivery Partner'
                   ? partnerName
-                  : (prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? (rawName.isNotEmpty ? rawName : 'Delivery Partner')));
+                  : (prefs.getString('active_order_partner_name') ?? 'Sivaprakash'));
 
           final rawPhone = order['partner_phone']?.toString() ?? '';
           final pPhone = rawPhone.isNotEmpty
               ? rawPhone
               : (partnerPhone.isNotEmpty
                   ? partnerPhone
-                  : (prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? ''));
+                  : (prefs.getString('active_order_partner_phone') ?? '8754805750'));
 
           final dAddr = order['delivery_address'] ?? customerAddress;
           final iName = order['item_name'] ?? itemName;
@@ -2128,21 +2130,28 @@ class _PaymentPageState extends State<PaymentPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  partnerName.isNotEmpty ? partnerName : "Delivery Partner",
+                  (partnerName.isNotEmpty && partnerName != 'Delivery Partner') ? partnerName : "Sivaprakash",
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
                 ),
                 const SizedBox(height: 2),
-                const Text(
-                  "⭐ 4.9 • Fast & Verified Delivery Partner",
-                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                Row(
+                  children: [
+                    ...List.generate(
+                      5,
+                      (_) => const Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 15),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text(
+                      "4.9 • Fast & Verified Delivery Partner",
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                    ),
+                  ],
                 ),
-                if (partnerPhone.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    partnerPhone,
-                    style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
-                  ),
-                ],
+                const SizedBox(height: 2),
+                Text(
+                  partnerPhone.isNotEmpty ? partnerPhone : "8754805750",
+                  style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                ),
               ],
             ),
           ),

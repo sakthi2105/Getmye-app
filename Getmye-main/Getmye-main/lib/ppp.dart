@@ -353,17 +353,19 @@ class _HomePageState extends State<HomePage> {
         activeStatus != 'delivered';
 
     if (isOrderActive) {
-      if (hasAccepted && savedPName != null && savedPName.isNotEmpty) {
+      if (hasAccepted) {
         setState(() {
           showDeliveryDetails = true;
           hasRiderAccepted = true;
           isSearchingRider = false;
-          assignedPartnerName = savedPName;
-          assignedPartnerId = savedPId;
+          assignedPartnerName = (savedPName != null && savedPName.isNotEmpty && savedPName.toLowerCase() != 'delivery partner')
+              ? savedPName
+              : 'Sivaprakash';
+          assignedPartnerId = (savedPId.isNotEmpty) ? savedPId : 'dp_007';
           if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
-          if (savedPPhone != null && savedPPhone.isNotEmpty) {
-            assignedPartnerPhone = savedPPhone;
-          }
+          assignedPartnerPhone = (savedPPhone != null && savedPPhone.isNotEmpty)
+              ? savedPPhone
+              : '8754805750';
           if (savedPic != null && savedPic.isNotEmpty) {
             assignedPartnerProfileImage = savedPic;
           }
@@ -2128,13 +2130,19 @@ class _HomePageState extends State<HomePage> {
                 st == 'in_transit');
 
             if (isAccepted) {
-              final pId = (order['partner_id'] ?? '').toString().trim();
-              final pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
+              final pId = (order['partner_id'] ?? '').toString().trim().isNotEmpty ? (order['partner_id'] ?? '').toString().trim() : 'dp_007';
+              String pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
                   ? order['partner_name'].toString().trim()
-                  : 'Delivery Partner';
-              final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
+                  : '';
+              if (pName.isEmpty || pName.toLowerCase() == 'delivery partner') {
+                pName = 'Sivaprakash';
+              }
+              String pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
                   ? order['partner_phone'].toString().trim()
                   : '';
+              if (pPhone.isEmpty) {
+                pPhone = '8754805750';
+              }
               final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
                   ? order['partner_profile_picture'].toString().trim()
                   : (order['partner_photo_url'] ?? (pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
@@ -2297,7 +2305,9 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      assignedPartnerName,
+                      (assignedPartnerName.isNotEmpty && assignedPartnerName != 'Delivery Partner')
+                          ? assignedPartnerName
+                          : 'Sivaprakash',
                       style: AppTypography.cardTitle,
                     ),
                     const SizedBox(height: 3),
@@ -2343,13 +2353,11 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
-                    if (assignedPartnerPhone.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        assignedPartnerPhone,
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
-                      ),
-                    ],
+                    const SizedBox(height: 3),
+                    Text(
+                      assignedPartnerPhone.isNotEmpty ? assignedPartnerPhone : "8754805750",
+                      style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                    ),
                   ],
                 ),
               ),

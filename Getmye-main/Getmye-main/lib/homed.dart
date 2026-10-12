@@ -43,6 +43,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   String partnerName = "Delivery Partner";
   String? profileImagePath;
   String? profileImageBase64;
+  Uint8List? _cachedProfileBytes;
+  ImageProvider? _cachedAvatarProvider;
+  String? _lastDecodedBase64;
+  String? _lastProfilePath;
+  bool _isProfileFetched = false;
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   StreamSubscription<Map<String, dynamic>>? _orderAlertSubscription;
@@ -278,15 +283,25 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           }
         }
 
-        // 🚴 Ongoing Delivery Sync: If partner has an active ongoing delivery in progress, sync it
+        // 🚴 Ongoing Delivery Sync: Strictly match orders belonging to THIS delivery person!
         final ongoingMatch = orders.firstWhere(
           (o) {
             final st = (o['status']?.toString() ?? '').toLowerCase();
-            return st == 'accepted' ||
+            final isOngoingStatus = st == 'accepted' ||
                 st == 'purchasing_food' ||
                 st == 'bill_sent' ||
                 st == 'picked_up' ||
                 st == 'in_transit';
+            if (!isOngoingStatus) return false;
+
+            final oPartnerId = (o['partner_id'] ?? '').toString().trim().toLowerCase();
+            final myPId = pId.trim().toLowerCase();
+            final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+            return oPartnerId.isNotEmpty && (
+              oPartnerId == myPId ||
+              (numPart.isNotEmpty && oPartnerId.contains(numPart)) ||
+              (partnerActiveId != null && partnerActiveId.isNotEmpty && o['order_id']?.toString() == partnerActiveId)
+            );
           },
           orElse: () => null,
         );
@@ -301,6 +316,23 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           await prefs.setString('partner_active_order_id', safeOngoing['order_id']?.toString() ?? '');
           await prefs.setString('active_order_id', safeOngoing['order_id']?.toString() ?? '');
           await prefs.setString('active_order_status', safeOngoing['status']?.toString() ?? 'accepted');
+        } else if (partnerActiveId != null && partnerActiveId.isNotEmpty) {
+          // If no ongoing order matches this partner, check if previous active order has finished
+          final pastOrder = orders.firstWhere(
+            (o) => o['order_id']?.toString() == partnerActiveId,
+            orElse: () => null,
+          );
+          if (pastOrder != null) {
+            final pst = (pastOrder['status']?.toString() ?? '').toLowerCase();
+            if (pst == 'delivered' || pst == 'cancelled') {
+              if (mounted) {
+                setState(() {
+                  activeDeliveryOrder = null;
+                });
+              }
+              await prefs.remove('partner_active_order_id');
+            }
+          }
         }
 
         // Only consider pending orders strictly unhandled
@@ -594,13 +626,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           AlarmService.silenceOrder(orderId);
                           AlarmService.stopAlarm();
                           final prefs = await SharedPreferences.getInstance();
-                          final pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
-                          final pPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
-                          final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+                          String pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "";
+                          if (pName.isEmpty || pName == "Delivery Partner") {
+                            pName = "Sivaprakash";
+                          }
+                          String pPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
+                          if (pPhone.isEmpty) {
+                            pPhone = "8754805750";
+                          }
+                          String pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'dp_007';
+                          if (pId.isEmpty) pId = 'dp_007';
                           final pPic = prefs.getString('d_profile_picture_base64');
 
                           try {
-                            await http.post(
+                            final acceptRes = await http.post(
                               ApiConfig.orderAccept,
                               headers: {'Content-Type': 'application/json'},
                               body: jsonEncode({
@@ -611,6 +650,21 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 if (pPic != null && pPic.isNotEmpty) 'partner_profile_picture': pPic,
                               }),
                             ).timeout(const Duration(seconds: 4));
+                            if (acceptRes.statusCode == 200) {
+                              final resData = jsonDecode(acceptRes.body);
+                              if (resData['order'] != null) {
+                                final oObj = resData['order'];
+                                if (oObj['partner_name'] != null && oObj['partner_name'].toString().isNotEmpty) {
+                                  pName = oObj['partner_name'].toString();
+                                }
+                                if (oObj['partner_phone'] != null && oObj['partner_phone'].toString().isNotEmpty) {
+                                  pPhone = oObj['partner_phone'].toString();
+                                }
+                                if (oObj['partner_id'] != null && oObj['partner_id'].toString().isNotEmpty) {
+                                  pId = oObj['partner_id'].toString();
+                                }
+                              }
+                            }
                           } catch (e) {
                             debugPrint("Error accepting order: $e");
                           }
@@ -715,7 +769,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     });
 
     final identifier = dId.isNotEmpty ? dId : dPhone;
-    if (identifier.isNotEmpty && (profileImagePath == null || !File(profileImagePath!).existsSync())) {
+    if (identifier.isNotEmpty && !_isProfileFetched && (profileImagePath == null || !File(profileImagePath!).existsSync())) {
+      _isProfileFetched = true;
       _fetchPartnerProfileFromBackend(identifier);
     }
 
@@ -742,55 +797,79 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final b64 = data['profile_picture']?.toString();
-        if (b64 != null && b64.isNotEmpty && mounted) {
+        final newName = data['name']?.toString();
+        final newPhone = data['mobile_number']?.toString();
+        final bool picChanged = b64 != null && b64.isNotEmpty && b64 != profileImageBase64;
+        final bool nameChanged = newName != null && newName.isNotEmpty && newName != partnerName;
+
+        if (picChanged || nameChanged) {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('d_profile_picture_base64', b64);
-          setState(() {
-            profileImageBase64 = b64;
-          });
-        }
-        if (data['name'] != null && data['name'].toString().isNotEmpty && mounted) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('d_name', data['name'].toString());
-          if (data['mobile_number'] != null && data['mobile_number'].toString().isNotEmpty) {
-            await prefs.setString('d_phone', data['mobile_number'].toString());
+          if (picChanged) {
+            await prefs.setString('d_profile_picture_base64', b64);
+            await prefs.setString('active_order_partner_pic', b64);
+            await prefs.setString('active_order_partner_image', b64);
           }
-          setState(() {
-            partnerName = data['name'].toString();
-          });
+          if (nameChanged) {
+            await prefs.setString('d_name', newName);
+            await prefs.setString('partner_name', newName);
+            await prefs.setString('active_order_partner_name', newName);
+          }
+          if (newPhone != null && newPhone.isNotEmpty) {
+            await prefs.setString('d_phone', newPhone);
+            await prefs.setString('partner_phone', newPhone);
+            await prefs.setString('active_order_partner_phone', newPhone);
+          }
+          if (mounted) {
+            setState(() {
+              if (picChanged) profileImageBase64 = b64;
+              if (nameChanged) partnerName = newName;
+            });
+          }
         }
       }
     } catch (_) {}
   }
 
-  Widget _buildProfileAvatar() {
-    ImageProvider? imageProvider;
-
-    // 1. Try local file path (from camera/gallery in dprofile or registration)
+  ImageProvider _getProfileAvatarProvider() {
     if (profileImagePath != null && profileImagePath!.isNotEmpty) {
+      if (_lastProfilePath == profileImagePath && _cachedAvatarProvider != null) {
+        return _cachedAvatarProvider!;
+      }
       final file = File(profileImagePath!);
       if (file.existsSync()) {
-        imageProvider = FileImage(file);
+        _lastProfilePath = profileImagePath;
+        _cachedAvatarProvider = FileImage(file);
+        return _cachedAvatarProvider!;
       }
     }
 
-    // 2. Try base64 from backend MongoDB
-    if (imageProvider == null && profileImageBase64 != null && profileImageBase64!.isNotEmpty) {
+    if (profileImageBase64 != null && profileImageBase64!.isNotEmpty) {
+      if (_lastDecodedBase64 == profileImageBase64 && _cachedAvatarProvider != null) {
+        return _cachedAvatarProvider!;
+      }
       try {
-        final bytes = base64Decode(profileImageBase64!);
-        imageProvider = MemoryImage(bytes);
+        _cachedProfileBytes = base64Decode(profileImageBase64!);
+        _lastDecodedBase64 = profileImageBase64;
+        _cachedAvatarProvider = MemoryImage(_cachedProfileBytes!);
+        return _cachedAvatarProvider!;
       } catch (_) {}
     }
 
-    // 3. Fallback toon asset
-    imageProvider ??= const AssetImage('assets/delivery_boy_toon.png');
+    return const AssetImage('assets/delivery_boy_toon.png');
+  }
+
+  Widget _buildProfileAvatar() {
+    final avatarProvider = _getProfileAvatarProvider();
 
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const dEditProfilePage()),
-        ).then((_) => _loadPartnerData());
+        ).then((_) {
+          _isProfileFetched = false;
+          _loadPartnerData();
+        });
       },
       child: Container(
         width: 72,
@@ -810,8 +889,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(36),
           child: Image(
-            image: imageProvider,
+            image: avatarProvider,
             fit: BoxFit.cover,
+            gaplessPlayback: true,
             errorBuilder: (_, __, ___) => const Center(
               child: Icon(Icons.two_wheeler_rounded, size: 36, color: Colors.white),
             ),
@@ -1243,28 +1323,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    InkWell(
-                                      onTap: () {
-                                        final oId = activeDeliveryOrder?['order_id']?.toString() ?? '';
-                                        if (oId.isNotEmpty) {
-                                          _showPartnerCancelDeliveryDialog(oId);
-                                        }
-                                      },
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFEE2E2),
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(color: const Color(0xFFFCA5A5)),
-                                        ),
-                                        child: const Text(
-                                          "Cancel",
-                                          style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold, fontSize: 12),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
+
                                     InkWell(
                                       onTap: () {
                                         if (activeDeliveryOrder != null) {
@@ -1807,197 +1866,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
         ),
       ).then((_) => _loadPartnerData());
-    }
-  }
-
-  void _showPartnerCancelDeliveryDialog(String orderId) {
-    String selectedReason = "Emergency / Vehicle issue";
-    final customReasonController = TextEditingController();
-    final reasons = [
-      "Emergency / Vehicle issue",
-      "Store is closed / items unavailable",
-      "Unable to reach customer",
-      "Heavy rain / road blocked",
-      "Other reason",
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) => Container(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEE2E2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.cancel_rounded, color: Color(0xFFDC2626), size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "Cancel Ongoing Delivery",
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                        ),
-                        Text(
-                          "Order #$orderId",
-                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "Please select why you need to cancel:",
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: reasons.map((r) {
-                  final isSelected = selectedReason == r;
-                  return ChoiceChip(
-                    label: Text(r),
-                    selected: isSelected,
-                    selectedColor: const Color(0xFFFEE2E2),
-                    backgroundColor: const Color(0xFFF1F5F9),
-                    labelStyle: TextStyle(
-                      fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      color: isSelected ? const Color(0xFFDC2626) : AppColors.textPrimary,
-                    ),
-                    onSelected: (_) {
-                      setModalState(() {
-                        selectedReason = r;
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-              if (selectedReason == "Other reason") ...[
-                const SizedBox(height: 12),
-                TextField(
-                  controller: customReasonController,
-                  maxLines: 2,
-                  decoration: InputDecoration(
-                    hintText: "Enter specific reason...",
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text("Keep Order", style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFDC2626),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () async {
-                        final finalReason = selectedReason == "Other reason" && customReasonController.text.trim().isNotEmpty
-                            ? customReasonController.text.trim()
-                            : selectedReason;
-                        Navigator.pop(ctx);
-                        await _cancelDeliveryAsPartner(orderId, finalReason);
-                      },
-                      child: const Text("Confirm Cancel", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _cancelDeliveryAsPartner(String orderId, String reason) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final partnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
-
-      await http.post(
-        ApiConfig.orderCancel,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'order_id': orderId,
-          'cancel_reason': reason,
-          'cancelled_by': 'partner',
-          'partner_id': partnerId,
-        }),
-      );
-
-      await prefs.remove('partner_active_order_id');
-      await prefs.remove('active_order_id');
-      await prefs.setString('order_${orderId}_status', 'cancelled');
-
-      AlarmService.stopAlarm();
-      AlarmService.silenceOrder(orderId);
-
-      if (mounted) {
-        setState(() {
-          activeDeliveryOrder = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Order #$orderId has been cancelled ($reason)"),
-            backgroundColor: const Color(0xFFDC2626),
-          ),
-        );
-      }
-      _loadPartnerData();
-    } catch (e) {
-      debugPrint("Error cancelling delivery as partner: $e");
     }
   }
 }
