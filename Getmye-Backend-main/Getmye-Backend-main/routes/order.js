@@ -43,18 +43,14 @@ router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
     let query = {
-      $or: [
-        { status: 'pending' },
-        { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 5 * 60 * 1000) } }
-      ]
+      status: 'pending'
     };
     if (partnerId) {
       query = {
         $or: [
           { status: 'pending' },
           { partner_id: partnerId, status: { $in: ['accepted', 'purchasing_food'] } },
-          { partner_id: partnerId, status: 'cancelled' },
-          { status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 5 * 60 * 1000) } }
+          { partner_id: partnerId, status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 60 * 1000) } }
         ],
         declined_by: { $ne: partnerId }
       };
