@@ -91,7 +91,7 @@ async function enrichOrderWithPartner(orderObj, req) {
           { DP_id: new RegExp(`^${orderObj.partner_id}$`, 'i') },
           { DP_id: new RegExp(`^dp_?0*${numPart}$`, 'i') }
         ]
-      }).select('DP_id name mobile_number profile_picture').lean();
+      }).select('DP_id name mobile_number').lean();
     } catch (_) {}
   }
 
@@ -108,55 +108,26 @@ async function enrichOrderWithPartner(orderObj, req) {
             { DP_id: new RegExp(`^${live.partner_id}$`, 'i') },
             { DP_id: new RegExp(`^dp_?0*${numPart}$`, 'i') }
           ]
-        }).select('DP_id name mobile_number profile_picture').lean();
+        }).select('DP_id name mobile_number').lean();
       }
-    } catch (_) {}
-  }
-
-  // Fallback to active registered delivery partner
-  if (!dp && isAcceptedOrBeyond) {
-    try {
-      dp = await DeliveryPerson.findOne({
-        $or: [
-          { DP_id: 'dp_007' },
-          { DP_id: 'dp_005' },
-          { dp_status: 'online' },
-          { name: { $exists: true, $ne: '' } }
-        ]
-      }).select('DP_id name mobile_number profile_picture').lean();
     } catch (_) {}
   }
 
   if (dp) {
     orderObj.partner_id = dp.DP_id;
-    orderObj.partner_name = dp.name;
-    orderObj.partner_phone = dp.mobile_number;
+    orderObj.partner_name = dp.name || orderObj.partner_name || 'Delivery Partner';
+    orderObj.partner_phone = dp.mobile_number || orderObj.partner_phone || '';
     orderObj.partner_rating = "4.9";
     orderObj.partner_deliveries = 120;
-    if (dp.profile_picture) {
-      orderObj.partner_profile_picture = Buffer.isBuffer(dp.profile_picture)
-        ? Buffer.from(dp.profile_picture).toString('base64')
-        : dp.profile_picture.toString();
-    }
-    orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${dp.DP_id}`;
-
-    // Persist to MongoDB Order asynchronously
-    Order.updateOne(
-      { order_id: orderObj.order_id },
-      {
-        partner_id: dp.DP_id,
-        partner_name: dp.name,
-        partner_phone: dp.mobile_number,
-        ...(orderObj.partner_profile_picture ? { partner_profile_picture: orderObj.partner_profile_picture } : {})
-      }
-    ).exec().catch(() => {});
-  } else if (isAcceptedOrBeyond) {
-    orderObj.partner_id = orderObj.partner_id || 'dp_007';
-    orderObj.partner_name = (orderObj.partner_name && orderObj.partner_name !== 'Delivery Partner') ? orderObj.partner_name : 'Sivaprakash';
-    orderObj.partner_phone = (orderObj.partner_phone && orderObj.partner_phone.length >= 10) ? orderObj.partner_phone : '8754805750';
+    const photoUrl = `${protocol}://${host}/api/deliveryperson/photo/${dp.DP_id}`;
+    orderObj.partner_photo_url = photoUrl;
+    orderObj.partner_profile_picture = photoUrl;
+  } else if (orderObj.partner_id) {
+    const photoUrl = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
+    orderObj.partner_photo_url = photoUrl;
+    orderObj.partner_profile_picture = photoUrl;
     orderObj.partner_rating = "4.9";
     orderObj.partner_deliveries = 120;
-    orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
   }
 
   return orderObj;
@@ -165,10 +136,17 @@ async function enrichOrderWithPartner(orderObj, req) {
 // GET /api/order/active/:user_id - Customer gets current active order (with partner photo & details enrichment)
 router.get('/active/:user_id', async (req, res) => {
   try {
+    const rawUserId = (req.params.user_id || '').toString().trim();
+    if (!rawUserId) return res.json({ success: true, order: null });
+
     const activeOrder = await Order.findOne({
-      user_id: req.params.user_id,
+      $or: [
+        { user_id: rawUserId },
+        { customer_phone: rawUserId },
+        { customer_phone: new RegExp(rawUserId.replace(/\D/g, '') + '$') }
+      ],
       status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-    }).sort({ created_at: -1 });
+    }).select('-bill_image_url').sort({ created_at: -1 });
 
     if (!activeOrder) {
       return res.json({ success: true, order: null });
@@ -185,60 +163,46 @@ router.get('/active/:user_id', async (req, res) => {
 // POST /api/order/accept - Partner accepts an order
 router.post('/accept', async (req, res) => {
   try {
-    let { order_id, partner_id, partner_name, partner_phone, partner_profile_picture } = req.body;
+    let { order_id, partner_id, partner_name, partner_phone } = req.body;
     if (!order_id) {
       return res.status(400).json({ error: 'order_id is required' });
     }
     partner_id = (partner_id || '').toString().trim();
-    if (!partner_id) {
-      partner_id = 'dp_007';
-    }
 
-    let partnerPic = partner_profile_picture || null;
-    let actualPartnerName = (partner_name && partner_name !== 'Delivery Partner') ? partner_name : null;
-    let actualPartnerPhone = (partner_phone && partner_phone.trim().length >= 10) ? partner_phone : null;
+    let actualPartnerName = (partner_name && partner_name !== 'Delivery Partner') ? partner_name.toString().trim() : null;
+    let actualPartnerPhone = (partner_phone && partner_phone.toString().trim().length >= 10) ? partner_phone.toString().trim() : null;
     let resolvedPartnerId = partner_id;
 
-    try {
-      const numPart = partner_id.toString().replace(/^dp_?/i, '');
-      const dpIdRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
-      let dp = await DeliveryPerson.findOne({
-        $or: [
-          { DP_id: partner_id },
-          { DP_id: new RegExp(`^${partner_id}$`, 'i') },
-          { DP_id: dpIdRegex },
-          { mobile_number: actualPartnerPhone || partner_id },
-          { mobile_number: partner_id.toString().replace(/\D/g, '') }
-        ]
-      }).select('DP_id name mobile_number profile_picture').lean();
-
-      if (!dp) {
-        dp = await DeliveryPerson.findOne({
+    if (partner_id || actualPartnerPhone) {
+      try {
+        const numPart = partner_id.replace(/^dp_?/i, '');
+        const dpIdRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
+        const dp = await DeliveryPerson.findOne({
           $or: [
-            { DP_id: 'dp_007' },
-            { DP_id: 'dp_005' },
-            { name: { $exists: true, $ne: '' } }
+            { DP_id: partner_id },
+            { DP_id: new RegExp(`^${partner_id}$`, 'i') },
+            { DP_id: dpIdRegex },
+            { mobile_number: actualPartnerPhone || partner_id }
           ]
-        }).select('DP_id name mobile_number profile_picture').lean();
-      }
+        }).select('DP_id name mobile_number').lean();
 
-      if (dp) {
-        resolvedPartnerId = dp.DP_id || partner_id;
-        actualPartnerName = dp.name || actualPartnerName;
-        actualPartnerPhone = dp.mobile_number || actualPartnerPhone;
-        if (!partnerPic && dp.profile_picture) {
-          partnerPic = Buffer.isBuffer(dp.profile_picture)
-            ? Buffer.from(dp.profile_picture).toString('base64')
-            : dp.profile_picture.toString();
+        if (dp) {
+          resolvedPartnerId = dp.DP_id;
+          actualPartnerName = dp.name || actualPartnerName;
+          actualPartnerPhone = dp.mobile_number || actualPartnerPhone;
         }
+      } catch (dpErr) {
+        console.warn('DeliveryPerson lookup warning:', dpErr);
       }
-    } catch (dpErr) {
-      console.warn('DeliveryPerson lookup warning:', dpErr);
     }
 
-    if (!actualPartnerName || actualPartnerName === 'Delivery Partner') actualPartnerName = 'Sivaprakash';
-    if (!actualPartnerPhone) actualPartnerPhone = '8754805750';
-    if (!resolvedPartnerId) resolvedPartnerId = 'dp_007';
+    if (!resolvedPartnerId) resolvedPartnerId = 'dp_001';
+    if (!actualPartnerName) actualPartnerName = 'Delivery Partner';
+    if (!actualPartnerPhone) actualPartnerPhone = '';
+
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const partnerPhotoUrl = `${protocol}://${host}/api/deliveryperson/photo/${resolvedPartnerId}`;
 
     const order = await Order.findOneAndUpdate(
       { order_id, status: { $in: ['pending', 'accepted', 'purchasing_food'] } },
@@ -246,7 +210,8 @@ router.post('/accept', async (req, res) => {
         partner_id: resolvedPartnerId,
         partner_name: actualPartnerName,
         partner_phone: actualPartnerPhone,
-        partner_profile_picture: partnerPic || null,
+        partner_profile_picture: partnerPhotoUrl,
+        partner_photo_url: partnerPhotoUrl,
         status: 'accepted',
         accepted_at: new Date()
       },
@@ -270,18 +235,8 @@ router.post('/accept', async (req, res) => {
       );
     } catch (_) {}
 
-    const host = req.get('host');
-    const protocol = req.protocol;
-    const orderObj = order.toObject();
-    orderObj.partner_id = resolvedPartnerId;
-    orderObj.partner_name = actualPartnerName;
-    orderObj.partner_phone = actualPartnerPhone;
-    orderObj.partner_rating = "4.9";
-    orderObj.partner_deliveries = 120;
-    if (partnerPic) orderObj.partner_profile_picture = partnerPic;
-    orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${resolvedPartnerId}`;
-
-    res.json({ success: true, message: 'Order accepted by partner', order: orderObj });
+    const orderObj = await enrichOrderWithPartner(order.toObject(), req);
+    res.json({ success: true, message: 'Order accepted successfully', order: orderObj });
   } catch (err) {
     console.error('Error accepting order:', err);
     res.status(500).json({ error: 'Failed to accept order' });

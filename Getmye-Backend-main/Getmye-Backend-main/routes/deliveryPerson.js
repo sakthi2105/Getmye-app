@@ -353,10 +353,14 @@ router.get('/:identifier', async (req, res) => {
         { mobile_number: id },
         { email: id.toLowerCase() }
       ]
-    });
+    }).select('-profile_picture').lean();
     if (!partner) {
       return res.status(404).json({ error: 'Delivery partner not found' });
     }
+
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const photoUrl = `${protocol}://${host}/api/deliveryperson/photo/${partner.DP_id}`;
 
     res.json({
       success: true,
@@ -365,8 +369,8 @@ router.get('/:identifier', async (req, res) => {
       mobile_number: partner.mobile_number,
       email: partner.email || '',
       address: partner.address || '',
-      profile_picture_url: `/api/deliveryperson/photo/${partner.DP_id}`,
-      profile_picture: partner.profile_picture ? Buffer.from(partner.profile_picture).toString('base64') : null
+      profile_picture_url: photoUrl,
+      photo_url: photoUrl
     });
   } catch (err) {
     console.error('Fetch partner error:', err);

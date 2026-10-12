@@ -333,65 +333,99 @@ class _HomePageState extends State<HomePage> {
       });
     }
 
-    final hasAccepted = prefs.getBool('active_order_partner_accepted') ?? false;
-    final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
-    final savedPName = prefs.getString('active_order_partner_name');
-    final savedPPhone = prefs.getString('active_order_partner_phone');
-    final savedPId = prefs.getString('active_order_partner_id') ?? '';
-    final savedOtp = prefs.getString('active_cod_otp') ?? '';
-    var savedPic = prefs.getString('active_order_partner_image') ??
-        prefs.getString('active_order_partner_pic');
-    if ((savedPic == null || savedPic.isEmpty) && savedPId.isNotEmpty) {
-      savedPic = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$savedPId';
+
+
+    // ⚡ Verify active order directly with backend server for this customer
+    final userId = prefs.getString('user_id');
+    final custPhone = prefs.getString('mobile_number');
+    final queryId = (userId != null && userId.isNotEmpty) ? userId : custPhone;
+
+    bool serverHasActiveOrder = false;
+    Map<String, dynamic>? activeOrderObj;
+
+    if (queryId != null && queryId.isNotEmpty) {
+      try {
+        final activeRes = await http.get(
+          Uri.parse('${ApiConfig.baseUrl}/api/order/active/$queryId'),
+        ).timeout(const Duration(seconds: 3));
+
+        if (activeRes.statusCode == 200) {
+          final activeData = jsonDecode(activeRes.body);
+          if (activeData['order'] != null) {
+            activeOrderObj = Map<String, dynamic>.from(activeData['order']);
+            serverHasActiveOrder = true;
+          }
+        }
+      } catch (err) {
+        debugPrint("Active order check on server failed: $err");
+      }
     }
 
-    final hasActiveOrder = prefs.getBool('has_active_order') ?? false;
-    final curOrderId = prefs.getString('active_order_id') ?? '';
-    final isOrderActive = hasActiveOrder &&
-        curOrderId.isNotEmpty &&
-        activeStatus != 'cancelled' &&
-        activeStatus != 'delivered';
+    if (serverHasActiveOrder && activeOrderObj != null) {
+      final curOrderId = (activeOrderObj['order_id'] ?? '').toString();
+      final status = (activeOrderObj['status'] ?? '').toString().toLowerCase();
+      final bool isAccepted = (status != 'pending');
+      final pId = (activeOrderObj['partner_id'] ?? '').toString();
+      final rawPName = (activeOrderObj['partner_name'] ?? '').toString();
+      final pName = (rawPName.isNotEmpty && rawPName != 'Delivery Partner') ? rawPName : 'Delivery Partner';
+      final pPhone = (activeOrderObj['partner_phone'] ?? '').toString();
+      final pPic = activeOrderObj['partner_photo_url'] ?? activeOrderObj['partner_profile_picture'] ?? (pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null);
+      final pOtp = (activeOrderObj['cod_otp'] ?? '').toString();
 
-    if (isOrderActive) {
-      if (hasAccepted) {
+      await prefs.setBool('has_active_order', true);
+      await prefs.setString('active_order_id', curOrderId);
+      await prefs.setString('active_order_status', status);
+      await prefs.setBool('active_order_partner_accepted', isAccepted);
+      if (pName.isNotEmpty) await prefs.setString('active_order_partner_name', pName);
+      if (pPhone.isNotEmpty) await prefs.setString('active_order_partner_phone', pPhone);
+      if (pId.isNotEmpty) await prefs.setString('active_order_partner_id', pId);
+      if (pPic != null && pPic.isNotEmpty) await prefs.setString('active_order_partner_image', pPic);
+      if (pOtp.isNotEmpty) await prefs.setString('active_cod_otp', pOtp);
+
+      if (mounted) {
         setState(() {
           showDeliveryDetails = true;
-          hasRiderAccepted = true;
-          isSearchingRider = false;
-          assignedPartnerName = (savedPName != null && savedPName.isNotEmpty && savedPName.toLowerCase() != 'delivery partner')
-              ? savedPName
-              : 'Sivaprakash';
-          assignedPartnerId = (savedPId.isNotEmpty) ? savedPId : 'dp_007';
-          if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
-          assignedPartnerPhone = (savedPPhone != null && savedPPhone.isNotEmpty)
-              ? savedPPhone
-              : '8754805750';
-          if (savedPic != null && savedPic.isNotEmpty) {
-            assignedPartnerProfileImage = savedPic;
-          }
+          hasRiderAccepted = isAccepted;
+          isSearchingRider = !isAccepted;
+          assignedPartnerName = isAccepted ? pName : '';
+          assignedPartnerPhone = isAccepted ? pPhone : '';
+          assignedPartnerId = isAccepted ? pId : '';
+          if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
+          if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
         });
+      }
+
+      if (isAccepted) {
         _startRiderLocationPolling();
         _startOrderChatPolling();
         _fetchTrackingRoadRoute();
-      } else {
-        setState(() {
-          showDeliveryDetails = true;
-          isSearchingRider = true;
-          hasRiderAccepted = false;
-        });
       }
       _startOrderPolling(curOrderId);
     } else {
-      setState(() {
-        showDeliveryDetails = false;
-        hasRiderAccepted = false;
-        isSearchingRider = false;
-        assignedPartnerName = "";
-        assignedPartnerPhone = "";
-        assignedPartnerId = "";
-        assignedOrderOtp = "";
-        assignedPartnerProfileImage = null;
-      });
+      // Server confirmed NO active order (or clean startup) - clear all local stale state!
+      await prefs.setBool('has_active_order', false);
+      await prefs.remove('active_order_id');
+      await prefs.remove('active_order_status');
+      await prefs.remove('active_order_partner_accepted');
+      await prefs.remove('active_order_partner_name');
+      await prefs.remove('active_order_partner_phone');
+      await prefs.remove('active_order_partner_id');
+      await prefs.remove('active_order_partner_image');
+      await prefs.remove('active_order_partner_pic');
+      await prefs.remove('active_cod_otp');
+
+      if (mounted) {
+        setState(() {
+          showDeliveryDetails = false;
+          hasRiderAccepted = false;
+          isSearchingRider = false;
+          assignedPartnerName = "";
+          assignedPartnerPhone = "";
+          assignedPartnerId = "";
+          assignedOrderOtp = "";
+          assignedPartnerProfileImage = null;
+        });
+      }
     }
 
     // Refresh live device GPS position in background without wiping user's saved/selected address text
@@ -1287,57 +1321,53 @@ class _HomePageState extends State<HomePage> {
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor: Color(0xFF0C1B30),
+        statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
         statusBarBrightness: Brightness.dark,
       ),
       child: Scaffold(
         backgroundColor: AppColors.background,
-        body: SafeArea(
-          top: true,
-          bottom: false,
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Top Wine Burgundy Section matching reference design
-                _buildWineHeader(context),
+        body: SingleChildScrollView(
+          controller: _scrollController,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top Wine Burgundy Section extending smoothly into status bar without overlap
+              _buildWineHeader(context),
 
-                // Main Body Content
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 520),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Quick Cravings Suggestions Chips & Order Form Card (vanishes when order placed)
-                          if (!showDeliveryDetails) ...[
-                            _buildQuickCravings(),
-                            const SizedBox(height: 20),
-                            _buildOrderFormCard(),
-                            const SizedBox(height: 20),
-                          ],
-
-                          // Delivery Partner Card (when Order Now is pressed)
-                          if (showDeliveryDetails) _buildExpandedContainer(),
-
-                          // Cancel Order Container
-                          if (showDeliveryDetails || showCancelButtonContainer) ...[
-                            const SizedBox(height: 16),
-                            _buildCancelOrderContainer(),
-                          ],
-
-                          const SizedBox(height: 30),
+              // Main Body Content
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Quick Cravings Suggestions Chips & Order Form Card (vanishes when order placed)
+                        if (!showDeliveryDetails) ...[
+                          _buildQuickCravings(),
+                          const SizedBox(height: 20),
+                          _buildOrderFormCard(),
+                          const SizedBox(height: 20),
                         ],
-                      ),
+
+                        // Delivery Partner Card (when Order Now is pressed)
+                        if (showDeliveryDetails) _buildExpandedContainer(),
+
+                        // Cancel Order Container
+                        if (showDeliveryDetails || showCancelButtonContainer) ...[
+                          const SizedBox(height: 16),
+                          _buildCancelOrderContainer(),
+                        ],
+
+                        const SizedBox(height: 30),
+                      ],
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
         bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 0),
@@ -1348,6 +1378,7 @@ class _HomePageState extends State<HomePage> {
 
   // Top Wine Header
   Widget _buildWineHeader(BuildContext context) {
+    final topPadding = MediaQuery.of(context).padding.top;
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -1361,8 +1392,8 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
-      padding: const EdgeInsets.only(
-        top: 14,
+      padding: EdgeInsets.only(
+        top: topPadding + 10,
         left: 16,
         right: 16,
         bottom: 22,
@@ -2130,27 +2161,21 @@ class _HomePageState extends State<HomePage> {
                 st == 'in_transit');
 
             if (isAccepted) {
-              final pId = (order['partner_id'] ?? '').toString().trim().isNotEmpty ? (order['partner_id'] ?? '').toString().trim() : 'dp_007';
+              final pId = (order['partner_id'] ?? '').toString().trim();
               String pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
                   ? order['partner_name'].toString().trim()
-                  : '';
-              if (pName.isEmpty || pName.toLowerCase() == 'delivery partner') {
-                pName = 'Sivaprakash';
-              }
+                  : 'Delivery Partner';
               String pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
                   ? order['partner_phone'].toString().trim()
                   : '';
-              if (pPhone.isEmpty) {
-                pPhone = '8754805750';
-              }
               final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
                   ? order['partner_profile_picture'].toString().trim()
                   : (order['partner_photo_url'] ?? (pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
               final pOtp = (order['cod_otp'] ?? '').toString();
 
               final p = await SharedPreferences.getInstance();
-              await p.setString('active_order_partner_name', pName);
-              await p.setString('active_order_partner_phone', pPhone);
+              if (pName.isNotEmpty) await p.setString('active_order_partner_name', pName);
+              if (pPhone.isNotEmpty) await p.setString('active_order_partner_phone', pPhone);
               if (pId.isNotEmpty) await p.setString('active_order_partner_id', pId);
               if (pPic != null && pPic.isNotEmpty) await p.setString('active_order_partner_image', pPic);
               if (pOtp.isNotEmpty) await p.setString('active_cod_otp', pOtp);
@@ -2159,16 +2184,27 @@ class _HomePageState extends State<HomePage> {
 
               if (mounted) {
                 final bool wasSearching = isSearchingRider;
-                setState(() {
-                  showDeliveryDetails = true;
-                  isSearchingRider = false;
-                  hasRiderAccepted = true;
-                  assignedPartnerName = pName;
-                  assignedPartnerPhone = pPhone;
-                  if (pId.isNotEmpty) assignedPartnerId = pId;
-                  if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
-                  if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
-                });
+                final bool hasChanged = wasSearching ||
+                    !showDeliveryDetails ||
+                    !hasRiderAccepted ||
+                    assignedPartnerName != pName ||
+                    assignedPartnerPhone != pPhone ||
+                    (pId.isNotEmpty && assignedPartnerId != pId) ||
+                    (pPic != null && pPic.isNotEmpty && assignedPartnerProfileImage != pPic) ||
+                    (pOtp.isNotEmpty && assignedOrderOtp != pOtp);
+
+                if (hasChanged) {
+                  setState(() {
+                    showDeliveryDetails = true;
+                    isSearchingRider = false;
+                    hasRiderAccepted = true;
+                    assignedPartnerName = pName;
+                    assignedPartnerPhone = pPhone;
+                    if (pId.isNotEmpty) assignedPartnerId = pId;
+                    if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
+                    if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
+                  });
+                }
                 if (wasSearching) {
                   _startRiderLocationPolling();
                   _startOrderChatPolling();
@@ -2307,7 +2343,7 @@ class _HomePageState extends State<HomePage> {
                     Text(
                       (assignedPartnerName.isNotEmpty && assignedPartnerName != 'Delivery Partner')
                           ? assignedPartnerName
-                          : 'Sivaprakash',
+                          : 'Delivery Partner',
                       style: AppTypography.cardTitle,
                     ),
                     const SizedBox(height: 3),
@@ -2353,11 +2389,13 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      assignedPartnerPhone.isNotEmpty ? assignedPartnerPhone : "8754805750",
-                      style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
-                    ),
+                    if (assignedPartnerPhone.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        assignedPartnerPhone,
+                        style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -861,15 +861,11 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                             await prefs.setStringList('partner_declined_order_ids', savedDeclined);
                                           }
                                           String partnerName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "";
-                                          if (partnerName.isEmpty || partnerName == "Delivery Partner") {
-                                            partnerName = "Sivaprakash";
+                                          if (partnerName.trim().isEmpty) {
+                                            partnerName = "Delivery Partner";
                                           }
                                           String partnerPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
-                                          if (partnerPhone.isEmpty) {
-                                            partnerPhone = "8754805750";
-                                          }
-                                          String partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'dp_007';
-                                          if (partnerId.isEmpty) partnerId = 'dp_007';
+                                          String partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? "";
                                           final partnerPic = prefs.getString('d_profile_picture_base64');
                                           try {
                                             await http.post(

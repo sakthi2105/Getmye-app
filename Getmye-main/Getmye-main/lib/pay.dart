@@ -99,8 +99,8 @@ class _PaymentPageState extends State<PaymentPage> {
     super.initState();
     _loadInitialPrefs();
     _pollFromBackend();
-    // Poll real backend MongoDB API every 1.5 seconds for real multi-device sync
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    // Poll real backend MongoDB API every 2.5 seconds for smooth performance without battery/thread lag
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
       _pollFromBackend();
     });
   }
@@ -116,9 +116,9 @@ class _PaymentPageState extends State<PaymentPage> {
     final activeId = prefs.getString('active_order_id');
     final activeItem = prefs.getString('active_order_item');
     final rawPName = prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? "";
-    final pName = (rawPName.isNotEmpty && rawPName != "Delivery Partner") ? rawPName : "Sivaprakash";
+    final pName = (rawPName.isNotEmpty && rawPName != "Delivery Partner") ? rawPName : "Delivery Partner";
     final rawPPhone = prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? "";
-    final pPhone = rawPPhone.isNotEmpty ? rawPPhone : "8754805750";
+    final pPhone = rawPPhone.isNotEmpty ? rawPPhone : "";
     String cAddress = prefs.getString('active_order_customer_address') ?? prefs.getString('customer_address_full') ?? "Live Delivery Location";
     final savedOtp = prefs.getString('active_cod_otp');
     final savedMethod = prefs.getString('payment_method');
@@ -151,7 +151,7 @@ class _PaymentPageState extends State<PaymentPage> {
         final savedPartnerPic = prefs.getString('active_order_partner_pic') ??
             prefs.getString('active_order_partner_image') ??
             prefs.getString('d_profile_picture_base64');
-        final savedPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'dp_007';
+        final savedPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? '';
         if (savedPartnerPic != null) partnerProfilePicture = savedPartnerPic;
         if (savedPartnerId.isNotEmpty) partnerId = savedPartnerId;
         partnerPhone = pPhone;
@@ -198,14 +198,14 @@ class _PaymentPageState extends State<PaymentPage> {
               ? rawName
               : (partnerName.isNotEmpty && partnerName != 'Delivery Partner'
                   ? partnerName
-                  : (prefs.getString('active_order_partner_name') ?? 'Sivaprakash'));
+                  : (prefs.getString('active_order_partner_name') ?? 'Delivery Partner'));
 
           final rawPhone = order['partner_phone']?.toString() ?? '';
           final pPhone = rawPhone.isNotEmpty
               ? rawPhone
               : (partnerPhone.isNotEmpty
                   ? partnerPhone
-                  : (prefs.getString('active_order_partner_phone') ?? '8754805750'));
+                  : (prefs.getString('active_order_partner_phone') ?? ''));
 
           final dAddr = order['delivery_address'] ?? customerAddress;
           final iName = order['item_name'] ?? itemName;
@@ -268,7 +268,37 @@ class _PaymentPageState extends State<PaymentPage> {
 
           // Order chat messages are tracked globally and deduplicated via AppNotificationService
 
-          if (mounted) {
+          final pId = order['partner_id']?.toString() ?? partnerId ?? prefs.getString('active_order_partner_id');
+          if (pId != null && pId.isNotEmpty) {
+            prefs.setString('active_order_partner_id', pId);
+          }
+          final rawPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
+              ? order['partner_profile_picture'].toString().trim()
+              : (order['partner_photo_url']?.toString());
+          final pPic = (rawPic != null && rawPic.isNotEmpty)
+              ? rawPic
+              : (partnerProfilePicture ?? prefs.getString('active_order_partner_pic') ?? prefs.getString('active_order_partner_image') ?? (pId != null && pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
+          if (pPic != null && pPic.isNotEmpty) {
+            prefs.setString('active_order_partner_pic', pPic);
+            prefs.setString('active_order_partner_image', pPic);
+          }
+          if (pName.isNotEmpty && pName != 'Delivery Partner') {
+            prefs.setString('active_order_partner_name', pName);
+          }
+          if (pPhone.isNotEmpty) {
+            prefs.setString('active_order_partner_phone', pPhone);
+          }
+
+          final bool hasChanged = orderStatus != status ||
+              partnerName != pName ||
+              partnerPhone != pPhone ||
+              (pId != null && pId.isNotEmpty && partnerId != pId) ||
+              (pPic != null && pPic.isNotEmpty && partnerProfilePicture != pPic) ||
+              customerAddress != dAddr ||
+              itemName != iName ||
+              (orderBillImg != null && uploadedBillImageUrl != orderBillImg);
+
+          if (mounted && hasChanged) {
             setState(() {
               orderStatus = status;
               orderId = currentOrderId;
@@ -294,27 +324,11 @@ class _PaymentPageState extends State<PaymentPage> {
               if (bPayStatus == 'paid' || bPayStatus == 'success' || (bMethod != null && bMethod.contains('UPI'))) {
                 isOnlinePaid = true;
               }
-              final pId = order['partner_id']?.toString() ?? partnerId ?? prefs.getString('active_order_partner_id');
               if (pId != null && pId.isNotEmpty) {
                 partnerId = pId;
-                prefs.setString('active_order_partner_id', pId);
               }
-              final rawPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
-                  ? order['partner_profile_picture'].toString().trim()
-                  : (order['partner_photo_url']?.toString());
-              final pPic = (rawPic != null && rawPic.isNotEmpty)
-                  ? rawPic
-                  : (partnerProfilePicture ?? prefs.getString('active_order_partner_pic') ?? prefs.getString('active_order_partner_image') ?? (pId != null && pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
               if (pPic != null && pPic.isNotEmpty) {
                 partnerProfilePicture = pPic;
-                prefs.setString('active_order_partner_pic', pPic);
-                prefs.setString('active_order_partner_image', pPic);
-              }
-              if (pName.isNotEmpty && pName != 'Delivery Partner') {
-                prefs.setString('active_order_partner_name', pName);
-              }
-              if (pPhone.isNotEmpty) {
-                prefs.setString('active_order_partner_phone', pPhone);
               }
               if (orderBillImg != null && orderBillImg.isNotEmpty) {
                 uploadedBillImageUrl = orderBillImg;
@@ -2130,7 +2144,7 @@ class _PaymentPageState extends State<PaymentPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  (partnerName.isNotEmpty && partnerName != 'Delivery Partner') ? partnerName : "Sivaprakash",
+                  (partnerName.isNotEmpty && partnerName != 'Delivery Partner') ? partnerName : "Delivery Partner",
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
                 ),
                 const SizedBox(height: 2),
@@ -2147,11 +2161,13 @@ class _PaymentPageState extends State<PaymentPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  partnerPhone.isNotEmpty ? partnerPhone : "8754805750",
-                  style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
-                ),
+                if (partnerPhone.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    partnerPhone,
+                    style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                  ),
+                ],
               ],
             ),
           ),

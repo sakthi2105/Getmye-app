@@ -647,15 +647,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           AlarmService.stopAlarm();
                           final prefs = await SharedPreferences.getInstance();
                           String pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "";
-                          if (pName.isEmpty || pName == "Delivery Partner") {
-                            pName = "Sivaprakash";
+                          if (pName.trim().isEmpty) {
+                            pName = "Delivery Partner";
                           }
                           String pPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
-                          if (pPhone.isEmpty) {
-                            pPhone = "8754805750";
-                          }
-                          String pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'dp_007';
-                          if (pId.isEmpty) pId = 'dp_007';
+                          String pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? "";
                           final pPic = prefs.getString('d_profile_picture_base64');
 
                           try {
