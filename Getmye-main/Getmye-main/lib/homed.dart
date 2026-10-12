@@ -40,7 +40,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   double todayEarnings = 350.00;
   int totalDeliveries = 120;
   int todayDeliveries = 8;
-  String partnerName = "Karthi";
+  String partnerName = "Delivery Partner";
   String? profileImagePath;
   String? profileImageBase64;
   int pendingOrderCount = 0;
@@ -572,6 +572,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           final pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
                           final pPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
                           final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+                          final pPic = prefs.getString('d_profile_picture_base64');
 
                           try {
                             await http.post(
@@ -582,6 +583,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 'partner_id': pId,
                                 'partner_name': pName,
                                 'partner_phone': pPhone,
+                                if (pPic != null && pPic.isNotEmpty) 'partner_profile_picture': pPic,
                               }),
                             ).timeout(const Duration(seconds: 4));
                           } catch (e) {
@@ -675,7 +677,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final localBase64 = prefs.getString('d_profile_picture_base64');
 
     setState(() {
-      partnerName = prefs.getString('d_name') ?? "Karthi";
+      partnerName = prefs.getString('d_name') ?? "Delivery Partner";
       totalEarnings = prefs.getDouble('total_earnings') ?? 10000.00;
       todayEarnings = prefs.getDouble('today_earnings') ?? 350.00;
       currentBalance = prefs.getDouble('wallet_balance') ?? 2500.00;
@@ -709,6 +711,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           });
         }
         if (data['name'] != null && data['name'].toString().isNotEmpty && mounted) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('d_name', data['name'].toString());
+          if (data['mobile_number'] != null && data['mobile_number'].toString().isNotEmpty) {
+            await prefs.setString('d_phone', data['mobile_number'].toString());
+          }
           setState(() {
             partnerName = data['name'].toString();
           });

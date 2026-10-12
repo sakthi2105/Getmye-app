@@ -863,6 +863,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           final partnerName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
                                           final partnerPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
                                           final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+                                          final partnerPic = prefs.getString('d_profile_picture_base64');
                                           try {
                                             await http.post(
                                               ApiConfig.orderAccept,
@@ -872,6 +873,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                                 'partner_id': partnerId,
                                                 'partner_name': partnerName,
                                                 'partner_phone': partnerPhone,
+                                                if (partnerPic != null && partnerPic.isNotEmpty) 'partner_profile_picture': partnerPic,
                                               }),
                                             );
                                           } catch (e) {

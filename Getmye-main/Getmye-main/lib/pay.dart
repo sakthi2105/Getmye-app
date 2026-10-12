@@ -35,8 +35,8 @@ class _PaymentPageState extends State<PaymentPage> {
   String itemName = "Chicken Rice";
   String customerName = "Customer";
   String customerAddress = "Live Delivery Location";
-  String partnerName = "Karthi (Partner)";
-  String partnerPhone = "+91 98765 43210";
+  String partnerName = "";
+  String partnerPhone = "";
   String? partnerId;
   String? partnerProfilePicture;
   String? activeOtp;
@@ -115,8 +115,8 @@ class _PaymentPageState extends State<PaymentPage> {
     final prefs = await SharedPreferences.getInstance();
     final activeId = prefs.getString('active_order_id');
     final activeItem = prefs.getString('active_order_item');
-    final pName = prefs.getString('active_order_partner_name') ?? prefs.getString('d_name') ?? "Karthi (Partner)";
-    final pPhone = prefs.getString('active_order_partner_phone') ?? prefs.getString('d_phone') ?? "+91 98765 43210";
+    final pName = prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? "Delivery Partner";
+    final pPhone = prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? "";
     String cAddress = prefs.getString('active_order_customer_address') ?? prefs.getString('customer_address_full') ?? "Live Delivery Location";
     final savedOtp = prefs.getString('active_cod_otp');
     final savedMethod = prefs.getString('payment_method');
@@ -283,10 +283,13 @@ class _PaymentPageState extends State<PaymentPage> {
                 partnerId = pId;
                 prefs.setString('active_order_partner_id', pId);
               }
-              final pPic = order['partner_profile_picture']?.toString();
+              final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
+                  ? order['partner_profile_picture'].toString().trim()
+                  : (order['partner_photo_url']?.toString());
               if (pPic != null && pPic.isNotEmpty) {
                 partnerProfilePicture = pPic;
                 prefs.setString('active_order_partner_pic', pPic);
+                prefs.setString('active_order_partner_image', pPic);
               }
               if (orderBillImg != null && orderBillImg.isNotEmpty) {
                 uploadedBillImageUrl = orderBillImg;
@@ -2013,15 +2016,21 @@ class _PaymentPageState extends State<PaymentPage> {
   }
 
   Widget _buildPartnerAvatarImage() {
-    if (partnerProfilePicture != null && partnerProfilePicture!.isNotEmpty) {
-      final img = partnerProfilePicture!.trim();
-      if (img.startsWith('http')) {
+    String? img = partnerProfilePicture?.trim();
+    if ((img == null || img.isEmpty) && partnerId != null && partnerId!.isNotEmpty) {
+      img = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$partnerId';
+    }
+    if (img != null && img.isNotEmpty) {
+      if (img.startsWith('/')) {
+        img = '${ApiConfig.baseUrl}$img';
+      }
+      if (img.startsWith('http://') || img.startsWith('https://')) {
         return Image.network(
           img,
           fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
         );
-      } else if (img.startsWith('/') || img.contains('\\') || img.startsWith('file:')) {
+      } else if (img.startsWith('file:') || img.contains('\\') || (!img.contains('/') && File(img).existsSync())) {
         final f = File(img);
         if (f.existsSync()) {
           return Image.file(
@@ -2045,10 +2054,22 @@ class _PaymentPageState extends State<PaymentPage> {
   }
 
   Widget _buildFallbackPartnerAvatar() {
-    return Image.asset(
-      'assets/delivery_boy_toon.png',
-      fit: BoxFit.cover,
-      errorBuilder: (ctx, err, stack) => const Icon(Icons.person, color: Color(0xFF047857), size: 36),
+    final initial = partnerName.trim().isNotEmpty
+        ? partnerName.trim().substring(0, 1).toUpperCase()
+        : '';
+    return Container(
+      color: AppColors.primaryLight,
+      alignment: Alignment.center,
+      child: initial.isNotEmpty
+          ? Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primaryDark,
+              ),
+            )
+          : const Icon(Icons.person, color: Color(0xFF047857), size: 30),
     );
   }
 
@@ -2084,19 +2105,21 @@ class _PaymentPageState extends State<PaymentPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  partnerName,
+                  partnerName.isNotEmpty ? partnerName : "Delivery Partner",
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
                 ),
                 const SizedBox(height: 2),
                 const Text(
-                  "⭐ 4.9 (128 deliveries) • Hero Splendor",
+                  "⭐ 4.9 • Fast & Verified Delivery Partner",
                   style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  partnerPhone,
-                  style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
-                ),
+                if (partnerPhone.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    partnerPhone,
+                    style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2110,6 +2133,15 @@ class _PaymentPageState extends State<PaymentPage> {
             icon: const Icon(Icons.phone_rounded, size: 20),
             tooltip: 'Call Partner',
             onPressed: () async {
+              if (partnerPhone.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Delivery partner contact number not available yet"),
+                    backgroundColor: Color(0xFFDC2626),
+                  ),
+                );
+                return;
+              }
               final cleanPhone = partnerPhone.replaceAll(RegExp(r'[^0-9+]'), '');
               final uri = Uri.parse('tel:$cleanPhone');
               if (await canLaunchUrl(uri)) {

@@ -81,7 +81,9 @@ router.get('/active/:user_id', async (req, res) => {
 
     const orderObj = activeOrder.toObject();
     if (orderObj.partner_id) {
-      orderObj.partner_photo_url = `/api/deliveryperson/photo/${orderObj.partner_id}`;
+      const host = req.get('host');
+      const protocol = req.protocol;
+      orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
     }
 
     res.json({ success: true, order: orderObj });
@@ -107,12 +109,13 @@ router.post('/accept', async (req, res) => {
       const dp = await DeliveryPerson.findOne({
         $or: [
           { DP_id: partner_id },
+          { DP_id: new RegExp(`^${partner_id}$`, 'i') },
           { mobile_number: partner_phone || partner_id }
         ]
       }).select('name mobile_number profile_picture').lean();
       if (dp) {
         if (!actualPartnerName || actualPartnerName === 'Delivery Partner') actualPartnerName = dp.name;
-        if (!actualPartnerPhone) actualPartnerPhone = dp.mobile_number;
+        if (!actualPartnerPhone || actualPartnerPhone === '+91 98765 43210') actualPartnerPhone = dp.mobile_number;
         if (!partnerPic && dp.profile_picture) {
           partnerPic = Buffer.isBuffer(dp.profile_picture)
             ? Buffer.from(dp.profile_picture).toString('base64')
@@ -121,13 +124,12 @@ router.post('/accept', async (req, res) => {
       }
     } catch (_) {}
 
-
     const order = await Order.findOneAndUpdate(
       { order_id, status: 'pending' },
       {
         partner_id,
         partner_name: actualPartnerName || 'Delivery Partner',
-        partner_phone: actualPartnerPhone || '+91 98765 43210',
+        partner_phone: actualPartnerPhone || '',
         partner_profile_picture: partnerPic || null,
         status: 'accepted',
         accepted_at: new Date()
@@ -152,7 +154,14 @@ router.post('/accept', async (req, res) => {
       );
     } catch (_) {}
 
-    res.json({ success: true, message: 'Order accepted by partner', order });
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const orderObj = order.toObject();
+    if (orderObj.partner_id) {
+      orderObj.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${orderObj.partner_id}`;
+    }
+
+    res.json({ success: true, message: 'Order accepted by partner', order: orderObj });
   } catch (err) {
     console.error('Error accepting order:', err);
     res.status(500).json({ error: 'Failed to accept order' });
@@ -328,11 +337,13 @@ router.get('/partner/:partner_id', async (req, res) => {
 router.get('/:order_id', async (req, res) => {
   try {
     const order = await Order.findOne({ order_id: req.params.order_id })
-      .select('-bill_image_url -partner_profile_picture')
+      .select('-bill_image_url')
       .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
     if (order.partner_id) {
-      order.partner_photo_url = `/api/deliveryperson/photo/${order.partner_id}`;
+      const host = req.get('host');
+      const protocol = req.protocol;
+      order.partner_photo_url = `${protocol}://${host}/api/deliveryperson/photo/${order.partner_id}`;
     }
     res.json({ success: true, order });
   } catch (err) {

@@ -352,7 +352,7 @@ class _HomePageState extends State<HomePage> {
         activeStatus != 'delivered') {
       setState(() {
         hasRiderAccepted = true;
-        assignedPartnerName = "$savedPName (Partner)";
+        assignedPartnerName = savedPName;
         assignedPartnerId = savedPId;
         if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
         if (savedPPhone != null && savedPPhone.isNotEmpty) {
@@ -658,6 +658,17 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _callDeliveryPartner([String? phone]) async {
     final targetPhone = phone ?? assignedPartnerPhone;
+    if (targetPhone.trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Delivery partner contact number not available yet"),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+      }
+      return;
+    }
     final cleanPhone = targetPhone.replaceAll(RegExp(r'[^0-9+]'), '');
     final uri = Uri.parse('tel:$cleanPhone');
     if (await canLaunchUrl(uri)) {
@@ -1981,8 +1992,9 @@ class _HomePageState extends State<HomePage> {
                           final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
                               ? order['partner_phone'].toString().trim()
                               : '';
-                          final pPic = order['partner_photo_url'] ??
-                              '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId';
+                          final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
+                              ? order['partner_profile_picture'].toString().trim()
+                              : (order['partner_photo_url'] ?? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId');
                           final pOtp = (order['cod_otp'] ?? '').toString();
 
                           final p = await SharedPreferences.getInstance();
@@ -2000,7 +2012,7 @@ class _HomePageState extends State<HomePage> {
                             setState(() {
                               isSearchingRider = false;
                               hasRiderAccepted = true;
-                              assignedPartnerName = "$pName (Partner)";
+                              assignedPartnerName = pName;
                               assignedPartnerPhone = pPhone;
                               assignedPartnerId = pId;
                               assignedPartnerProfileImage = pPic;
@@ -2150,6 +2162,9 @@ class _HomePageState extends State<HomePage> {
       img = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$assignedPartnerId';
     }
     if (img != null && img.isNotEmpty) {
+      if (img.startsWith('/')) {
+        img = '${ApiConfig.baseUrl}$img';
+      }
       if (img.startsWith('http://') || img.startsWith('https://')) {
         return Image.network(
           img,
@@ -2158,7 +2173,7 @@ class _HomePageState extends State<HomePage> {
           height: 56,
           errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
         );
-      } else if (img.startsWith('/') || img.startsWith('file:') || img.contains('\\')) {
+      } else if (img.startsWith('file:') || img.contains('\\') || (!img.contains('/') && File(img).existsSync())) {
         final f = File(img);
         if (f.existsSync()) {
           return Image.file(
@@ -2187,14 +2202,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildFallbackPartnerAvatar() {
-    return Image.asset(
-      'assets/delivery_boy_toon.png',
-      fit: BoxFit.cover,
-      errorBuilder: (ctx, err, stack) => const CircleAvatar(
-        radius: 28,
-        backgroundColor: AppColors.primaryLight,
-        child: Icon(Icons.person_rounded, color: AppColors.primaryDark, size: 28),
-      ),
+    final initial = assignedPartnerName.trim().isNotEmpty
+        ? assignedPartnerName.trim().substring(0, 1).toUpperCase()
+        : '';
+    return Container(
+      color: AppColors.primaryLight,
+      alignment: Alignment.center,
+      child: initial.isNotEmpty
+          ? Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primaryDark,
+              ),
+            )
+          : const Icon(Icons.person_rounded, color: AppColors.primaryDark, size: 28),
     );
   }
 
@@ -2508,7 +2531,12 @@ class _HomePageState extends State<HomePage> {
             child: ElevatedButton.icon(
               onPressed: () => _callDeliveryPartner(assignedPartnerPhone),
               icon: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
-              label: Text('Call $assignedPartnerName ($assignedPartnerPhone)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              label: Text(
+                assignedPartnerPhone.isNotEmpty
+                    ? 'Call $assignedPartnerName ($assignedPartnerPhone)'
+                    : 'Call $assignedPartnerName',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF16A34A),
                 elevation: 0,

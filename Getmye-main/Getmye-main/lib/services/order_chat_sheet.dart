@@ -256,12 +256,16 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                 CircleAvatar(
                   radius: 20,
                   backgroundColor: AppColors.primaryLight,
-                  backgroundImage: isCustomer
-                      ? const AssetImage('assets/delivery_boy_toon.png') as ImageProvider
-                      : null,
-                  child: !isCustomer
-                      ? const Icon(Icons.person_rounded, color: AppColors.primaryDark)
-                      : null,
+                  child: Text(
+                    widget.otherPartyName.trim().isNotEmpty
+                        ? widget.otherPartyName.trim().substring(0, 1).toUpperCase()
+                        : (isCustomer ? 'D' : 'C'),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryDark,
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -270,7 +274,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                     children: [
                       Text(
                         isCustomer
-                            ? "${widget.otherPartyName} (Delivery Partner)"
+                            ? widget.otherPartyName
                             : "${widget.otherPartyName} (Customer)",
                         style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary),
                         maxLines: 1,
