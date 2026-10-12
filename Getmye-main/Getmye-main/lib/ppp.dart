@@ -1855,7 +1855,7 @@ class _HomePageState extends State<HomePage> {
                       'customer_latitude': orderLat,
                       'customer_longitude': orderLng,
                     }),
-                  ).timeout(const Duration(seconds: 4));
+                  ).timeout(const Duration(seconds: 6));
                   if (res.statusCode == 200 || res.statusCode == 201) {
                     final data = jsonDecode(res.body);
                     if (data['order'] != null) {
@@ -1867,9 +1867,9 @@ class _HomePageState extends State<HomePage> {
                         await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
                       }
                     }
-                  } else if (res.statusCode == 400) {
+                  } else {
                     final data = jsonDecode(res.body);
-                    final errMsg = data['message'] ?? 'You already have an active order in progress.';
+                    final errMsg = data['error'] ?? data['message'] ?? 'Failed to create order on server';
                     if (mounted) {
                       setState(() {
                         isSearchingRider = false;
@@ -1887,6 +1887,20 @@ class _HomePageState extends State<HomePage> {
                   }
                 } catch (e) {
                   debugPrint("Backend order creation error: $e");
+                  if (mounted) {
+                    setState(() {
+                      isSearchingRider = false;
+                      showDeliveryDetails = true;
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Cannot connect to server: $e'),
+                        backgroundColor: AppColors.danger,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                  return;
                 }
 
                 await prefs.setString('active_order_id', newOrderId);

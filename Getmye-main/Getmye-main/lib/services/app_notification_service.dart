@@ -388,9 +388,12 @@ class AppNotificationService {
     _isPollingPartnerOrders = true;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
       final String accountType = prefs.getString('account_type') ?? 'customer';
-      if (!isLoggedIn || accountType != 'partner') return;
+      final hasPartnerSession = accountType == 'partner' ||
+          (prefs.getString('d_id') != null && prefs.getString('d_id')!.isNotEmpty) ||
+          (prefs.getString('d_phone') != null && prefs.getString('d_phone')!.isNotEmpty) ||
+          (prefs.getBool('d_is_online') == true);
+      if (!hasPartnerSession) return;
 
       final bool isOnline = prefs.getBool('d_is_online') ?? true;
       if (!isOnline) {
@@ -433,12 +436,15 @@ class AppNotificationService {
             budget: budget,
           );
 
-          if (firstOrder is Map<String, dynamic>) {
-            _newOrderStreamController.add(firstOrder);
+          final Map<String, dynamic> safeOrderMap =
+              firstOrder is Map ? Map<String, dynamic>.from(firstOrder) : {};
+          if (safeOrderMap.isNotEmpty) {
+            _newOrderStreamController.add(safeOrderMap);
           }
         }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint("Global partner orders check error: $e");
     } finally {
       _isPollingPartnerOrders = false;
     }

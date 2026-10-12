@@ -314,14 +314,19 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               budget: budget,
             );
             if (!_isShowingIncomingModal && mounted) {
-              _showIncomingOrderModal(firstOrder as Map<String, dynamic>);
+              final Map<String, dynamic> safeMap =
+                  firstOrder is Map ? Map<String, dynamic>.from(firstOrder) : {};
+              if (safeMap.isNotEmpty) {
+                _showIncomingOrderModal(safeMap);
+              }
             }
           } else {
             AlarmService.stopAlarm();
           }
         }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint("Partner pending check error: $e");
     } finally {
       _isCheckingPendingOrders = false;
     }
