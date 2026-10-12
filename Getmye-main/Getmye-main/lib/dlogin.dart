@@ -109,7 +109,7 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
           'email': input,
           'password': password,
         }),
-      ).timeout(const Duration(seconds: 3));
+      ).timeout(const Duration(seconds: 15));
 
       final data = jsonDecode(res.body);
 
@@ -152,6 +152,13 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
           await prefs.setString('d_profile_picture_base64', data['profile_picture'].toString());
           await prefs.setString('active_order_partner_pic', data['profile_picture'].toString());
           await prefs.setString('active_order_partner_image', data['profile_picture'].toString());
+        }
+
+        final photoUrl = (data['photo_url'] ?? '').toString();
+        if (photoUrl.isNotEmpty) {
+          await prefs.setString('d_photo_url', photoUrl);
+          await prefs.setString('partner_photo_url', photoUrl);
+          await prefs.setString('active_order_partner_pic_url', photoUrl);
         }
 
         if (!mounted) return;

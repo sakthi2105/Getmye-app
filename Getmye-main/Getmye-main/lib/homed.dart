@@ -43,10 +43,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   String partnerName = "Delivery Partner";
   String? profileImagePath;
   String? profileImageBase64;
+  String? profileImageUrl;
   Uint8List? _cachedProfileBytes;
   ImageProvider? _cachedAvatarProvider;
   String? _lastDecodedBase64;
   String? _lastProfilePath;
+  String? _lastProfileUrl;
   bool _isProfileFetched = false;
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
@@ -766,6 +768,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       isOnline = prefs.getBool('d_is_online') ?? true;
       profileImagePath = localPath;
       profileImageBase64 = localBase64;
+      profileImageUrl = prefs.getString('d_photo_url') ?? prefs.getString('partner_photo_url');
     });
 
     final identifier = dId.isNotEmpty ? dId : dPhone;
@@ -799,15 +802,21 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         final b64 = data['profile_picture']?.toString();
         final newName = data['name']?.toString();
         final newPhone = data['mobile_number']?.toString();
+        final pUrl = data['photo_url']?.toString() ?? data['profile_picture_url']?.toString();
         final bool picChanged = b64 != null && b64.isNotEmpty && b64 != profileImageBase64;
         final bool nameChanged = newName != null && newName.isNotEmpty && newName != partnerName;
+        final bool urlChanged = pUrl != null && pUrl.isNotEmpty && pUrl != profileImageUrl;
 
-        if (picChanged || nameChanged) {
+        if (picChanged || nameChanged || urlChanged) {
           final prefs = await SharedPreferences.getInstance();
           if (picChanged) {
             await prefs.setString('d_profile_picture_base64', b64);
             await prefs.setString('active_order_partner_pic', b64);
             await prefs.setString('active_order_partner_image', b64);
+          }
+          if (urlChanged) {
+            await prefs.setString('d_photo_url', pUrl);
+            await prefs.setString('partner_photo_url', pUrl);
           }
           if (nameChanged) {
             await prefs.setString('d_name', newName);
@@ -822,6 +831,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           if (mounted) {
             setState(() {
               if (picChanged) profileImageBase64 = b64;
+              if (urlChanged) profileImageUrl = pUrl;
               if (nameChanged) partnerName = newName;
             });
           }
@@ -853,6 +863,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         _cachedAvatarProvider = MemoryImage(_cachedProfileBytes!);
         return _cachedAvatarProvider!;
       } catch (_) {}
+    }
+
+    if (profileImageUrl != null && profileImageUrl!.isNotEmpty) {
+      if (_lastProfileUrl == profileImageUrl && _cachedAvatarProvider != null) {
+        return _cachedAvatarProvider!;
+      }
+      _lastProfileUrl = profileImageUrl;
+      _cachedAvatarProvider = NetworkImage(profileImageUrl!);
+      return _cachedAvatarProvider!;
     }
 
     return const AssetImage('assets/delivery_boy_toon.png');
