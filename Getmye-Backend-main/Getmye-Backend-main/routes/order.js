@@ -42,15 +42,17 @@ router.post('/create', async (req, res) => {
 router.get('/pending', async (req, res) => {
   try {
     const partnerId = req.query.partner_id;
+    const recentThreshold = new Date(Date.now() - 20 * 60 * 1000);
     let query = {
-      status: 'pending'
+      status: 'pending',
+      created_at: { $gte: recentThreshold }
     };
     if (partnerId) {
       const numPart = partnerId.toString().replace(/^dp_?/i, '');
       const pRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
       query = {
         $or: [
-          { status: 'pending', declined_by: { $ne: partnerId } },
+          { status: 'pending', declined_by: { $ne: partnerId }, created_at: { $gte: recentThreshold } },
           { partner_id: { $in: [partnerId, pRegex] }, status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } },
           { partner_id: { $in: [partnerId, pRegex] }, status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 60 * 1000) } }
         ]
