@@ -345,29 +345,45 @@ class _HomePageState extends State<HomePage> {
       savedPic = '${ApiConfig.baseUrl}/api/deliveryperson/photo/$savedPId';
     }
 
-    if (hasAccepted &&
-        savedPName != null &&
-        savedPName.isNotEmpty &&
+    final hasActiveOrder = prefs.getBool('has_active_order') ?? false;
+    final curOrderId = prefs.getString('active_order_id') ?? '';
+    final isOrderActive = hasActiveOrder &&
+        curOrderId.isNotEmpty &&
         activeStatus != 'cancelled' &&
-        activeStatus != 'delivered') {
-      setState(() {
-        hasRiderAccepted = true;
-        assignedPartnerName = savedPName;
-        assignedPartnerId = savedPId;
-        if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
-        if (savedPPhone != null && savedPPhone.isNotEmpty) {
-          assignedPartnerPhone = savedPPhone;
-        }
-        if (savedPic != null && savedPic.isNotEmpty) {
-          assignedPartnerProfileImage = savedPic;
-        }
-      });
-      _startRiderLocationPolling();
-      _startOrderChatPolling();
-      _fetchTrackingRoadRoute();
+        activeStatus != 'delivered';
+
+    if (isOrderActive) {
+      if (hasAccepted && savedPName != null && savedPName.isNotEmpty) {
+        setState(() {
+          showDeliveryDetails = true;
+          hasRiderAccepted = true;
+          isSearchingRider = false;
+          assignedPartnerName = savedPName;
+          assignedPartnerId = savedPId;
+          if (savedOtp.isNotEmpty) assignedOrderOtp = savedOtp;
+          if (savedPPhone != null && savedPPhone.isNotEmpty) {
+            assignedPartnerPhone = savedPPhone;
+          }
+          if (savedPic != null && savedPic.isNotEmpty) {
+            assignedPartnerProfileImage = savedPic;
+          }
+        });
+        _startRiderLocationPolling();
+        _startOrderChatPolling();
+        _fetchTrackingRoadRoute();
+      } else {
+        setState(() {
+          showDeliveryDetails = true;
+          isSearchingRider = true;
+          hasRiderAccepted = false;
+        });
+      }
+      _startOrderPolling(curOrderId);
     } else {
       setState(() {
+        showDeliveryDetails = false;
         hasRiderAccepted = false;
+        isSearchingRider = false;
         assignedPartnerName = "";
         assignedPartnerPhone = "";
         assignedPartnerId = "";
@@ -689,7 +705,7 @@ class _HomePageState extends State<HomePage> {
     Future.delayed(const Duration(milliseconds: 150), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          0.0,
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
         );
@@ -1269,53 +1285,57 @@ class _HomePageState extends State<HomePage> {
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
+        statusBarColor: Color(0xFF0C1B30),
         statusBarIconBrightness: Brightness.light,
         statusBarBrightness: Brightness.dark,
       ),
       child: Scaffold(
         backgroundColor: AppColors.background,
-        body: SingleChildScrollView(
-          controller: _scrollController,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top Wine Burgundy Section matching reference design
-              _buildWineHeader(context),
+        body: SafeArea(
+          top: true,
+          bottom: false,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top Wine Burgundy Section matching reference design
+                _buildWineHeader(context),
 
-              // Main Body Content
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Quick Cravings Suggestions Chips & Order Form Card (vanishes when order placed)
-                        if (!showDeliveryDetails) ...[
-                          _buildQuickCravings(),
-                          const SizedBox(height: 20),
-                          _buildOrderFormCard(),
-                          const SizedBox(height: 20),
+                // Main Body Content
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 520),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Quick Cravings Suggestions Chips & Order Form Card (vanishes when order placed)
+                          if (!showDeliveryDetails) ...[
+                            _buildQuickCravings(),
+                            const SizedBox(height: 20),
+                            _buildOrderFormCard(),
+                            const SizedBox(height: 20),
+                          ],
+
+                          // Delivery Partner Card (when Order Now is pressed)
+                          if (showDeliveryDetails) _buildExpandedContainer(),
+
+                          // Cancel Order Container
+                          if (showDeliveryDetails || showCancelButtonContainer) ...[
+                            const SizedBox(height: 16),
+                            _buildCancelOrderContainer(),
+                          ],
+
+                          const SizedBox(height: 30),
                         ],
-
-                        // Delivery Partner Card (when Order Now is pressed)
-                        if (showDeliveryDetails) _buildExpandedContainer(),
-
-                        // Cancel Order Container
-                        if (showDeliveryDetails || showCancelButtonContainer) ...[
-                          const SizedBox(height: 16),
-                          _buildCancelOrderContainer(),
-                        ],
-
-                        const SizedBox(height: 30),
-                      ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 0),
@@ -1326,7 +1346,6 @@ class _HomePageState extends State<HomePage> {
 
   // Top Wine Header
   Widget _buildWineHeader(BuildContext context) {
-    final topPadding = MediaQuery.of(context).padding.top;
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -1340,8 +1359,8 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
-      padding: EdgeInsets.only(
-        top: topPadding + 10,
+      padding: const EdgeInsets.only(
+        top: 14,
         left: 16,
         right: 16,
         bottom: 22,
@@ -1932,105 +1951,8 @@ class _HomePageState extends State<HomePage> {
                 await prefs.remove('active_order_partner_image');
                 await prefs.remove('active_order_partner_pic');
 
-                // Poll real backend order endpoint until partner accepts on Device 2
-                _searchRiderTimer?.cancel();
-                _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
-                  if (_isPollingRider) return;
-                  _isPollingRider = true;
-                  try {
-                    final response = await http.get(ApiConfig.orderById(newOrderId)).timeout(const Duration(seconds: 2));
-                    if (response.statusCode == 200) {
-                      final data = jsonDecode(response.body);
-                      final order = data['order'];
-                      if (order != null) {
-                        final st = (order['status']?.toString() ?? '').toLowerCase();
-                        if (st == 'cancelled') {
-                          timer.cancel();
-                          final reason = order['cancel_reason'] ?? 'Order was cancelled';
-                          final p = await SharedPreferences.getInstance();
-                          await p.setBool('has_active_order', false);
-                          await p.setString('active_order_status', 'cancelled');
-                          await p.remove('active_order_id');
-                          if (mounted) {
-                            setState(() {
-                              isSearchingRider = false;
-                              hasRiderAccepted = false;
-                              showDeliveryDetails = false;
-                              showCancelButtonContainer = false;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Row(
-                                  children: [
-                                    const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
-                                    const SizedBox(width: 8),
-                                    Expanded(child: Text("Order cancelled: $reason")),
-                                  ],
-                                ),
-                                backgroundColor: AppColors.danger,
-                                duration: const Duration(seconds: 4),
-                              ),
-                            );
-                          }
-                          return;
-                        }
-
-                        // 🛑 STRICT: Only transition to accepted if partner has ACTUALLY accepted!
-                        final isAccepted = (st == 'accepted' ||
-                            st == 'purchasing_food' ||
-                            st == 'bill_sent' ||
-                            st == 'picked_up' ||
-                            st == 'in_transit');
-                        final pId = order['partner_id']?.toString() ?? '';
-
-                        if (isAccepted && pId.isNotEmpty) {
-                          // Real delivery partner has ACCEPTED the order on Device 2!
-                          timer.cancel();
-                          final pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
-                              ? order['partner_name'].toString().trim()
-                              : 'Delivery Partner';
-                          final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
-                              ? order['partner_phone'].toString().trim()
-                              : '';
-                          final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
-                              ? order['partner_profile_picture'].toString().trim()
-                              : (order['partner_photo_url'] ?? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId');
-                          final pOtp = (order['cod_otp'] ?? '').toString();
-
-                          final p = await SharedPreferences.getInstance();
-                          await p.setString('active_order_partner_name', pName);
-                          await p.setString('active_order_partner_phone', pPhone);
-                          await p.setString('active_order_partner_id', pId);
-                          await p.setString('active_order_partner_image', pPic);
-                          if (pOtp.isNotEmpty) {
-                            await p.setString('active_cod_otp', pOtp);
-                          }
-                          await p.setString('active_order_status', order['status']);
-                          await p.setBool('active_order_partner_accepted', true);
-
-                          if (mounted) {
-                            setState(() {
-                              isSearchingRider = false;
-                              hasRiderAccepted = true;
-                              assignedPartnerName = pName;
-                              assignedPartnerPhone = pPhone;
-                              assignedPartnerId = pId;
-                              assignedPartnerProfileImage = pPic;
-                              if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
-                            });
-                            _startRiderLocationPolling();
-                            _fetchTrackingRoadRoute();
-                            scrollToBottom();
-                          }
-                        }
-                      }
-                    }
-                  } catch (err) {
-                    debugPrint("Order status polling error: $err");
-                  } finally {
-                    _isPollingRider = false;
-                  }
-                });
+                _startOrderPolling(newOrderId);
+                scrollToBottom();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
@@ -2150,10 +2072,124 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildExpandedContainer() {
-    if (!hasRiderAccepted || isSearchingRider || assignedPartnerName.isEmpty) {
+    if (!hasRiderAccepted || isSearchingRider) {
       return const BikeRoadSearchingAnimation();
     }
     return _buildAssignedPartnerContainer();
+  }
+
+  void _startOrderPolling(String orderId) {
+    _searchRiderTimer?.cancel();
+    _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
+      if (_isPollingRider) return;
+      _isPollingRider = true;
+      try {
+        final response = await http.get(ApiConfig.orderById(orderId)).timeout(const Duration(seconds: 3));
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final order = data['order'];
+          if (order != null) {
+            final st = (order['status']?.toString() ?? '').toLowerCase();
+            if (st == 'cancelled') {
+              timer.cancel();
+              final reason = order['cancel_reason'] ?? 'Order was cancelled';
+              final p = await SharedPreferences.getInstance();
+              await p.setBool('has_active_order', false);
+              await p.setString('active_order_status', 'cancelled');
+              await p.remove('active_order_id');
+              if (mounted) {
+                setState(() {
+                  isSearchingRider = false;
+                  hasRiderAccepted = false;
+                  showDeliveryDetails = false;
+                  showCancelButtonContainer = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text("Order cancelled: $reason")),
+                      ],
+                    ),
+                    backgroundColor: AppColors.danger,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+              return;
+            }
+
+            final isAccepted = (st == 'accepted' ||
+                st == 'purchasing_food' ||
+                st == 'bill_sent' ||
+                st == 'picked_up' ||
+                st == 'in_transit');
+
+            if (isAccepted) {
+              final pId = (order['partner_id'] ?? '').toString().trim();
+              final pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
+                  ? order['partner_name'].toString().trim()
+                  : 'Delivery Partner';
+              final pPhone = (order['partner_phone'] != null && order['partner_phone'].toString().trim().isNotEmpty)
+                  ? order['partner_phone'].toString().trim()
+                  : '';
+              final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
+                  ? order['partner_profile_picture'].toString().trim()
+                  : (order['partner_photo_url'] ?? (pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
+              final pOtp = (order['cod_otp'] ?? '').toString();
+
+              final p = await SharedPreferences.getInstance();
+              await p.setString('active_order_partner_name', pName);
+              await p.setString('active_order_partner_phone', pPhone);
+              if (pId.isNotEmpty) await p.setString('active_order_partner_id', pId);
+              if (pPic != null && pPic.isNotEmpty) await p.setString('active_order_partner_image', pPic);
+              if (pOtp.isNotEmpty) await p.setString('active_cod_otp', pOtp);
+              await p.setString('active_order_status', order['status']);
+              await p.setBool('active_order_partner_accepted', true);
+
+              if (mounted) {
+                final bool wasSearching = isSearchingRider;
+                setState(() {
+                  showDeliveryDetails = true;
+                  isSearchingRider = false;
+                  hasRiderAccepted = true;
+                  assignedPartnerName = pName;
+                  assignedPartnerPhone = pPhone;
+                  if (pId.isNotEmpty) assignedPartnerId = pId;
+                  if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
+                  if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
+                });
+                if (wasSearching) {
+                  _startRiderLocationPolling();
+                  _startOrderChatPolling();
+                  _fetchTrackingRoadRoute();
+                }
+              }
+            } else if (st == 'delivered') {
+              timer.cancel();
+              final p = await SharedPreferences.getInstance();
+              await p.setBool('has_active_order', false);
+              await p.setString('active_order_status', 'delivered');
+              await p.remove('active_order_id');
+              if (mounted) {
+                setState(() {
+                  isSearchingRider = false;
+                  hasRiderAccepted = false;
+                  showDeliveryDetails = false;
+                  showCancelButtonContainer = false;
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        debugPrint("Order status polling error: $err");
+      } finally {
+        _isPollingRider = false;
+      }
+    });
   }
 
   Widget _buildAssignedPartnerAvatar() {

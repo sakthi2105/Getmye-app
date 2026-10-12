@@ -146,7 +146,9 @@ class _PaymentPageState extends State<PaymentPage> {
         if (activeId != null) orderId = activeId;
         if (activeItem != null) itemName = activeItem;
         partnerName = pName;
-        final savedPartnerPic = prefs.getString('active_order_partner_pic') ?? prefs.getString('d_profile_picture_base64');
+        final savedPartnerPic = prefs.getString('active_order_partner_pic') ??
+            prefs.getString('active_order_partner_image') ??
+            prefs.getString('d_profile_picture_base64');
         final savedPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id');
         if (savedPartnerPic != null) partnerProfilePicture = savedPartnerPic;
         if (savedPartnerId != null) partnerId = savedPartnerId;
@@ -189,8 +191,20 @@ class _PaymentPageState extends State<PaymentPage> {
         final order = orderData['order'];
         if (order != null) {
           final status = order['status'] ?? 'pending';
-          final pName = order['partner_name'] ?? partnerName;
-          final pPhone = order['partner_phone'] ?? partnerPhone;
+          final rawName = order['partner_name']?.toString() ?? '';
+          final pName = (rawName.isNotEmpty && rawName != 'Delivery Partner')
+              ? rawName
+              : (partnerName.isNotEmpty && partnerName != 'Delivery Partner'
+                  ? partnerName
+                  : (prefs.getString('active_order_partner_name') ?? prefs.getString('partner_name') ?? (rawName.isNotEmpty ? rawName : 'Delivery Partner')));
+
+          final rawPhone = order['partner_phone']?.toString() ?? '';
+          final pPhone = rawPhone.isNotEmpty
+              ? rawPhone
+              : (partnerPhone.isNotEmpty
+                  ? partnerPhone
+                  : (prefs.getString('active_order_partner_phone') ?? prefs.getString('partner_phone') ?? ''));
+
           final dAddr = order['delivery_address'] ?? customerAddress;
           final iName = order['item_name'] ?? itemName;
           final num gTot = order['grand_total'] ?? 0;
@@ -278,18 +292,27 @@ class _PaymentPageState extends State<PaymentPage> {
               if (bPayStatus == 'paid' || bPayStatus == 'success' || (bMethod != null && bMethod.contains('UPI'))) {
                 isOnlinePaid = true;
               }
-              final pId = order['partner_id']?.toString();
+              final pId = order['partner_id']?.toString() ?? partnerId ?? prefs.getString('active_order_partner_id');
               if (pId != null && pId.isNotEmpty) {
                 partnerId = pId;
                 prefs.setString('active_order_partner_id', pId);
               }
-              final pPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
+              final rawPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
                   ? order['partner_profile_picture'].toString().trim()
                   : (order['partner_photo_url']?.toString());
+              final pPic = (rawPic != null && rawPic.isNotEmpty)
+                  ? rawPic
+                  : (partnerProfilePicture ?? prefs.getString('active_order_partner_pic') ?? prefs.getString('active_order_partner_image') ?? (pId != null && pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
               if (pPic != null && pPic.isNotEmpty) {
                 partnerProfilePicture = pPic;
                 prefs.setString('active_order_partner_pic', pPic);
                 prefs.setString('active_order_partner_image', pPic);
+              }
+              if (pName.isNotEmpty && pName != 'Delivery Partner') {
+                prefs.setString('active_order_partner_name', pName);
+              }
+              if (pPhone.isNotEmpty) {
+                prefs.setString('active_order_partner_phone', pPhone);
               }
               if (orderBillImg != null && orderBillImg.isNotEmpty) {
                 uploadedBillImageUrl = orderBillImg;

@@ -278,6 +278,31 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           }
         }
 
+        // 🚴 Ongoing Delivery Sync: If partner has an active ongoing delivery in progress, sync it
+        final ongoingMatch = orders.firstWhere(
+          (o) {
+            final st = (o['status']?.toString() ?? '').toLowerCase();
+            return st == 'accepted' ||
+                st == 'purchasing_food' ||
+                st == 'bill_sent' ||
+                st == 'picked_up' ||
+                st == 'in_transit';
+          },
+          orElse: () => null,
+        );
+
+        if (ongoingMatch != null) {
+          final Map<String, dynamic> safeOngoing = Map<String, dynamic>.from(ongoingMatch);
+          if (mounted) {
+            setState(() {
+              activeDeliveryOrder = safeOngoing;
+            });
+          }
+          await prefs.setString('partner_active_order_id', safeOngoing['order_id']?.toString() ?? '');
+          await prefs.setString('active_order_id', safeOngoing['order_id']?.toString() ?? '');
+          await prefs.setString('active_order_status', safeOngoing['status']?.toString() ?? 'accepted');
+        }
+
         // Only consider pending orders strictly unhandled
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';
@@ -692,6 +717,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final identifier = dId.isNotEmpty ? dId : dPhone;
     if (identifier.isNotEmpty && (profileImagePath == null || !File(profileImagePath!).existsSync())) {
       _fetchPartnerProfileFromBackend(identifier);
+    }
+
+    final savedOngoingId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
+    final savedOngoingStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
+    if (savedOngoingId != null && savedOngoingId.isNotEmpty && savedOngoingStatus != 'cancelled' && savedOngoingStatus != 'delivered') {
+      activeDeliveryOrder ??= {
+        'order_id': savedOngoingId,
+        'customer_name': prefs.getString('active_order_customer_name') ?? 'Customer',
+        'customer_phone': prefs.getString('active_order_customer_phone') ?? '',
+        'delivery_address': prefs.getString('active_order_customer_address') ?? 'Delivery Address',
+        'item_name': prefs.getString('active_order_item') ?? 'Food Order',
+        'budget': prefs.getString('active_order_budget') ?? '150',
+        'status': savedOngoingStatus.isNotEmpty ? savedOngoingStatus : 'accepted',
+      };
     }
 
     _checkPendingOrders();
@@ -1143,10 +1182,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                   ? (activeDeliveryOrder != null
                       ? InkWell(
                           onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const NewOrdersPage()),
-                            ).then((_) => _loadPartnerData());
+                            if (activeDeliveryOrder != null) {
+                              _openOngoingDeliveryPage(activeDeliveryOrder!);
+                            }
                           },
                           borderRadius: BorderRadius.circular(16),
                           child: Container(
@@ -1227,15 +1265,23 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF1D4ED8),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: const Text(
-                                        "Continue",
-                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                    InkWell(
+                                      onTap: () {
+                                        if (activeDeliveryOrder != null) {
+                                          _openOngoingDeliveryPage(activeDeliveryOrder!);
+                                        }
+                                      },
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF1D4ED8),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: const Text(
+                                          "Continue",
+                                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1684,6 +1730,84 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ],
       ),
     );
+  }
+
+  DeliveryOrder _createDeliveryOrderFromMap(Map<String, dynamic> o) {
+    final orderId = o['order_id']?.toString() ?? 'ORD-0001';
+    final customerName = o['customer_name']?.toString() ?? 'Customer';
+    final customerPhone = o['customer_phone']?.toString() ?? '';
+    final address = o['delivery_address']?.toString() ?? 'Customer Delivery Location';
+    final itemName = o['item_name']?.toString() ?? 'Food Item';
+    final budgetStr = o['budget']?.toString() ?? '150';
+    final budget = double.tryParse(budgetStr) ?? 150.0;
+    final status = o['status']?.toString() ?? 'Accepted';
+    final double? custLat = (o['customer_latitude'] as num?)?.toDouble();
+    final double? custLng = (o['customer_longitude'] as num?)?.toDouble();
+
+    List<BillItem> billItems = [];
+    if (o['items'] is List && (o['items'] as List).isNotEmpty) {
+      billItems = (o['items'] as List).map((it) {
+        if (it is Map) {
+          return BillItem(
+            name: it['name']?.toString() ?? 'Item',
+            quantity: (it['quantity'] as num?)?.toInt() ?? 1,
+            price: (it['price'] as num?)?.toDouble() ?? 0.0,
+            isCollected: it['isCollected'] as bool? ?? false,
+          );
+        }
+        return BillItem(name: it.toString(), quantity: 1, price: 0.0);
+      }).toList();
+    }
+    if (billItems.isEmpty) {
+      billItems = [
+        BillItem(
+          name: itemName,
+          quantity: 1,
+          price: budget,
+          isCollected: false,
+        ),
+      ];
+    }
+
+    return DeliveryOrder(
+      orderId: orderId,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      deliveryAddress: address,
+      restaurantName: o['restaurant_name']?.toString() ?? "Local Restaurant",
+      restaurantAddress: o['restaurant_address']?.toString() ?? "Pickup Point (Store)",
+      items: billItems,
+      deliveryFee: (o['delivery_fee'] as num?)?.toDouble() ?? 0.0,
+      status: status,
+      customerLatitude: custLat,
+      customerLongitude: custLng,
+    );
+  }
+
+  void _openOngoingDeliveryPage(Map<String, dynamic> o) {
+    final status = (o['status']?.toString() ?? '').toLowerCase();
+    final deliveryOrder = _createDeliveryOrderFromMap(o);
+
+    if (status == 'bill_sent' || status == 'in_transit' || status == 'picked_up') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DeliveryNavigationMapPage(
+            order: deliveryOrder,
+            items: deliveryOrder.items,
+            deliveryFee: deliveryOrder.deliveryFee,
+            totalAmount: deliveryOrder.grandTotal,
+          ),
+        ),
+      ).then((_) => _loadPartnerData());
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+        ),
+      ).then((_) => _loadPartnerData());
+    }
   }
 
   void _showPartnerCancelDeliveryDialog(String orderId) {

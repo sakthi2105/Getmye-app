@@ -109,7 +109,7 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
           'email': input,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 3));
 
       final data = jsonDecode(res.body);
 
@@ -122,18 +122,26 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
         await prefs.remove('user_email');
         await prefs.remove('mobile_number');
 
-        final dpId = data['dp_id'] ?? 'DP001';
+        final dpId = (data['dp_id'] ?? data['DP_id'] ?? 'dp_001').toString();
         final partnerPhone = (data['mobile_number'] != null && data['mobile_number'].toString().isNotEmpty)
             ? data['mobile_number'].toString()
             : (!input.contains('@') ? input : '');
         final partnerEmail = (data['email'] != null && data['email'].toString().isNotEmpty)
             ? data['email'].toString()
             : (input.contains('@') ? input : '');
+        final pName = (data['name'] != null && data['name'].toString().isNotEmpty)
+            ? data['name'].toString()
+            : 'Delivery Partner';
 
         await prefs.setString('d_id', dpId);
+        await prefs.setString('partner_id', dpId);
         await prefs.setString('active_order_partner_id', dpId);
-        await prefs.setString('d_name', data['name'] ?? 'Delivery Partner');
+        await prefs.setString('d_name', pName);
+        await prefs.setString('partner_name', pName);
+        await prefs.setString('active_order_partner_name', pName);
         await prefs.setString('d_phone', partnerPhone);
+        await prefs.setString('partner_phone', partnerPhone);
+        await prefs.setString('active_order_partner_phone', partnerPhone);
         await prefs.setString('d_email', partnerEmail);
         await prefs.setString('d_address', data['address'] ?? '');
         await prefs.setBool('d_is_online', true);
@@ -142,6 +150,8 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
 
         if (data['profile_picture'] != null && data['profile_picture'].toString().isNotEmpty) {
           await prefs.setString('d_profile_picture_base64', data['profile_picture'].toString());
+          await prefs.setString('active_order_partner_pic', data['profile_picture'].toString());
+          await prefs.setString('active_order_partner_image', data['profile_picture'].toString());
         }
 
         if (!mounted) return;
