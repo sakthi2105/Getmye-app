@@ -55,6 +55,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   StreamSubscription<Map<String, dynamic>>? _orderAlertSubscription;
   final Set<String> _knownOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
+  bool _isFirstOrdersCheckDone = false;
   bool _isShowingIncomingModal = false;
   bool _isCheckingPendingOrders = false;
   bool _isUpdatingLocation = false;
@@ -310,7 +311,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
         if (ongoingMatch != null) {
           final Map<String, dynamic> safeOngoing = Map<String, dynamic>.from(ongoingMatch);
-          if (mounted) {
+          if (mounted && (activeDeliveryOrder == null || activeDeliveryOrder!['order_id'] != safeOngoing['order_id'] || activeDeliveryOrder!['status'] != safeOngoing['status'])) {
             setState(() {
               activeDeliveryOrder = safeOngoing;
             });
@@ -318,23 +319,21 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           await prefs.setString('partner_active_order_id', safeOngoing['order_id']?.toString() ?? '');
           await prefs.setString('active_order_id', safeOngoing['order_id']?.toString() ?? '');
           await prefs.setString('active_order_status', safeOngoing['status']?.toString() ?? 'accepted');
-        } else if (partnerActiveId != null && partnerActiveId.isNotEmpty) {
-          // If no ongoing order matches this partner, check if previous active order has finished
-          final pastOrder = orders.firstWhere(
-            (o) => o['order_id']?.toString() == partnerActiveId,
-            orElse: () => null,
-          );
-          if (pastOrder != null) {
-            final pst = (pastOrder['status']?.toString() ?? '').toLowerCase();
-            if (pst == 'delivered' || pst == 'cancelled') {
-              if (mounted) {
-                setState(() {
-                  activeDeliveryOrder = null;
-                });
-              }
-              await prefs.remove('partner_active_order_id');
-            }
+        } else {
+          // If no ongoing delivery exists in backend for this partner, clear activeDeliveryOrder immediately!
+          if (activeDeliveryOrder != null && mounted) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
           }
+          await prefs.remove('partner_active_order_id');
+          await prefs.remove('active_order_id');
+          await prefs.remove('active_order_status');
+          await prefs.remove('active_order_customer_name');
+          await prefs.remove('active_order_customer_phone');
+          await prefs.remove('active_order_customer_address');
+          await prefs.remove('active_order_item');
+          await prefs.remove('active_order_budget');
         }
 
         // Only consider pending orders strictly unhandled
@@ -354,34 +353,53 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           setState(() {
             pendingOrderCount = unhandledOrders.length;
           });
+        }
 
-          // 🚨 ALARM SOUND, NOTIFICATION & MODAL: Alert partner for incoming orders within 3s!
-          if (unhandledOrders.isNotEmpty && isOnline) {
-            final firstOrder = unhandledOrders.first;
-            final newId = firstOrder['order_id']?.toString() ?? '';
-            final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
-            final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
-            final addr = firstOrder['delivery_address']?.toString() ?? '';
-            final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
-
-            if (newId.isNotEmpty) _knownOrderIds.add(newId);
-            AlarmService.startAlarm(
-              orderId: newId,
-              item: itemName,
-              customerName: custName,
-              address: addr,
-              budget: budget,
-            );
-            if (!_isShowingIncomingModal && mounted) {
-              final Map<String, dynamic> safeMap =
-                  firstOrder is Map ? Map<String, dynamic>.from(firstOrder) : {};
-              if (safeMap.isNotEmpty) {
-                _showIncomingOrderModal(safeMap);
-              }
+        // 🛑 When delivery person first enters the app, index all existing orders so old/test orders never alarm!
+        if (!_isFirstOrdersCheckDone) {
+          _isFirstOrdersCheckDone = true;
+          for (final o in orders) {
+            final id = o['order_id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              _knownOrderIds.add(id);
+              AppNotificationService.registerOrderAsKnown(id);
             }
-          } else {
-            AlarmService.stopAlarm();
           }
+          return;
+        }
+
+        // 🚨 ONLY NEW ORDERS FROM CUSTOMER TRIGGER ALARM SOUND & POPUP MODAL!
+        final newIncomingOrders = unhandledOrders.where((o) {
+          final id = o['order_id']?.toString() ?? '';
+          return id.isNotEmpty && !_knownOrderIds.contains(id);
+        }).toList();
+
+        if (newIncomingOrders.isNotEmpty && isOnline) {
+          final firstOrder = newIncomingOrders.first;
+          final newId = firstOrder['order_id']?.toString() ?? '';
+          final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
+          final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
+          final addr = firstOrder['delivery_address']?.toString() ?? '';
+          final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
+
+          _knownOrderIds.add(newId);
+          AppNotificationService.registerOrderAsKnown(newId);
+          AlarmService.startAlarm(
+            orderId: newId,
+            item: itemName,
+            customerName: custName,
+            address: addr,
+            budget: budget,
+          );
+          if (!_isShowingIncomingModal && mounted) {
+            final Map<String, dynamic> safeMap =
+                firstOrder is Map ? Map<String, dynamic>.from(firstOrder) : {};
+            if (safeMap.isNotEmpty) {
+              _showIncomingOrderModal(safeMap);
+            }
+          }
+        } else if (unhandledOrders.isEmpty) {
+          AlarmService.stopAlarm();
         }
       }
     } catch (e) {
@@ -779,15 +797,27 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
     final savedOngoingId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
     final savedOngoingStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
-    if (savedOngoingId != null && savedOngoingId.isNotEmpty && savedOngoingStatus != 'cancelled' && savedOngoingStatus != 'delivered') {
+    final savedCustName = prefs.getString('active_order_customer_name');
+    final isRealOngoingStatus = savedOngoingStatus == 'accepted' ||
+        savedOngoingStatus == 'purchasing_food' ||
+        savedOngoingStatus == 'bill_sent' ||
+        savedOngoingStatus == 'picked_up' ||
+        savedOngoingStatus == 'in_transit';
+
+    if (savedOngoingId != null &&
+        savedOngoingId.isNotEmpty &&
+        isRealOngoingStatus &&
+        savedCustName != null &&
+        savedCustName.isNotEmpty &&
+        savedCustName != 'Customer') {
       activeDeliveryOrder ??= {
         'order_id': savedOngoingId,
-        'customer_name': prefs.getString('active_order_customer_name') ?? 'Customer',
+        'customer_name': savedCustName,
         'customer_phone': prefs.getString('active_order_customer_phone') ?? '',
         'delivery_address': prefs.getString('active_order_customer_address') ?? 'Delivery Address',
         'item_name': prefs.getString('active_order_item') ?? 'Food Order',
         'budget': prefs.getString('active_order_budget') ?? '150',
-        'status': savedOngoingStatus.isNotEmpty ? savedOngoingStatus : 'accepted',
+        'status': savedOngoingStatus,
       };
     }
 

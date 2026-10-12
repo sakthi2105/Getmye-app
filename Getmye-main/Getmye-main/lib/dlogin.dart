@@ -116,11 +116,19 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
       if (res.statusCode == 200 && (data['success'] == true || data['dp_id'] != null)) {
         final prefs = await SharedPreferences.getInstance();
 
-        // Clear previous customer session if any
+        // Clear previous customer session & stale order cache if any
         await prefs.remove('user_id');
         await prefs.remove('user_name');
         await prefs.remove('user_email');
         await prefs.remove('mobile_number');
+        await prefs.remove('partner_active_order_id');
+        await prefs.remove('active_order_id');
+        await prefs.remove('active_order_status');
+        await prefs.remove('active_order_customer_name');
+        await prefs.remove('active_order_customer_phone');
+        await prefs.remove('active_order_customer_address');
+        await prefs.remove('active_order_item');
+        await prefs.remove('active_order_budget');
 
         final dpId = (data['dp_id'] ?? data['DP_id'] ?? 'dp_001').toString();
         final partnerPhone = (data['mobile_number'] != null && data['mobile_number'].toString().isNotEmpty)

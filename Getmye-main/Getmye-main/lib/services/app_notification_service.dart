@@ -372,8 +372,16 @@ class AppNotificationService {
   static Stream<Map<String, dynamic>> get onNewOrderReceived =>
       _newOrderStreamController.stream;
 
+  static final Set<String> _globalKnownOrderIds = {};
+  static bool _isGlobalInitialCheckDone = false;
   static Timer? _globalPartnerOrderPollingTimer;
   static bool _isPollingPartnerOrders = false;
+
+  static void registerOrderAsKnown(String orderId) {
+    if (orderId.isNotEmpty) {
+      _globalKnownOrderIds.add(orderId);
+    }
+  }
 
   static void startGlobalPartnerOrderPolling() {
     _globalPartnerOrderPollingTimer?.cancel();
@@ -419,13 +427,33 @@ class AppNotificationService {
               status == 'pending';
         }).toList();
 
-        if (unhandledOrders.isNotEmpty) {
-          final firstOrder = unhandledOrders.first;
+        // 🛑 On initial check upon launch, mark all existing orders as known so no old/test orders trigger alerts!
+        if (!_isGlobalInitialCheckDone) {
+          _isGlobalInitialCheckDone = true;
+          for (final o in orders) {
+            final id = o['order_id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              _globalKnownOrderIds.add(id);
+            }
+          }
+          return;
+        }
+
+        // 🚨 ONLY trigger for newly received customer orders
+        final newOrders = unhandledOrders.where((o) {
+          final id = o['order_id']?.toString() ?? '';
+          return id.isNotEmpty && !_globalKnownOrderIds.contains(id);
+        }).toList();
+
+        if (newOrders.isNotEmpty) {
+          final firstOrder = newOrders.first;
           final orderId = firstOrder['order_id']?.toString() ?? '';
           final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
           final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
           final address = firstOrder['delivery_address']?.toString() ?? '';
           final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
+
+          _globalKnownOrderIds.add(orderId);
 
           // 🚨 Alarm sound + Heads-up Notification within 3 seconds!
           AlarmService.startAlarm(
