@@ -6,6 +6,7 @@ const { getNextSequence } = require('../models/Counter');
 const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+const partnerPhotoCache = new Map();
 
 // POST /api/deliveryperson/add
 router.post('/add', upload.fields([
@@ -160,7 +161,8 @@ router.post('/login', async (req, res) => {
       orList.push({ linked_number: cleanDigits });
     }
 
-    const partner = await DeliveryPerson.findOne({ $or: orList });
+    const partner = await DeliveryPerson.findOne({ $or: orList })
+      .select('-aadhar_proof_picture -pancard_proof_picture -profile_picture');
     if (!partner) {
       return res.status(404).json({ error: 'Delivery partner account not found. Please register.' });
     }
@@ -178,6 +180,10 @@ router.post('/login', async (req, res) => {
       await partner.save();
     }
 
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const photoUrl = `${protocol}://${host}/api/deliveryperson/photo/${partner.DP_id}`;
+
     res.json({
       success: true,
       message: 'Login successful',
@@ -186,7 +192,8 @@ router.post('/login', async (req, res) => {
       mobile_number: partner.mobile_number,
       email: partner.email || '',
       address: partner.address || '',
-      profile_picture: partner.profile_picture ? Buffer.from(partner.profile_picture).toString('base64') : null
+      photo_url: photoUrl,
+      profile_picture: null
     });
   } catch (err) {
     console.error('Partner login error:', err);
@@ -247,6 +254,9 @@ router.put('/update', upload.single('profile_picture'), async (req, res) => {
 
     await partner.save();
 
+    partnerPhotoCache.delete(partner.DP_id);
+    partnerPhotoCache.delete(partner.mobile_number);
+
     res.json({
       success: true,
       message: 'Profile updated successfully',
@@ -269,6 +279,16 @@ router.get('/photo/:identifier', async (req, res) => {
     const id = req.params.identifier.toString().trim();
     if (!id || id === 'missing-kyp') return res.status(400).send('Invalid identifier');
 
+    if (partnerPhotoCache.has(id)) {
+      const cached = partnerPhotoCache.get(id);
+      res.set({
+        'Content-Type': 'image/jpeg',
+        'Content-Length': cached.length,
+        'Cache-Control': 'public, max-age=86400'
+      });
+      return res.end(cached);
+    }
+
     const numPart = id.replace(/^dp_?/i, '');
     const dpIdRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
     let partner = await DeliveryPerson.findOne({
@@ -279,24 +299,39 @@ router.get('/photo/:identifier', async (req, res) => {
         { mobile_number: id },
         { email: id.toLowerCase() }
       ]
-    }).select('profile_picture').lean();
+    }).select('profile_picture DP_id mobile_number').lean();
 
     if (!partner || !partner.profile_picture) {
-      partner = await DeliveryPerson.findOne({ profile_picture: { $ne: null } }).select('profile_picture').lean();
+      partner = await DeliveryPerson.findOne({ profile_picture: { $ne: null } }).select('profile_picture DP_id mobile_number').lean();
     }
 
     if (!partner || !partner.profile_picture) {
       return res.status(404).send('Photo not found');
     }
 
-    const buffer = Buffer.isBuffer(partner.profile_picture)
-      ? partner.profile_picture
-      : Buffer.from(partner.profile_picture);
+    let buffer = null;
+    if (Buffer.isBuffer(partner.profile_picture)) {
+      buffer = partner.profile_picture;
+    } else if (partner.profile_picture && partner.profile_picture.buffer) {
+      buffer = Buffer.isBuffer(partner.profile_picture.buffer)
+        ? partner.profile_picture.buffer
+        : Buffer.from(partner.profile_picture.buffer);
+    } else if (partner.profile_picture) {
+      buffer = Buffer.from(partner.profile_picture);
+    }
+
+    if (!buffer || buffer.length === 0) {
+      return res.status(404).send('Photo not found');
+    }
+
+    partnerPhotoCache.set(id, buffer);
+    if (partner.DP_id) partnerPhotoCache.set(partner.DP_id, buffer);
+    if (partner.mobile_number) partnerPhotoCache.set(partner.mobile_number, buffer);
 
     res.set({
       'Content-Type': 'image/jpeg',
       'Content-Length': buffer.length,
-      'Cache-Control': 'public, max-age=3600'
+      'Cache-Control': 'public, max-age=86400'
     });
     return res.end(buffer);
   } catch (err) {
