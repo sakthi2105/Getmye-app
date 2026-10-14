@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'pay.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -97,99 +98,6 @@ class OrderStatusPageState extends State<OrderStatusPage> {
 
   void _onMapCreated(GoogleMapController controller) {
     _mapController = controller;
-  }
-
-  void _showCancelConfirmation(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("Cancel Order?", style: AppTypography.cardTitle),
-          content: const Text("Are you sure you want to cancel your ongoing delivery?"),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text("Keep Order", style: TextStyle(color: AppColors.textSecondary)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.danger,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-                _showCancellationReasons(context);
-              },
-              child: const Text("Yes, Cancel", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showCancellationReasons(BuildContext context) {
-    final reasons = [
-      'Placed by mistake',
-      'Delivery time is taking too long',
-      'Changed my mind / not hungry',
-      'Need to change delivery address',
-    ];
-    String selectedReason = reasons.first;
-
-    showDialog(
-      context: context,
-      builder: (BuildContext reasonContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Text("Reason for Cancellation", style: AppTypography.cardTitle),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: reasons.map((r) {
-                  return RadioListTile<String>(
-                    title: Text(r, style: const TextStyle(fontSize: 13)),
-                    value: r,
-                    groupValue: selectedReason,
-                    activeColor: AppColors.primary,
-                    contentPadding: EdgeInsets.zero,
-                    onChanged: (val) {
-                      if (val != null) setDialogState(() => selectedReason = val);
-                    },
-                  );
-                }).toList(),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(reasonContext).pop(),
-                  child: const Text("Close", style: TextStyle(color: AppColors.textSecondary)),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.danger,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  onPressed: () {
-                    Navigator.of(reasonContext).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text("Order cancelled: $selectedReason"),
-                        backgroundColor: AppColors.danger,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    Navigator.pop(context);
-                  },
-                  child: const Text("Submit", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
   }
 
   @override
@@ -427,15 +335,6 @@ class OrderStatusPageState extends State<OrderStatusPage> {
                           child: const Icon(Icons.phone_rounded, color: AppColors.primaryDark, size: 18),
                         ),
                       ),
-                      // Cancel Button
-                      TextButton(
-                        onPressed: () => _showCancelConfirmation(context),
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.danger,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
-                        child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                      ),
                     ],
                   ),
                 ],
@@ -444,6 +343,18 @@ class OrderStatusPageState extends State<OrderStatusPage> {
           ),
         ],
       ),
+    floatingActionButton: FloatingActionButton.extended(
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const PaymentPage()),
+        );
+      },
+      label: const Text('Pay Now'),
+      icon: const Icon(Icons.payment_rounded),
+      backgroundColor: const Color(0xFF0F766E),
+    ),
+    floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 

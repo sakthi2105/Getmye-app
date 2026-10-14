@@ -1,35 +1,71 @@
 package com.example.flutter_application_1
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.os.Bundle
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.getmye.alarm"
-    private var mediaPlayer: MediaPlayer? = null
-    private var vibrator: Vibrator? = null
-    private var isAlarmRunning = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableLockScreenAndTurnScreenOn()
+    }
+
+    private fun enableLockScreenAndTurnScreenOn() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "startOrderService" -> {
+                    val baseUrl = call.argument<String>("baseUrl") ?: "http://10.0.2.2:5000"
+                    val partnerId = call.argument<String>("partnerId") ?: "DP001"
+                    DeliveryOrderForegroundService.startService(applicationContext, baseUrl, partnerId)
+                    result.success(true)
+                }
+                "stopOrderService" -> {
+                    DeliveryOrderForegroundService.stopService(applicationContext)
+                    result.success(true)
+                }
                 "startAlarm" -> {
-                    startAlarm()
+                    val orderId = call.argument<String>("orderId") ?: "NEW"
+                    val item = call.argument<String>("item") ?: ""
+                    val custName = call.argument<String>("customerName") ?: ""
+                    val address = call.argument<String>("address") ?: ""
+                    val budget = call.argument<Double>("budget") ?: 0.0
+                    DeliveryOrderForegroundService.startAlarm(applicationContext, orderId, item, custName, address, budget)
                     result.success(true)
                 }
                 "stopAlarm" -> {
-                    stopAlarm()
+                    DeliveryOrderForegroundService.stopAlarm(applicationContext)
+                    result.success(true)
+                }
+                "silenceOrder" -> {
+                    val orderId = call.argument<String>("orderId") ?: ""
+                    DeliveryOrderForegroundService.silenceOrder(applicationContext, orderId)
+                    result.success(true)
+                }
+                "playSuccessSound" -> {
+                    playPaymentSuccessSound()
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -37,125 +73,39 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun startAlarm() {
-        if (isAlarmRunning && mediaPlayer?.isPlaying == true) return
-        isAlarmRunning = true
-
+    private fun playPaymentSuccessSound() {
         try {
-            var playerStarted = false
+            val resId = resources.getIdentifier("payment_success", "raw", packageName)
+            if (resId != 0) {
+                val mp = android.media.MediaPlayer.create(applicationContext, resId)
+                mp?.apply {
+                    setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                            .build()
+                    )
+                    setOnCompletionListener { it.release() }
+                    start()
+                } ?: playFallbackTone()
+            } else {
+                playFallbackTone()
+            }
+        } catch (e: Exception) {
+            playFallbackTone()
+        }
+    }
+
+    private fun playFallbackTone() {
+        try {
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 350)
+        } catch (_: Exception) {
             try {
-                val resId = resources.getIdentifier("order_alarm", "raw", packageName)
-                if (resId != 0) {
-                    val afd = resources.openRawResourceFd(resId)
-                    if (afd != null) {
-                        mediaPlayer?.release()
-                        mediaPlayer = MediaPlayer().apply {
-                            setAudioAttributes(
-                                AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_ALARM)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                    .build()
-                            )
-                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                            afd.close()
-                            isLooping = true
-                            setVolume(1.0f, 1.0f)
-                            setOnCompletionListener { mp ->
-                                if (isAlarmRunning) {
-                                    try {
-                                        mp.seekTo(0)
-                                        mp.start()
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                }
-                            }
-                            prepare()
-                            start()
-                        }
-                        playerStarted = true
-                    }
-                }
-            } catch (rawEx: Exception) {
-                rawEx.printStackTrace()
-            }
-
-            if (!playerStarted) {
-                var alertUri: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                if (alertUri == null) {
-                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                }
-                if (alertUri == null) {
-                    alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                }
-
-                if (alertUri != null) {
-                    mediaPlayer?.release()
-                    mediaPlayer = MediaPlayer().apply {
-                        setDataSource(applicationContext, alertUri)
-                        setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_ALARM)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build()
-                        )
-                        isLooping = true
-                        setVolume(1.0f, 1.0f)
-                        setOnCompletionListener { mp ->
-                            if (isAlarmRunning) {
-                                try {
-                                    mp.seekTo(0)
-                                    mp.start()
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            }
-                        }
-                        prepare()
-                        start()
-                    }
-                }
-            }
-
-            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vibratorManager.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-
-            val pattern = longArrayOf(0, 800, 400, 800, 400)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(pattern, 0)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+                val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                val r = android.media.RingtoneManager.getRingtone(applicationContext, uri)
+                r.play()
+            } catch (_: Exception) {}
         }
-    }
-
-    private fun stopAlarm() {
-        isAlarmRunning = false
-        try {
-            mediaPlayer?.let {
-                if (it.isPlaying) {
-                    it.stop()
-                }
-                it.release()
-            }
-            mediaPlayer = null
-            vibrator?.cancel()
-            vibrator = null
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    override fun onDestroy() {
-        stopAlarm()
-        super.onDestroy()
     }
 }

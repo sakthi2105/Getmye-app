@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api_config.dart';
 import 'delivery_bill_flow.dart';
+import 'services/alarm_service.dart';
+import 'services/app_notification_service.dart';
 import 'services/order_chat_sheet.dart';
 import 'services/route_service.dart';
 import 'services/upi_payment_service.dart';
@@ -18,10 +20,17 @@ import 'ppp.dart';
 import 'theme/app_theme.dart';
 
 class PaymentPage extends StatefulWidget {
-  const PaymentPage({super.key});
+  final bool autoOpenCashfree;
+  final double? autoAmount;
+
+  const PaymentPage({
+    super.key,
+    this.autoOpenCashfree = false,
+    this.autoAmount,
+  });
 
   @override
-  _PaymentPageState createState() => _PaymentPageState();
+  State<PaymentPage> createState() => _PaymentPageState();
 }
 
 class _PaymentPageState extends State<PaymentPage> {
@@ -94,16 +103,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
   double get totalAmount => itemTotal + deliveryEarnings + tipAmount;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadInitialPrefs();
-    _pollFromBackend();
-    // Poll real backend MongoDB API every 2.5 seconds for smooth performance without battery/thread lag
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
-      _pollFromBackend();
-    });
-  }
+
 
   @override
   void dispose() {
@@ -408,6 +408,80 @@ class _PaymentPageState extends State<PaymentPage> {
   }
 }
 
+  // Authentic Payment App Brand Logos
+  Widget _buildCashfreeLogo() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F766E), Color(0xFF115E59)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F766E).withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: RichText(
+          text: const TextSpan(
+            children: [
+              TextSpan(
+                text: "cash",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 10,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              TextSpan(
+                text: "free",
+                style: TextStyle(
+                  color: Color(0xFF2DD4BF),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 10,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCodLogo() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD97706).withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Center(
+        child: Icon(Icons.payments_rounded, color: Colors.white, size: 22),
+      ),
+    );
+  }
+
   void _showPaymentOptions() {
     final payAmount = totalAmount > 0 ? totalAmount : 195.0;
 
@@ -451,7 +525,7 @@ class _PaymentPageState extends State<PaymentPage> {
                         children: [
                           Text("Choose Payment Method", style: AppTypography.screenHeading),
                           SizedBox(height: 2),
-                          Text("Select any payment app on this device or COD", style: AppTypography.secondary),
+                          Text("Cashfree Online Gateway or Cash on Delivery", style: AppTypography.secondary),
                         ],
                       ),
                     ),
@@ -472,70 +546,72 @@ class _PaymentPageState extends State<PaymentPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 20),
 
-                // Primary Hero Button: Pay via Any UPI App (Opens Device's Native App Chooser)
+                // 1. Cashfree Payment Gateway Card
                 InkWell(
                   onTap: () {
                     Navigator.pop(ctx);
-                    _handleDirectOnlinePayment("Device UPI App", payAmount);
+                    _handleCashfreePayment(payAmount);
                   },
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(18),
                   child: Container(
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFF4F46E5), Color(0xFF6366F1)],
+                        colors: [Color(0xFF0F766E), Color(0xFF134E4A)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF4F46E5).withValues(alpha: 0.25),
-                          blurRadius: 10,
+                          color: const Color(0xFF0F766E).withValues(alpha: 0.28),
+                          blurRadius: 12,
                           offset: const Offset(0, 4),
                         ),
                       ],
                     ),
                     child: Row(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(Icons.apps_rounded, color: Colors.white, size: 24),
-                        ),
-                        const SizedBox(width: 12),
+                        _buildCashfreeLogo(),
+                        const SizedBox(width: 14),
                         const Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                "⚡ Pay via Any UPI App",
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      "Cashfree Payment Gateway",
+                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  SizedBox(width: 6),
+                                  Icon(Icons.verified_rounded, color: Color(0xFF2DD4BF), size: 16),
+                                ],
                               ),
-                              SizedBox(height: 2),
+                              SizedBox(height: 3),
                               Text(
-                                "Choose any installed payment app on this phone",
-                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                                "UPI (GPay, PhonePe, Paytm), Cards, NetBanking",
+                                style: TextStyle(color: Color(0xFFCCFBF1), fontSize: 12),
                               ),
                             ],
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: const Color(0xFF2DD4BF),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Text(
-                            "Choose App",
+                            "Pay Online",
                             style: TextStyle(
-                              color: Color(0xFF4F46E5),
-                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF134E4A),
+                              fontWeight: FontWeight.w900,
                               fontSize: 12,
                             ),
                           ),
@@ -546,123 +622,61 @@ class _PaymentPageState extends State<PaymentPage> {
                 ),
 
                 const SizedBox(height: 16),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    "POPULAR PAYMENT APPS ON THIS DEVICE",
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textSecondary,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
 
-                // Direct Apps List
-                _buildPaymentAppTile(
-                  title: "Google Pay (GPay)",
-                  subtitle: "Fast UPI payment via Google Pay",
-                  icon: Icons.account_balance_wallet_rounded,
-                  color: const Color(0xFF2563EB),
+                // 2. Cash on Delivery (COD) Card
+                InkWell(
                   onTap: () {
                     Navigator.pop(ctx);
-                    _handleDirectOnlinePayment("Google Pay", payAmount);
+                    _handleCodSelection();
                   },
-                ),
-                const Divider(height: 1, indent: 56),
-
-                _buildPaymentAppTile(
-                  title: "PhonePe UPI",
-                  subtitle: "Instant UPI payment via PhonePe",
-                  icon: Icons.phone_android_rounded,
-                  color: const Color(0xFF7C3AED),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _handleDirectOnlinePayment("PhonePe", payAmount);
-                  },
-                ),
-                const Divider(height: 1, indent: 56),
-
-                _buildPaymentAppTile(
-                  title: "Paytm UPI",
-                  subtitle: "Pay using Paytm Wallet / UPI",
-                  icon: Icons.account_balance_rounded,
-                  color: const Color(0xFF0284C7),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _handleDirectOnlinePayment("Paytm", payAmount);
-                  },
-                ),
-                const Divider(height: 1, indent: 56),
-
-                _buildPaymentAppTile(
-                  title: "Scan QR Code / Copy UPI ID",
-                  subtitle: "Scan QR with any app or copy VPA",
-                  icon: Icons.qr_code_2_rounded,
-                  color: const Color(0xFFEA580C),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showQrCodeDialog(payAmount);
-                  },
-                ),
-
-                const SizedBox(height: 16),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    "CASH AT DOORSTEP",
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textSecondary,
-                      letterSpacing: 0.8,
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7).withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.6), width: 1.2),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-
-                // Cash on Delivery (COD) Option
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7).withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                    leading: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD97706).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.payments_rounded, color: Color(0xFFB45309), size: 24),
+                    child: Row(
+                      children: [
+                        _buildCodLogo(),
+                        const SizedBox(width: 14),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Cash on Delivery (COD)",
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF92400E)),
+                              ),
+                              SizedBox(height: 3),
+                              Text(
+                                "Pay cash upon delivery • Generates verification OTP",
+                                style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD97706),
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFD97706).withValues(alpha: 0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            "Select COD",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+                          ),
+                        ),
+                      ],
                     ),
-                    title: const Text(
-                      "Cash on Delivery (COD)",
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF92400E)),
-                    ),
-                    subtitle: const Text(
-                      "Pay cash at delivery • Generates verification OTP",
-                      style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
-                    ),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD97706),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        "Select COD",
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11),
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _handleCodSelection();
-                    },
                   ),
                 ),
               ],
@@ -673,47 +687,254 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  Widget _buildPaymentAppTile({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      leading: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: color, size: 22),
-      ),
-      title: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-      trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: AppColors.textSecondary),
-      onTap: onTap,
-    );
-  }
-
+  // Direct online payment handler (fallback)
   Future<void> _handleDirectOnlinePayment(String appName, double amount) async {
-    // 1. Launch the payment app or Android system app chooser
     if (appName == "Google Pay") {
       await UpiPaymentService.openGooglePay(context, amount: amount, note: 'Order $orderId');
     } else if (appName == "PhonePe") {
       await UpiPaymentService.openPhonePe(context, amount: amount, note: 'Order $orderId');
     } else if (appName == "Paytm") {
       await UpiPaymentService.openPaytm(context, amount: amount, note: 'Order $orderId');
+    } else if (appName == "CRED") {
+      await UpiPaymentService.openCred(context, amount: amount, note: 'Order $orderId');
+    } else if (appName == "BHIM") {
+      await UpiPaymentService.openBhim(context, amount: amount, note: 'Order $orderId');
     } else {
       await UpiPaymentService.openAnyUpi(context, amount: amount, note: 'Order $orderId');
     }
 
     if (!mounted) return;
-
-    // 2. Show post-payment confirmation sheet to confirm and generate delivery OTP
     _showPaymentConfirmationDialog(appName, amount);
   }
+
+  // Cashfree payment gateway integration with redirect and status verification
+  Future<void> _handleCashfreePayment(double amount) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final userPhone = prefs.getString('user_phone') ?? '9999999999';
+    final userName = prefs.getString('user_name') ?? 'GetMye Customer';
+    final linkId = 'cf_${DateTime.now().millisecondsSinceEpoch}';
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
+
+    String? paymentLink;
+
+    try {
+      final orderRes = await http.post(
+        Uri.parse('${CashfreeConfig.baseUrl}/links'),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-client-id': CashfreeConfig.appId,
+          'x-client-secret': CashfreeConfig.secretKey,
+          'x-api-version': CashfreeConfig.apiVersion,
+        },
+        body: jsonEncode({
+          'link_id': linkId,
+          'link_amount': amount,
+          'link_currency': 'INR',
+          'link_purpose': 'Food Order #$orderId',
+          'customer_details': {
+            'customer_phone': userPhone.isNotEmpty ? userPhone : '9999999999',
+            'customer_name': userName.isNotEmpty ? userName : 'Customer',
+          },
+          'link_meta': {
+            'return_url': '${ApiConfig.baseUrl}/api/payment/cashfree-return?order_id=$orderId&link_id={link_id}',
+          },
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (mounted) Navigator.pop(context); // Dismiss loading dialog
+
+      if (orderRes.statusCode == 200) {
+        final orderData = jsonDecode(orderRes.body);
+        paymentLink = orderData['link_url'];
+      } else {
+        debugPrint('Cashfree link error: ${orderRes.body}');
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      debugPrint('Cashfree payment exception: $e');
+    }
+
+    if (paymentLink == null || paymentLink.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Failed to initialize Cashfree Gateway. Please check internet connection."),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Launch Cashfree in-app browser view so user stays inside the app
+    try {
+      await launchUrl(
+        Uri.parse(paymentLink),
+        mode: LaunchMode.inAppBrowserView,
+      );
+    } catch (_) {
+      await launchUrl(
+        Uri.parse(paymentLink),
+        mode: LaunchMode.externalApplication,
+      );
+    }
+
+    if (!mounted) return;
+
+    // Immediately verify status and redirect/update Order Tracking page
+    await _checkAndHandleCashfreeReturn(linkId, amount);
+  }
+
+  // Verifies Cashfree payment result and redirects / updates Order Tracking Page
+  Future<void> _checkAndHandleCashfreeReturn(String linkId, double amount) async {
+    // 1. Check MongoDB backend for updated order status (updated by /cashfree-return endpoint)
+    try {
+      final res = await http.get(ApiConfig.orderById(orderId)).timeout(const Duration(seconds: 3));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final order = data['order'];
+        if (order != null && (order['payment_status'] == 'paid' || order['payment_status'] == 'success')) {
+          final otp = (order['cod_otp'] ?? activeOtp)?.toString();
+          if (mounted) {
+            setState(() {
+              isOnlinePaid = true;
+              if (otp != null && otp.isNotEmpty) {
+                activeOtp = otp;
+              }
+              paymentMethod = 'Cashfree Gateway';
+            });
+            _showOnlinePaymentSuccessDialog(amount, activeOtp ?? '----');
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint("Error verifying order status from backend: $e");
+    }
+
+    // 2. Query Cashfree direct API for link status
+    try {
+      final cfRes = await http.get(
+        Uri.parse('${CashfreeConfig.baseUrl}/links/$linkId'),
+        headers: {
+          'x-client-id': CashfreeConfig.appId,
+          'x-client-secret': CashfreeConfig.secretKey,
+          'x-api-version': CashfreeConfig.apiVersion,
+        },
+      ).timeout(const Duration(seconds: 4));
+
+      if (cfRes.statusCode == 200) {
+        final cfData = jsonDecode(cfRes.body);
+        final status = cfData['link_status'];
+        final paidAmount = (cfData['link_amount_paid'] as num?)?.toDouble() ?? 0.0;
+        if (status == 'PAID' || paidAmount > 0) {
+          await _confirmOnlinePayment("Cashfree Gateway", amount);
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint("Error checking Cashfree link status: $e");
+    }
+
+    if (!mounted) return;
+
+    // 3. Fallback confirmation dialog if webhook/redirect hasn't triggered yet
+    _showPaymentConfirmationDialog("Cashfree Gateway", amount);
+  }
+
+  void _showOnlinePaymentSuccessDialog(double amount, String otp) {
+    // 🔔 Instant confirmation sound & vibration on customer device!
+    AlarmService.playPaymentSuccessSound();
+    AppNotificationService.showNotification(
+      id: 9977,
+      title: "✅ Payment Successful: ₹${amount.toStringAsFixed(0)}",
+      body: "Paid ₹${amount.toStringAsFixed(0)} via Cashfree Gateway. Share Delivery OTP $otp upon food arrival.",
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: Color(0xFFDCFCE7),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded, color: Color(0xFF15803D), size: 48),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              "Payment Successful!",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              "Paid ₹${amount.toStringAsFixed(0)} via Cashfree Gateway",
+              style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFECFDF5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFA7F3D0)),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    "YOUR DELIVERY OTP",
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF047857), letterSpacing: 0.5),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    otp,
+                    style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 8, color: Color(0xFF047857)),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    "Share with delivery partner upon food arrival",
+                    style: TextStyle(fontSize: 11, color: Color(0xFF059669)),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF047857),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("View Order Tracking", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
 
   void _showPaymentConfirmationDialog(String appName, double amount) {
     showModalBottomSheet(
@@ -865,6 +1086,14 @@ class _PaymentPageState extends State<PaymentPage> {
 
     if (!mounted) return;
 
+    // 🔔 Instant confirmation sound & vibration on customer device!
+    AlarmService.playPaymentSuccessSound();
+    AppNotificationService.showNotification(
+      id: 9977,
+      title: "✅ Payment Received: ₹${amount.toStringAsFixed(0)}",
+      body: "Paid ₹${amount.toStringAsFixed(0)} via $appName. Share Delivery OTP $onlineOtp upon food arrival.",
+    );
+
     // Show success dialog with delivery OTP
     showDialog(
       context: context,
@@ -998,99 +1227,7 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  void _showQrCodeDialog(double amount) {
-    final qrUrl = UpiPaymentService.getQrCodeUrl(amount: amount, note: 'Order $orderId');
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.qr_code_2_rounded, color: Color(0xFFEA580C), size: 26),
-            SizedBox(width: 8),
-            Text("Scan to Pay", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                qrUrl,
-                width: 200,
-                height: 200,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  width: 200,
-                  height: 200,
-                  color: Colors.grey[200],
-                  child: const Center(child: Text("Could not load QR")),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              "Pay ₹${amount.toStringAsFixed(0)}",
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: UpiPaymentService.defaultVpa));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('UPI ID copied to clipboard!'),
-                    backgroundColor: AppColors.primary,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        UpiPaymentService.defaultVpa,
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.copy_rounded, size: 14, color: AppColors.primary),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Close"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF047857),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              _confirmOnlinePayment("UPI QR Code", amount);
-            },
-            child: const Text("I Have Paid"),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   void _handleBackNavigation() {
     if (Navigator.canPop(context)) {
@@ -1103,6 +1240,25 @@ class _PaymentPageState extends State<PaymentPage> {
       );
     }
   }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialPrefs();
+    _pollFromBackend();
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      _pollFromBackend();
+    });
+    // Auto open Cashfree if requested
+    if (widget.autoOpenCashfree) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final amount = widget.autoAmount ?? totalAmount;
+        _handleCashfreePayment(amount);
+      });
+    }
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -1177,6 +1333,27 @@ class _PaymentPageState extends State<PaymentPage> {
                       else
                         _buildBillDetailsCard(),
 
+                      const SizedBox(height: 16),
+
+                      // Cancel Order button for customer
+                      SizedBox(
+                        width: double.infinity,
+                        height: 46,
+                        child: OutlinedButton.icon(
+                          onPressed: _cancelOrderFromCustomer,
+                          icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.danger),
+                          label: const Text(
+                            "Cancel Order",
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.danger),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.2),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            backgroundColor: const Color(0xFFFEF2F2),
+                          ),
+                        ),
+                      ),
+
                       const SizedBox(height: 100),
                     ],
                   ),
@@ -1188,6 +1365,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
   // Customer cancels active order
   Future<void> _cancelOrderFromCustomer() async {
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1332,7 +1510,7 @@ class _PaymentPageState extends State<PaymentPage> {
         : selectedReason;
 
     try {
-      await http.post(
+      final res = await http.post(
         ApiConfig.orderCancel,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -1341,6 +1519,18 @@ class _PaymentPageState extends State<PaymentPage> {
           'cancelled_by': 'customer',
         }),
       );
+      if (res.statusCode == 400) {
+        final data = jsonDecode(res.body);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(data['error'] ?? 'Order cannot be cancelled once accepted.'),
+              backgroundColor: AppColors.danger,
+            ),
+          );
+        }
+        return;
+      }
     } catch (_) {}
 
     final prefs = await SharedPreferences.getInstance();
@@ -2152,12 +2342,16 @@ class _PaymentPageState extends State<PaymentPage> {
                   children: [
                     ...List.generate(
                       5,
-                      (_) => const Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 15),
+                      (_) => const Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 14),
                     ),
                     const SizedBox(width: 4),
-                    const Text(
-                      "4.9 • Fast & Verified Delivery Partner",
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                    const Flexible(
+                      child: Text(
+                        "4.9 • Verified Partner",
+                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
@@ -2681,7 +2875,6 @@ class _PaymentPageState extends State<PaymentPage> {
   Widget _buildPayBottomBar() {
     final payAmount = totalAmount > 0 ? totalAmount : 195.0;
     final isPaid = isOnlinePaid;
-    final isCod = (activeOtp != null && activeOtp!.isNotEmpty && !isPaid);
 
     return SafeArea(
       top: false,
@@ -2701,9 +2894,10 @@ class _PaymentPageState extends State<PaymentPage> {
         child: ElevatedButton(
           onPressed: _showPaymentOptions,
           style: ElevatedButton.styleFrom(
-            backgroundColor: isPaid
-                ? const Color(0xFF047857)
-                : (isCod ? const Color(0xFFB45309) : AppColors.primary),
+            backgroundColor: isPaid ? const Color(0xFF047857) : AppColors.primary,
+            foregroundColor: Colors.white,
+            elevation: 3,
+            shadowColor: (isPaid ? const Color(0xFF047857) : AppColors.primary).withValues(alpha: 0.35),
             padding: const EdgeInsets.symmetric(vertical: 16),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
@@ -2711,21 +2905,21 @@ class _PaymentPageState extends State<PaymentPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                isPaid ? Icons.check_circle_rounded : (isCod ? Icons.vpn_key_rounded : Icons.payment_rounded),
+                isPaid ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
                 color: Colors.white,
                 size: 20,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Text(
                 isPaid
                     ? "Payment Done • View OTP"
-                    : (isCod ? "COD Selected • Change / Pay" : "Proceed to Pay"),
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                "•  ₹ ${payAmount.toStringAsFixed(0)}",
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white),
+                    : "Pay ₹ ${payAmount.toStringAsFixed(0)}",
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  letterSpacing: 0.3,
+                ),
               ),
             ],
           ),

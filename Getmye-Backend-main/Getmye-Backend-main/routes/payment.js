@@ -1,9 +1,16 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const Payment = require('../models/Payment');
 const Bill = require('../models/Bill');
 const Order = require('../models/Order');
 const { getNextSequence } = require('../models/Counter');
+
+// Cashfree Gateway Environment Credentials from .env
+const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || '';
+const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || '';
+const CASHFREE_API_VERSION = process.env.CASHFREE_API_VERSION || '2023-08-01';
+const CASHFREE_BASE_URL = process.env.CASHFREE_BASE_URL || 'https://sandbox.cashfree.com/pg';
 
 // POST /api/payment/create - Customer initiates payment (UPI / COD / etc.)
 router.post('/create', async (req, res) => {
@@ -89,6 +96,155 @@ router.post('/verify-cod', async (req, res) => {
   }
 });
 
+// GET /api/payment/cashfree-return - Handles Cashfree redirect after payment
+router.get('/cashfree-return', async (req, res) => {
+  try {
+    const order_id = req.query.order_id;
+    const link_id = req.query.link_id;
+
+    if (!order_id) {
+      return res.status(400).send('Missing order_id');
+    }
+
+    // Find the order
+    const order = await Order.findOne({ order_id });
+    let deliveryOtp = order?.cod_otp;
+    if (!deliveryOtp) {
+      deliveryOtp = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+
+    if (order) {
+      order.payment_status = 'paid';
+      order.payment_method = 'Cashfree Gateway';
+      order.cod_otp = deliveryOtp;
+      await order.save();
+    }
+
+    // Update Bill if exists
+    await Bill.findOneAndUpdate({ order_id }, { status: 'paid' });
+
+    // Record or update Payment
+    let payment = await Payment.findOne({ order_id }).sort({ created_at: -1 });
+    if (!payment) {
+      const paymentId = await getNextSequence('payment_id', 'PAY-', 4);
+      payment = new Payment({
+        payment_id: paymentId,
+        order_id,
+        user_id: order?.user_id || 'USER001',
+        amount: order?.grand_total || order?.total_amount || 195,
+        payment_method: 'Cashfree Gateway',
+        payment_status: 'success',
+        transaction_reference: link_id || `CF-${Date.now()}`,
+        cod_otp: deliveryOtp,
+        is_cod_verified: true,
+        paid_at: new Date()
+      });
+      await payment.save();
+    } else {
+      payment.payment_status = 'success';
+      payment.payment_method = 'Cashfree Gateway';
+      payment.is_cod_verified = true;
+      payment.paid_at = new Date();
+      if (!payment.cod_otp) payment.cod_otp = deliveryOtp;
+      await payment.save();
+    }
+
+    // Render HTML page that redirects to getmye app
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Payment Successful - GetMye</title>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #F8FAFC;
+            color: #1E293B;
+            padding: 20px;
+          }
+          .card {
+            background: white;
+            padding: 36px 24px;
+            border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            text-align: center;
+            max-width: 380px;
+            width: 100%;
+          }
+          .icon {
+            width: 72px;
+            height: 72px;
+            background: #DCFCE7;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 18px;
+            color: #16A34A;
+            font-size: 36px;
+            font-weight: bold;
+          }
+          h2 { margin: 0 0 8px; font-size: 22px; color: #0F172A; }
+          p { margin: 0 0 24px; color: #64748B; font-size: 14px; line-height: 1.5; }
+          .otp-badge {
+            background: #F0FDF4;
+            border: 1.5px dashed #86EFAC;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 24px;
+          }
+          .otp-title { font-size: 11px; font-weight: 800; color: #15803D; letter-spacing: 0.5px; }
+          .otp-val { font-size: 28px; font-weight: 900; color: #166534; letter-spacing: 4px; margin-top: 4px; }
+          .btn {
+            display: block;
+            width: 100%;
+            background: #0F766E;
+            color: white;
+            padding: 16px;
+            border-radius: 14px;
+            text-decoration: none;
+            font-weight: 800;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+          }
+          .btn:active { background: #115E59; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="icon">✓</div>
+          <h2>Payment Successful!</h2>
+          <p>Your payment via Cashfree was successful. Redirecting you back to your order tracking page...</p>
+          <div class="otp-badge">
+            <div class="otp-title">DELIVERY VERIFICATION OTP</div>
+            <div class="otp-val">${deliveryOtp}</div>
+          </div>
+          <a class="btn" href="getmye://payment/success?order_id=${encodeURIComponent(order_id)}">Back to Order Tracking</a>
+        </div>
+        <script>
+          setTimeout(function() {
+            window.location.href = "getmye://payment/success?order_id=" + encodeURIComponent("${order_id}");
+          }, 800);
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('Error in cashfree-return:', err);
+    res.status(500).send('Error processing payment return');
+  }
+});
+
 // GET /api/payment/:order_id - Get payment details for an order
 router.get('/:order_id', async (req, res) => {
   try {
@@ -97,6 +253,102 @@ router.get('/:order_id', async (req, res) => {
     res.json({ success: true, payment });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch payment' });
+  }
+});
+
+// GET /api/payment/success/:order_id - Return order and payment details after successful payment
+router.get('/success/:order_id', async (req, res) => {
+  try {
+    const order = await Order.findOne({ order_id: req.params.order_id }).lean();
+    const payment = await Payment.findOne({ order_id: req.params.order_id }).sort({ created_at: -1 }).lean();
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!payment) return res.status(404).json({ error: 'Payment not found' });
+    const response = {
+      success: true,
+      order,
+      payment,
+      payment_status: payment.payment_status,
+      message: payment.payment_status === 'success' ? 'Payment successful' : 'Payment pending'
+    };
+    res.json(response);
+  } catch (err) {
+    console.error('Error fetching payment success info:', err);
+    res.status(500).json({ error: 'Failed to fetch payment success info' });
+  }
+});
+
+// GET /api/payment/cashfree/config - Expose public Cashfree configuration
+router.get('/cashfree/config', (req, res) => {
+  res.json({
+    success: true,
+    app_id: CASHFREE_APP_ID,
+    api_version: CASHFREE_API_VERSION,
+    base_url: CASHFREE_BASE_URL
+  });
+});
+
+// POST /api/payment/cashfree/create-link - Create Cashfree payment link using server environment variables
+router.post('/cashfree/create-link', async (req, res) => {
+  try {
+    const { link_id, amount, order_id, customer_phone, customer_name, return_url } = req.body;
+    if (!link_id || !amount) {
+      return res.status(400).json({ error: 'link_id and amount are required' });
+    }
+
+    const payload = {
+      link_id: link_id,
+      link_amount: Number(amount),
+      link_currency: 'INR',
+      link_purpose: `Food Order #${order_id || 'GetMye'}`,
+      customer_details: {
+        customer_phone: customer_phone || '9999999999',
+        customer_name: customer_name || 'Customer'
+      },
+      link_meta: {
+        return_url: return_url || `${req.protocol}://${req.get('host')}/api/payment/cashfree-return?order_id=${order_id}&link_id={link_id}`
+      }
+    };
+
+    const response = await axios.post(`${CASHFREE_BASE_URL}/links`, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': CASHFREE_APP_ID,
+        'x-client-secret': CASHFREE_SECRET_KEY,
+        'x-api-version': CASHFREE_API_VERSION
+      },
+      timeout: 10000
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('Error creating Cashfree link:', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({
+      error: 'Failed to create Cashfree payment link',
+      details: err.response?.data || err.message
+    });
+  }
+});
+
+// GET /api/payment/cashfree/status/:linkId - Verify Cashfree link status using server environment credentials
+router.get('/cashfree/status/:linkId', async (req, res) => {
+  try {
+    const { linkId } = req.params;
+    const response = await axios.get(`${CASHFREE_BASE_URL}/links/${linkId}`, {
+      headers: {
+        'x-client-id': CASHFREE_APP_ID,
+        'x-client-secret': CASHFREE_SECRET_KEY,
+        'x-api-version': CASHFREE_API_VERSION
+      },
+      timeout: 8000
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('Error fetching Cashfree status:', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({
+      error: 'Failed to verify Cashfree link status',
+      details: err.response?.data || err.message
+    });
   }
 });
 

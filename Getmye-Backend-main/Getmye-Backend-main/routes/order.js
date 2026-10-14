@@ -47,6 +47,22 @@ router.get('/pending', async (req, res) => {
       status: 'pending',
       created_at: { $gte: recentThreshold }
     };
+    // Auto-cancel any stale/abandoned test orders (> 2 hours old in accepted/purchasing_food state)
+    const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await Order.updateMany(
+      {
+        status: { $in: ['accepted', 'purchasing_food'] },
+        created_at: { $lt: staleThreshold }
+      },
+      {
+        status: 'cancelled',
+        cancel_reason: 'Auto-cancelled: Stale/abandoned test order',
+        cancelled_at: new Date()
+      }
+    ).catch(() => {});
+
+    const cancelledThreshold = new Date(Date.now() - 2 * 60 * 1000);
+
     if (partnerId) {
       const numPart = partnerId.toString().replace(/^dp_?/i, '');
       const pRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
@@ -54,16 +70,36 @@ router.get('/pending', async (req, res) => {
         $or: [
           { status: 'pending', declined_by: { $ne: partnerId }, created_at: { $gte: recentThreshold } },
           { partner_id: { $in: [partnerId, pRegex] }, status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } },
-          { partner_id: { $in: [partnerId, pRegex] }, status: 'cancelled', cancelled_at: { $gte: new Date(Date.now() - 60 * 1000) } }
+          { partner_id: { $in: [partnerId, pRegex] }, status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } },
+          { status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } }
+        ]
+      };
+    } else {
+      query = {
+        $or: [
+          { status: 'pending', created_at: { $gte: recentThreshold } },
+          { status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } }
         ]
       };
     }
+
     const orders = await Order.find(query)
       .select('-partner_profile_picture -bill_image_url -messages')
       .sort({ created_at: -1 })
-      .limit(20)
+      .limit(25)
       .lean();
-    res.json({ success: true, count: orders.length, orders });
+
+    // Query recently cancelled orders explicitly to guarantee they are never missed
+    const cancelledOrders = await Order.find({
+      status: 'cancelled',
+      cancelled_at: { $gte: cancelledThreshold }
+    })
+      .select('order_id status cancel_reason cancelled_by cancelled_at')
+      .sort({ cancelled_at: -1 })
+      .limit(10)
+      .lean();
+
+    res.json({ success: true, count: orders.length, orders, cancelled_orders: cancelledOrders });
   } catch (err) {
     console.error('Error fetching pending orders:', err);
     res.status(500).json({ error: 'Failed to fetch pending orders' });
@@ -330,13 +366,21 @@ router.post('/verify-delivery-otp', async (req, res) => {
   }
 });
 
-// GET /api/order/user/:user_id - Get all orders for a customer (order history)
+// GET /api/order/user/:user_id - Get paginated orders for a customer (order history)
 router.get('/user/:user_id', async (req, res) => {
   try {
-    const orders = await Order.find({ user_id: req.params.user_id })
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    const query = { user_id: req.params.user_id };
+    const orders = await Order.find(query)
       .sort({ created_at: -1 })
-      .limit(50);
-    res.json({ success: true, count: orders.length, orders });
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    const total = await Order.countDocuments(query);
+    res.json({ success: true, page, limit, total, count: orders.length, orders });
   } catch (err) {
     console.error('Error fetching customer orders:', err);
     res.status(500).json({ error: 'Failed to fetch customer orders' });
@@ -354,6 +398,21 @@ router.post('/cancel', async (req, res) => {
     const defaultReason = cancelled_by === 'partner'
       ? 'Cancelled by delivery partner'
       : 'Cancelled by customer';
+
+    // Disallow delivery partner cancellation if order has already been accepted
+    if (cancelled_by === 'partner') {
+      const existing = await Order.findOne({ order_id });
+      if (existing) {
+        const acceptedStatuses = ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'delivered', 'completed'];
+        if (acceptedStatuses.includes(existing.status)) {
+          console.log(`⚠️ Cancellation rejected: Delivery partner cannot cancel accepted order ${order_id} (status: ${existing.status})`);
+          return res.status(400).json({
+            error: 'Delivery partner cannot cancel order after accepting it.',
+            status: existing.status
+          });
+        }
+      }
+    }
 
     const order = await Order.findOneAndUpdate(
       { order_id },
@@ -388,10 +447,15 @@ router.post('/cancel', async (req, res) => {
 });
 
 // GET /api/order/partner/:partner_id - Get all orders handled by delivery partner (delivery history)
+// GET /api/order/partner/:partner_id - Get all orders handled by delivery partner (delivery history) with pagination
 router.get('/partner/:partner_id', async (req, res) => {
   try {
     const partnerId = req.params.partner_id;
-    // Find all orders where partner_id is this partner, or if partnerId is 'all'
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
+    // Build query
     const query = partnerId === 'all'
       ? { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted'] } }
       : {
@@ -404,18 +468,28 @@ router.get('/partner/:partner_id', async (req, res) => {
 
     const orders = await Order.find(query)
       .sort({ delivered_at: -1, cancelled_at: -1, created_at: -1 })
-      .limit(50);
-    res.json({ success: true, count: orders.length, orders });
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Order.countDocuments(query);
+    res.json({ success: true, page, limit, total, count: orders.length, orders });
   } catch (err) {
     console.error('Error fetching partner orders:', err);
     res.status(500).json({ error: 'Failed to fetch partner orders' });
   }
 });
 
-// GET /api/order/:order_id - Get specific order (fast lightweight query with partner enrichment)
-router.get('/:order_id', async (req, res) => {
+// GET /api/order/:order_id & /api/order/details/:order_id - Get specific order (fast lightweight query with partner enrichment)
+const handleGetOrder = async (req, res) => {
   try {
-    const order = await Order.findOne({ order_id: req.params.order_id })
+    const rawId = (req.params.order_id || '').toString().trim();
+    const order = await Order.findOne({
+      $or: [
+        { order_id: rawId },
+        { order_id: rawId.toUpperCase() },
+        { order_id: new RegExp(`^${rawId}$`, 'i') }
+      ]
+    })
       .select('-bill_image_url')
       .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -424,16 +498,25 @@ router.get('/:order_id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch order' });
   }
-});
+};
+router.get('/details/:order_id', handleGetOrder);
+router.get('/:order_id', handleGetOrder);
 
-// POST /api/order/:order_id/message - Send chat message for an active order
-router.post('/:order_id/message', async (req, res) => {
+// POST /api/order/:order_id/message & /api/order/details/:order_id/message - Send chat message for an active order
+const handlePostOrderMessage = async (req, res) => {
   try {
     const { sender, sender_name, text, time } = req.body;
     if (!sender || !text) {
       return res.status(400).json({ error: 'sender and text are required' });
     }
-    const order = await Order.findOne({ order_id: req.params.order_id });
+    const rawId = (req.params.order_id || '').toString().trim();
+    const order = await Order.findOne({
+      $or: [
+        { order_id: rawId },
+        { order_id: rawId.toUpperCase() },
+        { order_id: new RegExp(`^${rawId}$`, 'i') }
+      ]
+    });
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
@@ -452,12 +535,21 @@ router.post('/:order_id/message', async (req, res) => {
     console.error('Error posting order message:', err);
     res.status(500).json({ error: 'Failed to post message' });
   }
-});
+};
+router.post('/details/:order_id/message', handlePostOrderMessage);
+router.post('/:order_id/message', handlePostOrderMessage);
 
-// GET /api/order/:order_id/messages - Get all messages for this order
-router.get('/:order_id/messages', async (req, res) => {
+// GET /api/order/:order_id/messages & /api/order/details/:order_id/messages - Get all messages for this order
+const handleGetOrderMessages = async (req, res) => {
   try {
-    const order = await Order.findOne({ order_id: req.params.order_id });
+    const rawId = (req.params.order_id || '').toString().trim();
+    const order = await Order.findOne({
+      $or: [
+        { order_id: rawId },
+        { order_id: rawId.toUpperCase() },
+        { order_id: new RegExp(`^${rawId}$`, 'i') }
+      ]
+    });
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
@@ -466,7 +558,9 @@ router.get('/:order_id/messages', async (req, res) => {
     console.error('Error fetching order messages:', err);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
-});
+};
+router.get('/details/:order_id/messages', handleGetOrderMessages);
+router.get('/:order_id/messages', handleGetOrderMessages);
 
 // GET /api/order/debug/list-all - Inspect all recent orders for diagnostics
 router.get('/debug/list-all', async (req, res) => {

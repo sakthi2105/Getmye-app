@@ -156,11 +156,13 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
             final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
             if (!_notifiedCancelledOrderIds.contains(oId)) {
               _notifiedCancelledOrderIds.add(oId);
+              AlarmService.silenceOrder(oId);
+              AlarmService.stopAlarm();
+              AppNotificationService.cancelNotification(999);
               AppNotificationService.showOrderCancelledNotification(
                 orderId: oId,
                 reason: cReason,
               );
-              AlarmService.stopAlarm();
             }
 
             // Save to today_completed_deliveries so it stays visible in Today Deliveries list
@@ -847,8 +849,11 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                         label: const Text("Accept", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
                                         onPressed: () async {
                                           AlarmService.silenceOrder(order.orderId);
+                                          AlarmService.stopAlarm();
+                                          AppNotificationService.cancelNotification(999);
                                           _declinedOrderIds.remove(order.orderId);
                                           _acceptedOrderIds.add(order.orderId);
+                                           _notifiedCancelledOrderIds.add(order.orderId);
                                           setState(() {
                                             order.status = "Accepted";
                                           });
@@ -940,6 +945,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
   Timer? _statusCheckTimer;
   bool _isCheckingStatus = false;
   int _lastSeenMsgCount = 0;
+  bool _isShowingCancelledDialog = false;
 
   @override
   void initState() {
@@ -993,6 +999,8 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
 
         if (orderData['status'] == 'cancelled') {
           _statusCheckTimer?.cancel();
+          if (_isShowingCancelledDialog) return;
+          _isShowingCancelledDialog = true;
           final reason = orderData['cancel_reason'] ?? 'Customer cancelled the order';
           AppNotificationService.showOrderCancelledNotification(
             orderId: _order.orderId,
@@ -1604,6 +1612,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   bool _isCheckingCancel = false;
   int _lastSeenMsgCount = 0;
   double _liveGrandTotal = 0.0;
+  bool _hasShownOnlinePaidAlert = false;
+  bool _isShowingCancelledDialog = false;
 
   @override
   void initState() {
@@ -1766,10 +1776,53 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
             });
           }
         }
+
+        // Real-time detection when customer pays online (Cashfree Gateway)
+        final pStatus = (orderData['payment_status'] ?? '').toString().toLowerCase();
+        if ((pStatus == 'paid' || pStatus == 'success') && !_hasShownOnlinePaidAlert) {
+          _hasShownOnlinePaidAlert = true;
+          final num? bGrand = orderData['grand_total'];
+          final double paidAmt = bGrand != null && bGrand > 0 ? bGrand.toDouble() : widget.totalAmount;
+          final String method = orderData['payment_method'] ?? 'Cashfree Gateway';
+
+          // 🔔 Play instant confirmation sound on delivery partner device
+          AlarmService.playPaymentSuccessSound();
+
+          // Heads-up notification for delivery partner
+          AppNotificationService.showNotification(
+            id: 8877,
+            title: "💰 Payment Received: ₹${paidAmt.toStringAsFixed(0)}",
+            body: "Customer successfully paid via $method! Delivery OTP will be provided upon arrival.",
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: Colors.white, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        "Payment Successful! Customer paid ₹${paidAmt.toStringAsFixed(0)} via $method.",
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: const Color(0xFF059669),
+                duration: const Duration(seconds: 5),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
         // Incoming chat messages are tracked globally and deduplicated via AppNotificationService
 
         if (orderData['status'] == 'cancelled') {
           _trackingTimer?.cancel();
+          if (_isShowingCancelledDialog) return;
+          _isShowingCancelledDialog = true;
           final reason = orderData['cancel_reason'] ?? 'Customer cancelled the order';
           AppNotificationService.showOrderCancelledNotification(
             orderId: widget.order.orderId,
@@ -2233,6 +2286,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
   double _liveFoodPrice = 0.0;
   double _liveTipAmount = 0.0;
   double _liveTotalAmount = 0.0;
+  bool _hasPlayedOnlineSound = false;
 
   @override
   void initState() {
@@ -2288,6 +2342,12 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
               _liveTipAmount = tip;
               _liveTotalAmount = total;
             });
+          }
+
+          final pStatus = (order['payment_status'] ?? '').toString().toLowerCase();
+          if ((pStatus == 'paid' || pStatus == 'success') && !_hasPlayedOnlineSound) {
+            _hasPlayedOnlineSound = true;
+            AlarmService.playPaymentSuccessSound();
           }
         }
       }
@@ -3361,6 +3421,18 @@ class _FullScreenPaymentSuccessScreenState extends State<FullScreenPaymentSucces
   @override
   void initState() {
     super.initState();
+    // 🔔 Trigger instant payment confirmation sound & vibration for both customer and delivery partner!
+    AlarmService.playPaymentSuccessSound();
+    AppNotificationService.showNotification(
+      id: 9988,
+      title: widget.isDeliveryPartner
+          ? "💰 Payment Received: ₹${widget.totalAmount.toStringAsFixed(0)}"
+          : "✅ Payment Successful: ₹${widget.totalAmount.toStringAsFixed(0)}",
+      body: widget.isDeliveryPartner
+          ? "Payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} verified and completed successfully!"
+          : "Your payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} was successful! Order complete 🎉",
+    );
+
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -3400,270 +3472,302 @@ class _FullScreenPaymentSuccessScreenState extends State<FullScreenPaymentSucces
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Spacer(),
-
-                // Animated White Circle with Vibrant Green Checkmark
-                ScaleTransition(
-                  scale: _scaleAnimation,
-                  child: Container(
-                    width: 110,
-                    height: 110,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.25),
-                          blurRadius: 28,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      size: 72,
-                      color: Color(0xFF059669),
-                    ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
                   ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Title: PAYMENT SUCCESSFUL & ORDER COMPLETE
-                FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: Column(
-                    children: [
-                      const Text(
-                        "Payment Successful!",
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: -0.5,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 10),
-
-                      // Order Complete Banner
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.22),
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.45), width: 1.5),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              "Order Complete 🎉",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 10),
-                      Text(
-                        widget.isDeliveryPartner
-                            ? "Delivery OTP verified! Payment and order completed successfully."
-                            : "Delivery OTP verified by delivery partner! Your order has been delivered.",
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white.withValues(alpha: 0.92),
-                          fontWeight: FontWeight.w500,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 28),
-
-                // Frosted Glassmorphic Payment Details Card
-                Container(
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.35),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.1),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        "₹${widget.totalAmount.toStringAsFixed(0)}",
-                        style: const TextStyle(
-                          fontSize: 38,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: -1,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.25),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          widget.paymentMethod,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ),
-                      if (widget.tipAmount != null && widget.tipAmount! > 0) ...[
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
                         const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.22),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
-                          ),
-                          child: Text(
-                            "Food Price: ₹${(widget.foodPrice ?? (widget.totalAmount - widget.tipAmount!)).toStringAsFixed(0)}  •  Tip: ₹${widget.tipAmount!.toStringAsFixed(0)}",
-                            style: const TextStyle(
+
+                        // Animated White Circle with Vibrant Green Checkmark
+                        ScaleTransition(
+                          scale: _scaleAnimation,
+                          child: Container(
+                            width: 86,
+                            height: 86,
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.2,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.22),
+                                  blurRadius: 24,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.check_rounded,
+                              size: 54,
+                              color: Color(0xFF059669),
                             ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 18),
-                      Divider(color: Colors.white.withValues(alpha: 0.25), height: 1),
-                      const SizedBox(height: 14),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text("Order ID", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
-                          Text(widget.orderId, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text("Status", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
-                          const Row(
+
+                        const SizedBox(height: 16),
+
+                        // Title: PAYMENT SUCCESSFUL & ORDER COMPLETE
+                        FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: Column(
                             children: [
-                              Icon(Icons.verified_rounded, color: Colors.white, size: 16),
-                              SizedBox(width: 4),
-                              Text("Verified & Completed", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                              const Text(
+                                "Payment Successful!",
+                                style: TextStyle(
+                                  fontSize: 27,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: -0.5,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 8),
+
+                              // Order Complete Banner
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.45), width: 1.5),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      "Order Complete 🎉",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 8),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                child: Text(
+                                  widget.isDeliveryPartner
+                                      ? "Delivery OTP verified! Payment and order completed successfully."
+                                      : "Delivery OTP verified by delivery partner! Your order has been delivered.",
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white.withValues(alpha: 0.92),
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.3,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             ],
                           ),
-                        ],
-                      ),
-                      if (widget.isDeliveryPartner && widget.earnedAmount != null) ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("Partner Payout", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
-                            Text("+₹${widget.earnedAmount!.toStringAsFixed(0)}", style: const TextStyle(color: Color(0xFFFEF08A), fontWeight: FontWeight.w900, fontSize: 15)),
-                          ],
                         ),
-                      ],
-                    ],
-                  ),
-                ),
 
-                const Spacer(),
+                        const SizedBox(height: 18),
 
-                // Click to Home Primary Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF047857),
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () async {
-                      final prefs = await SharedPreferences.getInstance();
-                      if (!widget.isDeliveryPartner) {
-                        await prefs.setBool('has_active_order', false);
-                        await prefs.remove('active_order_id');
-                        await prefs.setString('active_order_status', 'delivered');
-                        await prefs.remove('order_${widget.orderId}_chat_messages');
-                        await prefs.remove('active_cod_otp');
-                        await prefs.remove('is_online_paid');
-                        await prefs.remove('is_cod_selected');
-                      } else {
-                        await prefs.remove('order_${widget.orderId}_chat_messages');
-                        await prefs.remove('active_order_id');
-                      }
-
-                      if (!context.mounted) return;
-                      if (widget.isDeliveryPartner) {
-                        Navigator.pushAndRemoveUntil(
-                          context,
-                          MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
-                          (route) => false,
-                        );
-                      } else {
-                        Navigator.pushAndRemoveUntil(
-                          context,
-                          MaterialPageRoute(builder: (_) => const HomePage()),
-                          (route) => false,
-                        );
-                      }
-                    },
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.home_rounded, size: 22),
-                        SizedBox(width: 8),
-                        Text(
-                          "Click to Home",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.2,
+                        // Frosted Glassmorphic Payment Details Card
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35),
+                              width: 1.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 16,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                "₹${widget.totalAmount.toStringAsFixed(0)}",
+                                style: const TextStyle(
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: -1,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.25),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  widget.paymentMethod,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                              if (widget.tipAmount != null && widget.tipAmount! > 0) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.22),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                                  ),
+                                  child: Text(
+                                    "Food Price: ₹${(widget.foodPrice ?? (widget.totalAmount - widget.tipAmount!)).toStringAsFixed(0)}  •  Tip: ₹${widget.tipAmount!.toStringAsFixed(0)}",
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.2,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 14),
+                              Divider(color: Colors.white.withValues(alpha: 0.25), height: 1),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text("Order ID", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      widget.orderId,
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.end,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text("Status", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
+                                  const SizedBox(width: 8),
+                                  const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.verified_rounded, color: Colors.white, size: 16),
+                                      SizedBox(width: 4),
+                                      Text("Verified & Completed", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              if (widget.isDeliveryPartner && widget.earnedAmount != null) ...[
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text("Partner Payout", style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
+                                    const SizedBox(width: 8),
+                                    Text("+₹${widget.earnedAmount!.toStringAsFixed(0)}", style: const TextStyle(color: Color(0xFFFEF08A), fontWeight: FontWeight.w900, fontSize: 15)),
+                                  ],
+                                ),
+                              ],
+                            ],
                           ),
                         ),
+
+                        const SizedBox(height: 20),
+
+                        // Click to Home Primary Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: const Color(0xFF047857),
+                              elevation: 4,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            onPressed: () async {
+                              final prefs = await SharedPreferences.getInstance();
+                              if (!widget.isDeliveryPartner) {
+                                await prefs.setBool('has_active_order', false);
+                                await prefs.remove('active_order_id');
+                                await prefs.setString('active_order_status', 'delivered');
+                                await prefs.remove('order_${widget.orderId}_chat_messages');
+                                await prefs.remove('active_cod_otp');
+                                await prefs.remove('is_online_paid');
+                                await prefs.remove('is_cod_selected');
+                              } else {
+                                await prefs.remove('order_${widget.orderId}_chat_messages');
+                                await prefs.remove('active_order_id');
+                              }
+
+                              if (!context.mounted) return;
+                              if (widget.isDeliveryPartner) {
+                                Navigator.pushAndRemoveUntil(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+                                  (route) => false,
+                                );
+                              } else {
+                                Navigator.pushAndRemoveUntil(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const HomePage()),
+                                  (route) => false,
+                                );
+                              }
+                            },
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.home_rounded, size: 22),
+                                SizedBox(width: 8),
+                                Text(
+                                  "Click to Home",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),

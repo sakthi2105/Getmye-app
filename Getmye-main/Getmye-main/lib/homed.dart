@@ -56,7 +56,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   final Set<String> _knownOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
   bool _isFirstOrdersCheckDone = false;
+  final DateTime _screenStartTime = DateTime.now();
+  bool _isAcceptingOrder = false;
+  bool _isShowingCancellationDialog = false;
   bool _isShowingIncomingModal = false;
+  String? _currentIncomingModalOrderId;
   bool _isCheckingPendingOrders = false;
   bool _isUpdatingLocation = false;
   Position? _lastKnownPosition;
@@ -242,46 +246,101 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
+        final List cancelledOrders = data['cancelled_orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
         final partnerActiveId = prefs.getString('partner_active_order_id');
 
-        // 🚨 CANCELLATION DETECTOR: Alert delivery partner immediately with Reason if order cancelled
-        for (final o in orders) {
-          final oStatus = (o['status']?.toString() ?? '').toLowerCase();
-          final oId = o['order_id']?.toString() ?? '';
-          final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
-          if (oStatus == 'cancelled' && !_notifiedCancelledOrderIds.contains(oId)) {
-            _notifiedCancelledOrderIds.add(oId);
+        final allOrdersForCancel = [...cancelledOrders, ...orders];
 
-            // 1. Immediately stop and silence any ringing alarm
-            AlarmService.stopAlarm();
-            AlarmService.silenceOrder(oId);
-
-            // 2. High-priority local notification with the exact cancellation reason
-            AppNotificationService.showOrderCancelledNotification(
-              orderId: oId,
-              reason: cReason,
-            );
-
-            // 3. If incoming order modal is currently open on screen, dismiss it
-            if (_isShowingIncomingModal && mounted) {
-              Navigator.of(context, rootNavigator: true).pop();
-              _isShowingIncomingModal = false;
+        // 🛑 FIRST-TIME BOOT / RECENT APP ENTRY CHECK:
+        // Pre-populate all existing orders & cancellations so entering the app NEVER triggers
+        // old alarm sounds or unwanted "Order Cancelled" dialog popups!
+        final bool isWithinAppEntryGrace = DateTime.now().difference(_screenStartTime).inSeconds < 8;
+        if (!_isFirstOrdersCheckDone || isWithinAppEntryGrace) {
+          _isFirstOrdersCheckDone = true;
+          for (final o in allOrdersForCancel) {
+            final id = o['order_id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              _notifiedCancelledOrderIds.add(id);
+              _knownOrderIds.add(id);
+              AppNotificationService.registerOrderAsKnown(id);
             }
+          }
+          for (final o in orders) {
+            final id = o['order_id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              _knownOrderIds.add(id);
+              AppNotificationService.registerOrderAsKnown(id);
+            }
+          }
+        } else {
+          // 🚨 CANCELLATION DETECTOR: Alert delivery partner with dialog ONLY if customer cancels
+          // an order that is actively ringing on screen OR is the partner's active ongoing delivery!
+          for (final o in allOrdersForCancel) {
+            final oStatus = (o['status']?.toString() ?? '').toLowerCase();
+            final oId = o['order_id']?.toString() ?? '';
+            final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
 
-            // 4. If this order was partner's ongoing delivery, clear it immediately
-            if (activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == oId) {
-              if (mounted) {
-                setState(() {
-                  activeDeliveryOrder = null;
-                });
+            if (oStatus == 'cancelled' && !_notifiedCancelledOrderIds.contains(oId)) {
+              _notifiedCancelledOrderIds.add(oId);
+
+              // Do not trigger cancellation dialog if delivery partner is in the middle of accepting this order!
+              if (_isAcceptingOrder) continue;
+
+              final bool isCurrentlyRingingThisOrder = (AlarmService.isPlaying && AlarmService.currentAlarmOrderId == oId) ||
+                  (_isShowingIncomingModal && _currentIncomingModalOrderId == oId);
+              // Must be actively tracked in memory as ongoing delivery - do NOT rely on stale prefs
+              final bool isPartnerActiveOngoingDelivery = activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == oId;
+
+              // 1. Immediately silence and stop any ringing alarm
+              if (isCurrentlyRingingThisOrder) {
+                AlarmService.silenceOrder(oId);
+                AlarmService.stopAlarm();
+                AppNotificationService.cancelNotification(999);
               }
-              await prefs.remove('partner_active_order_id');
-            }
 
-            // 5. Show prominent cancellation notice dialog on partner screen
-            if (mounted) {
-              _showCancellationNoticeDialog(oId, cReason);
+              // 2. Dismiss incoming order modal if open on screen for this order
+              if (_isShowingIncomingModal && (_currentIncomingModalOrderId == oId || _currentIncomingModalOrderId == null)) {
+                if (mounted) {
+                  Navigator.of(context, rootNavigator: true).pop();
+                }
+                _isShowingIncomingModal = false;
+                _currentIncomingModalOrderId = null;
+              }
+
+              // 3. Clear active ongoing delivery if customer cancelled it
+              if (isPartnerActiveOngoingDelivery) {
+                if (mounted) {
+                  setState(() {
+                    activeDeliveryOrder = null;
+                  });
+                }
+                await prefs.remove('partner_active_order_id');
+              }
+
+              // 4. Show cancellation notice dialog & heads-up notification ONLY if partner was actively involved!
+              if (isCurrentlyRingingThisOrder || isPartnerActiveOngoingDelivery) {
+                AppNotificationService.showOrderCancelledNotification(
+                  orderId: oId,
+                  reason: cReason,
+                );
+                if (mounted) {
+                  _showCancellationNoticeDialog(oId, cReason);
+                }
+              }
+            }
+          }
+
+          // 🚨 Also: If alarm is currently ringing, but that order is no longer in pending list (cancelled by customer before accept)
+          if (AlarmService.isPlaying && AlarmService.currentAlarmOrderId != null) {
+            final ringingId = AlarmService.currentAlarmOrderId!;
+            final isStillPending = orders.any((o) =>
+                o['order_id']?.toString() == ringingId &&
+                (o['status']?.toString() ?? '').toLowerCase() == 'pending');
+            if (!isStillPending) {
+              AlarmService.silenceOrder(ringingId);
+              AlarmService.stopAlarm();
+              AppNotificationService.cancelNotification(999);
             }
           }
         }
@@ -334,6 +393,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           await prefs.remove('active_order_customer_address');
           await prefs.remove('active_order_item');
           await prefs.remove('active_order_budget');
+          await prefs.remove('active_order_bill_sent');
+          await prefs.remove('active_order_food_purchased');
+          await prefs.remove('active_order_partner_accepted');
+          await prefs.remove('active_order_restaurant');
+          await prefs.remove('active_order_grand_total');
         }
 
         // Only consider pending orders strictly unhandled
@@ -355,18 +419,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           });
         }
 
-        // 🛑 When delivery person first enters the app, index all existing orders so old/test orders never alarm!
-        if (!_isFirstOrdersCheckDone) {
-          _isFirstOrdersCheckDone = true;
-          for (final o in orders) {
-            final id = o['order_id']?.toString();
-            if (id != null && id.isNotEmpty) {
-              _knownOrderIds.add(id);
-              AppNotificationService.registerOrderAsKnown(id);
-            }
-          }
-          return;
-        }
+
 
         // 🚨 ONLY NEW ORDERS FROM CUSTOMER TRIGGER ALARM SOUND & POPUP MODAL!
         final newIncomingOrders = unhandledOrders.where((o) {
@@ -414,6 +467,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     _isShowingIncomingModal = true;
 
     final orderId = order['order_id']?.toString() ?? '';
+    _currentIncomingModalOrderId = orderId;
     final itemName = order['item_name']?.toString() ?? 'Food Order';
     final budget = order['budget']?.toString() ?? '150';
     final customerName = order['customer_name']?.toString() ?? 'Customer';
@@ -600,6 +654,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                         onPressed: () async {
                           AlarmService.silenceOrder(orderId);
                           AlarmService.stopAlarm();
+                          AppNotificationService.cancelNotification(999);
                           final prefs = await SharedPreferences.getInstance();
                           final declined = prefs.getStringList('partner_declined_order_ids') ?? [];
                           if (!declined.contains(orderId)) {
@@ -643,8 +698,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           elevation: 2,
                         ),
                         onPressed: () async {
+                          // 1. Immediately close modal and cancel ringing so it cannot be considered incoming
+                          if (modalCtx.mounted) Navigator.pop(modalCtx);
+                          _isShowingIncomingModal = false;
+                          _currentIncomingModalOrderId = null;
+                          _isAcceptingOrder = true;
+
                           AlarmService.silenceOrder(orderId);
                           AlarmService.stopAlarm();
+                          AppNotificationService.cancelNotification(999);
+                          _notifiedCancelledOrderIds.add(orderId);
+
                           final prefs = await SharedPreferences.getInstance();
                           String pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "";
                           if (pName.trim().isEmpty) {
@@ -654,6 +718,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           String pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? "";
                           final pPic = prefs.getString('d_profile_picture_base64');
 
+                          bool acceptSuccess = false;
                           try {
                             final acceptRes = await http.post(
                               ApiConfig.orderAccept,
@@ -667,6 +732,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                               }),
                             ).timeout(const Duration(seconds: 4));
                             if (acceptRes.statusCode == 200) {
+                              acceptSuccess = true;
                               final resData = jsonDecode(acceptRes.body);
                               if (resData['order'] != null) {
                                 final oObj = resData['order'];
@@ -680,9 +746,27 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                   pId = oObj['partner_id'].toString();
                                 }
                               }
+                            } else {
+                              acceptSuccess = false;
                             }
                           } catch (e) {
                             debugPrint("Error accepting order: $e");
+                            acceptSuccess = true;
+                          } finally {
+                            _isAcceptingOrder = false;
+                          }
+
+                          if (!acceptSuccess) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Order is no longer available or was already accepted."),
+                                  backgroundColor: Color(0xFFDC2626),
+                                ),
+                              );
+                            }
+                            _checkPendingOrders();
+                            return;
                           }
 
                           await prefs.setString('order_${orderId}_status', 'accepted');
@@ -724,8 +808,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             status: "Accepted",
                           );
 
-                          if (modalCtx.mounted) Navigator.pop(modalCtx);
-
                           if (mounted) {
                             Navigator.push(
                               context,
@@ -762,6 +844,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     );
 
     _isShowingIncomingModal = false;
+    _currentIncomingModalOrderId = null;
   }
 
   Future<void> _loadPartnerData() async {
@@ -815,6 +898,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         'budget': prefs.getString('active_order_budget') ?? '150',
         'status': savedOngoingStatus,
       };
+    }
+
+    // 🟢 Keep listening active in background foreground service so orders alert when app is outside or screen off
+    if (isOnline) {
+      final pId = dId.isNotEmpty ? dId : (prefs.getString('active_order_partner_id') ?? 'DP001');
+      AlarmService.startOrderListeningService(
+        baseUrl: ApiConfig.baseUrl,
+        partnerId: pId,
+      );
     }
 
     _checkPendingOrders();
@@ -1289,7 +1381,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
                         if (!val) {
                           AlarmService.stopAlarm();
+                          AlarmService.stopOrderListeningService();
                         } else {
+                          AlarmService.startOrderListeningService(
+                            baseUrl: ApiConfig.baseUrl,
+                            partnerId: pId,
+                          );
                           _checkPendingOrders();
                         }
                       },
@@ -1368,7 +1465,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-
                                     InkWell(
                                       onTap: () {
                                         if (activeDeliveryOrder != null) {
@@ -1752,6 +1848,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   }
 
   void _showCancellationNoticeDialog(String orderId, String reason) {
+    if (_isShowingCancellationDialog || !mounted) return;
+    _isShowingCancellationDialog = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1825,6 +1923,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
               onPressed: () {
+                _isShowingCancellationDialog = false;
                 Navigator.pop(ctx);
                 _loadPartnerData();
               },
@@ -1833,8 +1932,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           ),
         ],
       ),
-    );
+    ).then((_) {
+      _isShowingCancellationDialog = false;
+    });
   }
+
+
 
   DeliveryOrder _createDeliveryOrderFromMap(Map<String, dynamic> o) {
     final orderId = o['order_id']?.toString() ?? 'ORD-0001';

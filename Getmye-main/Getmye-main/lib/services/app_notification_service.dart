@@ -55,14 +55,21 @@ class AppNotificationService {
       );
       await androidPlugin?.createNotificationChannel(channel);
 
-      const AndroidNotificationChannel orderChannel = AndroidNotificationChannel(
-        'getmye_orders_emergency_channel_v3',
+      // Clean up previous channel IDs so Android updates sound and importance cleanly
+      try {
+        await androidPlugin?.deleteNotificationChannel('getmye_orders_emergency_channel_v3');
+        await androidPlugin?.deleteNotificationChannel('getmye_orders_emergency_channel_v2');
+      } catch (_) {}
+
+      final AndroidNotificationChannel orderChannel = AndroidNotificationChannel(
+        'getmye_order_alarm_high_v7',
         '🚨 New Order Alerts & Alarm',
         description: 'Loud alarm, vibration, and banner for incoming delivery orders',
         importance: Importance.max,
         playSound: true,
         enableVibration: true,
-        sound: RawResourceAndroidNotificationSound('order_alarm'),
+        vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
+        sound: const RawResourceAndroidNotificationSound('order_alarm'),
         audioAttributesUsage: AudioAttributesUsage.alarm,
       );
       await androidPlugin?.createNotificationChannel(orderChannel);
@@ -188,32 +195,35 @@ class AppNotificationService {
       }
       bodyBuffer.write("\n⚡ New order waiting! Tap to accept now.");
 
-      const AndroidNotificationDetails orderAlarmDetails = AndroidNotificationDetails(
-        'getmye_orders_emergency_channel_v3',
+      final AndroidNotificationDetails orderAlarmDetails = AndroidNotificationDetails(
+        'getmye_order_alarm_high_v7',
         '🚨 New Order Alerts & Alarm',
         channelDescription: 'Loud alarm, vibration, and banner for incoming delivery orders',
         importance: Importance.max,
         priority: Priority.max,
-        sound: RawResourceAndroidNotificationSound('order_alarm'),
+        sound: const RawResourceAndroidNotificationSound('order_alarm'),
         playSound: true,
         enableVibration: true,
+        vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
         fullScreenIntent: true,
+        ongoing: true,
+        autoCancel: false,
         category: AndroidNotificationCategory.alarm,
         visibility: NotificationVisibility.public,
         ticker: '🚨 NEW DELIVERY ORDER!',
         audioAttributesUsage: AudioAttributesUsage.alarm,
-        styleInformation: BigTextStyleInformation(''),
+        styleInformation: BigTextStyleInformation(bodyBuffer.toString()),
       );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
-        sound: 'order_alarm.wav',
+        sound: 'order_alarm.mp3',
         interruptionLevel: InterruptionLevel.timeSensitive,
       );
 
-      const NotificationDetails platformDetails = NotificationDetails(
+      final NotificationDetails platformDetails = NotificationDetails(
         android: orderAlarmDetails,
         iOS: iosDetails,
       );
@@ -415,8 +425,60 @@ class AppNotificationService {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
+        final List cancelledOrders = data['cancelled_orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
         final partnerActiveId = prefs.getString('partner_active_order_id');
+
+        // 🚨 1. CANCELLATION DETECTOR: Stop alarm immediately if ringing order is cancelled by customer!
+        final ringingId = AlarmService.currentAlarmOrderId;
+        if (AlarmService.isPlaying && ringingId != null && ringingId.isNotEmpty) {
+          bool isOrderCancelled = false;
+          String cancelReason = 'Order was cancelled by customer';
+
+          // Check in cancelled_orders list
+          for (final co in cancelledOrders) {
+            if (co is Map && co['order_id']?.toString() == ringingId) {
+              isOrderCancelled = true;
+              final r = co['cancel_reason']?.toString();
+              if (r != null && r.isNotEmpty) cancelReason = r;
+              break;
+            }
+          }
+
+          // Check in orders list
+          if (!isOrderCancelled) {
+            for (final o in orders) {
+              if (o is Map && o['order_id']?.toString() == ringingId) {
+                if ((o['status']?.toString() ?? '').toLowerCase() == 'cancelled') {
+                  isOrderCancelled = true;
+                  final r = o['cancel_reason']?.toString();
+                  if (r != null && r.isNotEmpty) cancelReason = r;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Also check: is it no longer pending in orders? (Cancelled before acceptance)
+          if (!isOrderCancelled) {
+            final stillPending = orders.any((o) =>
+                o is Map &&
+                o['order_id']?.toString() == ringingId &&
+                (o['status']?.toString() ?? '').toLowerCase() == 'pending');
+            if (!stillPending) {
+              isOrderCancelled = true;
+            }
+          }
+
+          if (isOrderCancelled) {
+            AlarmService.stopAlarm();
+            AlarmService.silenceOrder(ringingId);
+            await showOrderCancelledNotification(
+              orderId: ringingId,
+              reason: cancelReason,
+            );
+          }
+        }
 
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';

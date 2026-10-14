@@ -8,6 +8,7 @@ class AlarmService {
   static String? _currentAlarmOrderId;
 
   static bool get isPlaying => _isPlaying;
+  static String? get currentAlarmOrderId => _currentAlarmOrderId;
 
   // Track order IDs that have been silenced/accepted/declined so they never alarm again
   static final Set<String> _silencedOrderIds = {};
@@ -15,9 +16,39 @@ class AlarmService {
   // Flag to know if initial check on app boot/login has occurred (prevents ringing on login)
   static bool hasCompletedInitialCheck = false;
 
+  /// Start the background foreground service for delivery partner when online.
+  /// Keeps process alive and listening even when user minimizes app or locks screen.
+  static Future<void> startOrderListeningService({
+    required String baseUrl,
+    required String partnerId,
+  }) async {
+    try {
+      await _channel.invokeMethod('startOrderService', {
+        'baseUrl': baseUrl,
+        'partnerId': partnerId,
+      });
+      debugPrint("🟢 Started background order listening foreground service for partner: $partnerId");
+    } catch (e) {
+      debugPrint("⚠️ startOrderListeningService error: $e");
+    }
+  }
+
+  /// Stop the background foreground service when delivery partner goes offline
+  static Future<void> stopOrderListeningService() async {
+    try {
+      await _channel.invokeMethod('stopOrderService');
+      debugPrint("🔴 Stopped background order listening service");
+    } catch (e) {
+      debugPrint("⚠️ stopOrderListeningService error: $e");
+    }
+  }
+
   static void silenceOrder(String? orderId) {
     if (orderId != null && orderId.isNotEmpty) {
       _silencedOrderIds.add(orderId);
+      try {
+        _channel.invokeMethod('silenceOrder', {'orderId': orderId});
+      } catch (_) {}
     }
     stopAlarm();
   }
@@ -25,6 +56,20 @@ class AlarmService {
   static bool isOrderSilenced(String? orderId) {
     if (orderId == null || orderId.isEmpty) return false;
     return _silencedOrderIds.contains(orderId);
+  }
+
+  /// Play instant pleasant payment confirmation sound & vibration for both customer and delivery partner
+  static Future<void> playPaymentSuccessSound() async {
+    try {
+      await _channel.invokeMethod('playSuccessSound');
+    } catch (e) {
+      debugPrint("⚠️ playSuccessSound native channel error: $e");
+    }
+
+    try {
+      SystemSound.play(SystemSoundType.alert);
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
   }
 
   /// Start playing the loud repeating alarm sound (uses Android USAGE_ALARM + Vibration + Local Notification)
@@ -51,7 +96,13 @@ class AlarmService {
     if (!_isPlaying || isNewOrder) {
       _isPlaying = true;
       try {
-        await _channel.invokeMethod('startAlarm');
+        await _channel.invokeMethod('startAlarm', {
+          'orderId': orderId ?? 'NEW',
+          'item': item ?? '',
+          'customerName': customerName ?? '',
+          'address': address ?? '',
+          'budget': budget ?? 0.0,
+        });
       } catch (e) {
         debugPrint("⚠️ Native startAlarm channel error: $e");
       }
@@ -83,4 +134,3 @@ class AlarmService {
     } catch (_) {}
   }
 }
-

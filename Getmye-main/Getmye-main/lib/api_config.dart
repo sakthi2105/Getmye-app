@@ -1,4 +1,23 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+class CashfreeConfig {
+  static String get appId =>
+      dotenv.env['CASHFREE_APP_ID'] ?? '';
+  static String get secretKey =>
+      dotenv.env['CASHFREE_SECRET_KEY'] ?? '';
+  static String get apiVersion =>
+      dotenv.env['CASHFREE_API_VERSION'] ?? '2023-08-01';
+  static String get baseUrl =>
+      dotenv.env['CASHFREE_BASE_URL'] ?? 'https://sandbox.cashfree.com/pg';
+}
+
 class ApiConfig {
+  // Cashfree Environment Credentials
+  static String get cashfreeAppId => CashfreeConfig.appId;
+  static String get cashfreeSecretKey => CashfreeConfig.secretKey;
+  static String get cashfreeApiVersion => CashfreeConfig.apiVersion;
+  static String get cashfreeBaseUrl => CashfreeConfig.baseUrl;
+
   // Base server URL (Wi-Fi LAN IP reachable by both physical test devices)
   static const String baseUrl = 'http://192.168.29.196:5000';
 

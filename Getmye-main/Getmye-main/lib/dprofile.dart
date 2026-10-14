@@ -9,6 +9,7 @@ import 'widgets/delivery_bottom_nav_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'dlogin.dart';
+import 'services/alarm_service.dart';
 
 // ignore: camel_case_types
 class dEditProfilePage extends StatefulWidget {
@@ -338,6 +339,8 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
               ),
               onPressed: () async {
                 Navigator.pop(ctx);
+                AlarmService.stopAlarm();
+                AlarmService.stopOrderListeningService();
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.setBool('is_logged_in', false);
                 await prefs.remove('account_type');

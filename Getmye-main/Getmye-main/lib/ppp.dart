@@ -14,6 +14,7 @@ import 'package:flutter_application_1/dhome.dart';
 import 'package:flutter_application_1/options.dart';
 import 'package:flutter_application_1/pay.dart';
 import 'package:flutter_application_1/profile.dart';
+import 'delivery_bill_flow.dart';
 import 'address.dart';
 import 'api_config.dart';
 import 'services/order_chat_sheet.dart';
@@ -387,6 +388,9 @@ class _HomePageState extends State<HomePage> {
           showDeliveryDetails = true;
           hasRiderAccepted = isAccepted;
           isSearchingRider = !isAccepted;
+          if (isAccepted) {
+            showCancelButtonContainer = false;
+          }
           assignedPartnerName = isAccepted ? pName : '';
           assignedPartnerPhone = isAccepted ? pPhone : '';
           assignedPartnerId = isAccepted ? pId : '';
@@ -2198,6 +2202,7 @@ class _HomePageState extends State<HomePage> {
                     showDeliveryDetails = true;
                     isSearchingRider = false;
                     hasRiderAccepted = true;
+                    showCancelButtonContainer = false;
                     assignedPartnerName = pName;
                     assignedPartnerPhone = pPhone;
                     if (pId.isNotEmpty) assignedPartnerId = pId;
@@ -2224,6 +2229,26 @@ class _HomePageState extends State<HomePage> {
                   showDeliveryDetails = false;
                   showCancelButtonContainer = false;
                 });
+
+                final num? bGrand = order['grand_total'] ?? order['budget'];
+                final double finalTot = (bGrand != null && bGrand > 0) ? bGrand.toDouble() : 0.0;
+                final num? bFood = order['item_total'];
+                final num? bTip = order['tip_amount'];
+                final String payMethod = order['payment_method']?.toString() ?? 'Payment Successful';
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FullScreenPaymentSuccessScreen(
+                      orderId: orderId,
+                      totalAmount: finalTot,
+                      foodPrice: bFood?.toDouble(),
+                      tipAmount: bTip?.toDouble(),
+                      paymentMethod: payMethod,
+                      isDeliveryPartner: false,
+                    ),
+                  ),
+                );
               }
             }
           }
@@ -2345,6 +2370,8 @@ class _HomePageState extends State<HomePage> {
                           ? assignedPartnerName
                           : 'Delivery Partner',
                       style: AppTypography.cardTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 3),
                     Row(
@@ -2364,36 +2391,13 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    // Live distance and ETA pill
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDCFCE7),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF86EFAC)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.directions_bike_rounded, size: 12, color: Color(0xFF15803D)),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatRiderDistance(),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF15803D),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                     if (assignedPartnerPhone.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
                         assignedPartnerPhone,
                         style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ],
@@ -2431,7 +2435,66 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
+
+          // Live ETA and Delivery Status Banner (Full width, responsive, never overflows)
+          Builder(
+            builder: (context) {
+              final statusText = _formatRiderDistance();
+              final isArrived = statusText.toLowerCase().contains("arrived");
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isArrived ? const Color(0xFFDCFCE7) : const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isArrived ? const Color(0xFF86EFAC) : const Color(0xFFBBF7D0),
+                    width: 1.2,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isArrived ? Icons.home_rounded : Icons.directions_bike_rounded,
+                      size: 18,
+                      color: const Color(0xFF15803D),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        statusText,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF15803D),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF15803D),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        isArrived ? "ARRIVED" : "ON THE WAY",
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
 
           // Live Google Maps GPS Tracking
           Container(
@@ -2485,33 +2548,41 @@ class _HomePageState extends State<HomePage> {
                   Positioned(
                     top: 10,
                     left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.92),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.navigation_rounded, color: AppColors.primaryDark, size: 14),
-                          const SizedBox(width: 4),
-                          Text(
-                            "Live GPS • ${_formatRiderDistance()}",
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textPrimary,
+                    right: 10,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.12),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.navigation_rounded, color: AppColors.primaryDark, size: 14),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                "Live GPS • ${_formatRiderDistance()}",
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -2980,7 +3051,7 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (dlgCtx) => StatefulBuilder(
-        builder: (context, setDialogState) {
+        builder: (dialogCtx, setDialogState) {
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: const Row(
@@ -3080,7 +3151,7 @@ class _HomePageState extends State<HomePage> {
                   final curOrderId = prefs.getString('active_order_id') ?? 'ORD-8492';
 
                   try {
-                    await http.post(
+                    final response = await http.post(
                       ApiConfig.orderCancel,
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode({
@@ -3089,6 +3160,18 @@ class _HomePageState extends State<HomePage> {
                         'cancelled_by': 'customer',
                       }),
                     );
+                    if (response.statusCode == 400) {
+                      final data = jsonDecode(response.body);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(data['error'] ?? 'Order cannot be cancelled.'),
+                            backgroundColor: AppColors.danger,
+                          ),
+                        );
+                      }
+                      return;
+                    }
                   } catch (e) {
                     debugPrint("Order cancel backend error: $e");
                   }
