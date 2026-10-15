@@ -3,7 +3,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class CashfreeConfig {
   static String get appId => dotenv.env['CASHFREE_APP_ID'] ?? '';
   static String get apiVersion => dotenv.env['CASHFREE_API_VERSION'] ?? '2023-08-01';
-  static String get baseUrl => dotenv.env['CASHFREE_BASE_URL'] ?? 'https://sandbox.cashfree.com/pg';
+  static String get environment => dotenv.env['CASHFREE_ENV'] ?? (appId.startsWith('TEST') ? 'SANDBOX' : 'PRODUCTION');
+  static String get baseUrl => dotenv.env['CASHFREE_BASE_URL'] ?? 
+      (environment.toUpperCase() == 'PRODUCTION' ? 'https://api.cashfree.com/pg' : 'https://sandbox.cashfree.com/pg');
 }
 
 class ApiConfig {
@@ -13,8 +15,19 @@ class ApiConfig {
   static Uri cashfreeOrderStatus(String orderId) => Uri.parse('$baseUrl/api/payment/cashfree/status/$orderId');
   static Uri get cashfreeConfig => Uri.parse('$baseUrl/api/payment/cashfree/config');
 
-  // Base server URL (Wi-Fi LAN IP reachable by both physical test devices)
-  static const String baseUrl = 'http://192.168.29.196:5000';
+  // Base server URL loaded dynamically from .env (BACKEND_API_URL or API_BASE_URL)
+  static String get baseUrl {
+    try {
+      if (dotenv.isInitialized) {
+        final url = dotenv.env['BACKEND_API_URL'] ?? dotenv.env['API_BASE_URL'];
+        if (url != null && url.trim().isNotEmpty) {
+          final trimmed = url.trim();
+          return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+        }
+      }
+    } catch (_) {}
+    return 'http://192.168.29.196:5000';
+  }
 
   // Order Endpoints
   static Uri get orderCreate => Uri.parse('$baseUrl/api/order/create');
@@ -64,6 +77,9 @@ class ApiConfig {
   static Uri get partnerLogin => Uri.parse('$baseUrl/api/deliveryperson/login');
   static Uri get partnerAdd => Uri.parse('$baseUrl/api/deliveryperson/add');
   static Uri get partnerStatus => Uri.parse('$baseUrl/api/deliveryperson/status');
+  static Uri partnerById(String id) => Uri.parse('$baseUrl/api/deliveryperson/$id');
+  static Uri get partnerUpdate => Uri.parse('$baseUrl/api/deliveryperson/update');
+  static String partnerPhotoUrl(String id) => '$baseUrl/api/deliveryperson/photo/$id';
   static Uri orderPendingWithParams({String? partnerId, double? latitude, double? longitude}) {
     final query = <String, String>{};
     if (partnerId != null && partnerId.isNotEmpty) query['partner_id'] = partnerId;

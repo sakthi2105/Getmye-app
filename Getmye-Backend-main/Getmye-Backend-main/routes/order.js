@@ -251,7 +251,7 @@ router.post('/accept', async (req, res) => {
         status: 'accepted',
         accepted_at: new Date()
       },
-      { returnDocument: 'after', new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) {
@@ -326,7 +326,7 @@ router.post('/update-status', async (req, res) => {
     const order = await Order.findOneAndUpdate(
       { order_id },
       updateData,
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) return res.status(404).json({ error: 'Order not found' });

@@ -979,7 +979,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
   Future<void> _fetchPartnerProfileFromBackend(String identifier) async {
     try {
-      final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/$identifier'));
+      final res = await http.get(ApiConfig.partnerById(identifier));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final b64 = data['profile_picture']?.toString();

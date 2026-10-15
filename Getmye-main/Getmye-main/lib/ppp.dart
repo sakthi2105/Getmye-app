@@ -399,7 +399,7 @@ class _HomePageState extends State<HomePage> {
     if (queryId != null && queryId.isNotEmpty) {
       try {
         final activeRes = await http.get(
-          Uri.parse('${ApiConfig.baseUrl}/api/order/active/$queryId'),
+          ApiConfig.orderActive(queryId),
         ).timeout(const Duration(seconds: 3));
 
         if (activeRes.statusCode == 200) {

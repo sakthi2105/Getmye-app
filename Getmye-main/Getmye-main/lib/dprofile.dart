@@ -69,7 +69,7 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
     final dId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? phoneController.text.trim();
     if (dId.isNotEmpty && (_profileImagePath == null || !File(_profileImagePath!).existsSync())) {
       try {
-        final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/$dId'));
+        final res = await http.get(ApiConfig.partnerById(dId));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           final b64 = data['profile_picture']?.toString();
@@ -90,7 +90,7 @@ class _dEditProfilePageState extends State<dEditProfilePage> {
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? '';
       final phone = phoneController.text.trim().isNotEmpty ? phoneController.text.trim() : (prefs.getString('d_phone') ?? '');
       await http.put(
-        Uri.parse('${ApiConfig.baseUrl}/api/deliveryperson/update'),
+        ApiConfig.partnerUpdate,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'dp_id': pId,

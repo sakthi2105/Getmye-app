@@ -1604,6 +1604,8 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   LatLng _driverLocation = const LatLng(10.9601, 79.3845);
   LatLng _destinationLocation = const LatLng(10.9625, 79.3870);
   List<LatLng> _routePoints = [];
+  RouteDetails? _routeDetails;
+  RouteStep? _currentTurnStep;
   String? _partnerId;
   GoogleMapController? _navMapController;
   StreamSubscription<Position>? _gpsStreamSubscription;
@@ -1659,13 +1661,45 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
 
   Future<void> _fetchRoadRoute() async {
     try {
-      final points = await RouteService.getRoadRoute(_driverLocation, _destinationLocation);
-      if (mounted && points.isNotEmpty) {
+      final details = await RouteService.getDetailedRoute(_driverLocation, _destinationLocation);
+      if (mounted && details.points.isNotEmpty) {
         setState(() {
-          _routePoints = points;
+          _routeDetails = details;
+          _routePoints = details.points;
+          _currentTurnStep = details.currentStep;
         });
       }
     } catch (_) {}
+  }
+
+  /// 🚀 Opens Turn-by-Turn Voice Navigation directly in Google Maps
+  Future<void> _openGoogleMapsNavigation() async {
+    final lat = _destinationLocation.latitude;
+    final lng = _destinationLocation.longitude;
+
+    // 1. Native Google Maps intent for driving voice navigation
+    final nativeUri = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
+    // 2. Fallback universal directions URL
+    final webUri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
+
+    try {
+      if (await canLaunchUrl(nativeUri)) {
+        await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
+      } else if (await canLaunchUrl(webUri)) {
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Could not open Google Maps navigation"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error opening Google Maps navigation: $e");
+    }
   }
 
   Future<void> _initRealGpsNavigation() async {
@@ -2140,18 +2174,19 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
             },
           ),
 
-          // Top Turn Instruction Card
+          // Top Turn Instruction Card (Powered by OSRM real turn steps)
           Positioned(
             top: 16,
             left: 16,
             right: 16,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
+                color: const Color(0xFF0F172A),
                 borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4)),
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4)),
                 ],
               ),
               child: Row(
@@ -2159,23 +2194,123 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.turn_right_rounded, color: Colors.white, size: 28),
+                    child: Icon(
+                      _currentTurnStep?.turnIcon ?? Icons.navigation_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
-                  const SizedBox(width: 14),
-                  const Expanded(
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("In 200m, turn right onto Cross Cut Rd", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                        SizedBox(height: 2),
-                        Text("1.8 km • 6 mins remaining to destination", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12)),
+                        Text(
+                          _currentTurnStep?.instruction ?? (_routeDetails != null ? "Follow highlighted road" : "Calculating turn route..."),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            height: 1.25,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.access_time_rounded, size: 12, color: Color(0xFF94A3B8)),
+                            const SizedBox(width: 4),
+                            Text(
+                              "${_routeDetails?.formattedDistance ?? '...'} • ${_routeDetails?.formattedDuration ?? '...'} remaining",
+                              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  // Quick Google Maps Direct Launch Button
+                  InkWell(
+                    onTap: _openGoogleMapsNavigation,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.4)),
+                      ),
+                      child: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.directions_rounded, color: Color(0xFF38BDF8), size: 20),
+                          SizedBox(height: 2),
+                          Text(
+                            "Maps",
+                            style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
+              ),
+            ),
+          ),
+
+          // Floating Button: Start Voice Navigation in Google Maps (Swiggy / Zomato style)
+          Positioned(
+            bottom: 215,
+            right: 16,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _openGoogleMapsNavigation,
+                borderRadius: BorderRadius.circular(30),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                    ),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.near_me_rounded, color: Color(0xFF38BDF8), size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        "Google Navigation",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(Icons.open_in_new_rounded, color: Color(0xFF94A3B8), size: 14),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -2215,11 +2350,14 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                           color: AppColors.primaryLight,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Row(
+                        child: Row(
                           children: [
-                            Icon(Icons.near_me_rounded, size: 14, color: AppColors.primaryDark),
-                            SizedBox(width: 4),
-                            Text("1.8 km", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.primaryDark)),
+                            const Icon(Icons.near_me_rounded, size: 14, color: AppColors.primaryDark),
+                            const SizedBox(width: 4),
+                            Text(
+                              _routeDetails?.formattedDistance ?? "Calculating...",
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.primaryDark),
+                            ),
                           ],
                         ),
                       ),

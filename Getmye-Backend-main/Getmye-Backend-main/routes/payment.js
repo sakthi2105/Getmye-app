@@ -10,7 +10,23 @@ const { getNextSequence } = require('../models/Counter');
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || '';
 const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || '';
 const CASHFREE_API_VERSION = process.env.CASHFREE_API_VERSION || '2023-08-01';
-const CASHFREE_BASE_URL = process.env.CASHFREE_BASE_URL || 'https://sandbox.cashfree.com/pg';
+
+// Auto-detect production mode if explicit env variable is set or prod secret key format is used
+const isProduction =
+  (process.env.CASHFREE_ENV && process.env.CASHFREE_ENV.toUpperCase() === 'PRODUCTION') ||
+  CASHFREE_SECRET_KEY.includes('_prod_') ||
+  (process.env.CASHFREE_BASE_URL && process.env.CASHFREE_BASE_URL.includes('api.cashfree.com'));
+
+const CASHFREE_ENV = isProduction ? 'PRODUCTION' : 'SANDBOX';
+
+// Resolve BASE_URL correctly based on environment
+let resolvedBaseUrl = process.env.CASHFREE_BASE_URL;
+if (!resolvedBaseUrl || (isProduction && resolvedBaseUrl.includes('sandbox')) || (!isProduction && resolvedBaseUrl.includes('api.cashfree.com'))) {
+  resolvedBaseUrl = isProduction ? 'https://api.cashfree.com/pg' : 'https://sandbox.cashfree.com/pg';
+}
+const CASHFREE_BASE_URL = resolvedBaseUrl;
+
+console.log(`[Cashfree Config] Initialized in ${CASHFREE_ENV} mode -> ${CASHFREE_BASE_URL}`);
 
 // POST /api/payment/create - Customer initiates payment (UPI / COD / etc.)
 router.post('/create', async (req, res) => {
@@ -291,7 +307,7 @@ router.get('/cashfree/config', (req, res) => {
     app_id: CASHFREE_APP_ID,
     api_version: CASHFREE_API_VERSION,
     base_url: CASHFREE_BASE_URL,
-    environment: process.env.CASHFREE_ENV || 'SANDBOX'
+    environment: CASHFREE_ENV
   });
 });
 
@@ -339,6 +355,18 @@ router.post('/cashfree/create-order', async (req, res) => {
     const sanitizedOrderId = order_id.toString().replace(/[^a-zA-Z0-9_-]/g, '_');
     const cfOrderId = `cf_${sanitizedOrderId}_${Date.now().toString().slice(-6)}`;
 
+    // 5. Configure order_meta: Cashfree strictly requires HTTPS for notify_url.
+    // In local development (http://192.168.x.x), omit notify_url unless an explicit HTTPS webhook is provided.
+    const orderMeta = {};
+    const configuredNotifyUrl = process.env.CASHFREE_NOTIFY_URL;
+    const reqNotifyUrl = `${req.protocol}://${req.get('host')}/api/payment/cashfree/webhook`;
+
+    if (configuredNotifyUrl && configuredNotifyUrl.startsWith('https://')) {
+      orderMeta.notify_url = configuredNotifyUrl;
+    } else if (reqNotifyUrl.startsWith('https://')) {
+      orderMeta.notify_url = reqNotifyUrl;
+    }
+
     const payload = {
       order_id: cfOrderId,
       order_amount: formattedAmount,
@@ -349,9 +377,6 @@ router.post('/cashfree/create-order', async (req, res) => {
         customer_phone: custPhone,
         customer_email: custEmail
       },
-      order_meta: {
-        notify_url: `${req.protocol}://${req.get('host')}/api/payment/cashfree/webhook`
-      },
       order_note: `Getmye Order #${order_id}`,
       order_tags: {
         brand: 'Getmye',
@@ -359,6 +384,10 @@ router.post('/cashfree/create-order', async (req, res) => {
         merchant_name: 'Getmye'
       }
     };
+
+    if (Object.keys(orderMeta).length > 0) {
+      payload.order_meta = orderMeta;
+    }
 
     console.log(`[Cashfree] Creating server order: ${cfOrderId} for ₹${formattedAmount}`);
 
@@ -381,7 +410,7 @@ router.post('/cashfree/create-order', async (req, res) => {
       payment_session_id: response.data.payment_session_id,
       order_amount: response.data.order_amount,
       order_currency: response.data.order_currency || 'INR',
-      environment: process.env.CASHFREE_ENV || 'SANDBOX'
+      environment: CASHFREE_ENV
     });
   } catch (err) {
     const errorDetails = err.response?.data || err.message;
@@ -544,11 +573,13 @@ router.post('/cashfree/create-link', async (req, res) => {
       customer_details: {
         customer_phone: customer_phone || '9999999999',
         customer_name: customer_name || 'Customer'
-      },
-      link_meta: {
-        return_url: return_url || `${req.protocol}://${req.get('host')}/api/payment/cashfree-return?order_id=${order_id}&link_id={link_id}`
       }
     };
+
+    const finalReturnUrl = return_url || (req.protocol === 'https' ? `${req.protocol}://${req.get('host')}/api/payment/cashfree-return?order_id=${order_id}&link_id={link_id}` : null);
+    if (finalReturnUrl && finalReturnUrl.startsWith('https://')) {
+      payload.link_meta = { return_url: finalReturnUrl };
+    }
 
     const response = await axios.post(`${CASHFREE_BASE_URL}/links`, payload, {
       headers: {

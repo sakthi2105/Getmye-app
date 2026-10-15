@@ -22,7 +22,7 @@ router.post('/update', async (req, res) => {
         is_online: req.body.is_online !== undefined ? Boolean(req.body.is_online) : true,
         last_updated: new Date()
       },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     res.json({ success: true, location: loc });
