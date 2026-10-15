@@ -33,7 +33,8 @@ class DeliveryHomePage extends StatefulWidget {
 }
 
 class _DeliveryHomePageState extends State<DeliveryHomePage> {
-  int touchpoints = 18;
+  int touchpoints = 0;
+  String milestoneResetCountdown = "24h left";
   bool isOnline = true;
   double currentBalance = 2500.00;
   double totalEarnings = 10000.00;
@@ -198,6 +199,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       if (_pollCount % 5 == 0) {
         _updateLiveLocationToBackend();
       }
+      if (_pollCount % 50 == 0) {
+        _checkMilestoneReset();
+      }
       _checkPendingOrders();
     });
   }
@@ -227,6 +231,42 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     } catch (_) {
     } finally {
       _isUpdatingLocation = false;
+    }
+  }
+
+  /// Automatically checks and resets partner daily milestone if 24 hours have elapsed
+  Future<void> _checkMilestoneReset() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final lastResetStr = prefs.getString('partner_milestone_last_reset_time');
+    int currentTouchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 0;
+    String countdown = "24h left";
+
+    if (lastResetStr == null || lastResetStr.isEmpty) {
+      await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+    } else {
+      final lastReset = DateTime.tryParse(lastResetStr) ?? now;
+      final diff = now.difference(lastReset);
+      if (diff.inHours >= 24) {
+        currentTouchpoints = 0;
+        await prefs.setInt('partner_milestone_touchpoints', 0);
+        await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+        countdown = "24h left";
+      } else {
+        final remaining = const Duration(hours: 24) - diff;
+        final hoursLeft = remaining.inHours;
+        final minsLeft = remaining.inMinutes % 60;
+        countdown = "${hoursLeft}h ${minsLeft}m left";
+      }
+    }
+
+    if (mounted) {
+      if (touchpoints != currentTouchpoints || milestoneResetCountdown != countdown) {
+        setState(() {
+          touchpoints = currentTouchpoints;
+          milestoneResetCountdown = countdown;
+        });
+      }
     }
   }
 
@@ -854,6 +894,30 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final localPath = prefs.getString('d_profile_image');
     final localBase64 = prefs.getString('d_profile_picture_base64');
 
+    // 24-hour milestone cycle check & reset
+    final now = DateTime.now();
+    final lastResetStr = prefs.getString('partner_milestone_last_reset_time');
+    int currentTouchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 0;
+    String resetCountdown = "24h left";
+
+    if (lastResetStr == null || lastResetStr.isEmpty) {
+      await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+    } else {
+      final lastReset = DateTime.tryParse(lastResetStr) ?? now;
+      final diff = now.difference(lastReset);
+      if (diff.inHours >= 24) {
+        currentTouchpoints = 0;
+        await prefs.setInt('partner_milestone_touchpoints', 0);
+        await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+        resetCountdown = "24h left";
+      } else {
+        final remaining = const Duration(hours: 24) - diff;
+        final hoursLeft = remaining.inHours;
+        final minsLeft = remaining.inMinutes % 60;
+        resetCountdown = "${hoursLeft}h ${minsLeft}m left";
+      }
+    }
+
     setState(() {
       partnerName = prefs.getString('d_name') ?? "Delivery Partner";
       totalEarnings = prefs.getDouble('total_earnings') ?? 10000.00;
@@ -861,7 +925,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       currentBalance = prefs.getDouble('wallet_balance') ?? 2500.00;
       totalDeliveries = prefs.getInt('total_deliveries') ?? 120;
       todayDeliveries = prefs.getInt('today_deliveries') ?? 8;
-      touchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 18;
+      touchpoints = currentTouchpoints;
+      milestoneResetCountdown = resetCountdown;
       isOnline = prefs.getBool('d_is_online') ?? true;
       profileImagePath = localPath;
       profileImageBase64 = localBase64;
@@ -1067,15 +1132,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(6),
+              height: 34,
+              width: 34,
+              padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: AppColors.primaryLight,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border, width: 1),
               ),
-              child: const Icon(
-                Icons.two_wheeler_rounded,
-                color: AppColors.primaryDark,
-                size: 22,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'assets/G_LOGO.PNG',
+                  fit: BoxFit.contain,
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -1640,9 +1710,93 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 ],
               ),
             ),
+            const SizedBox(height: 14),
+
+            // Prominent Delivery History Quick Access Card
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const DeliveryListPage(isTodayOnly: false),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3), width: 1.2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryLight,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.receipt_long_rounded,
+                          color: AppColors.primaryDark,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Delivery History",
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              "View all completed orders with date & time",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryLight,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.primaryDark,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(height: 18),
 
-            // Milestone Progress Card
+            // Milestone Progress Card (Refreshes every 24 hours)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -1665,16 +1819,57 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          "Milestone Progress",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
-                          ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Text(
+                                  "Daily Milestone",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE0F2FE),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.timer_outlined, size: 12, color: Color(0xFF0369A1)),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        milestoneResetCountdown,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFF0369A1),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              "Refreshes every 24 hours",
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: AppColors.primaryLight,
                             borderRadius: BorderRadius.circular(12),

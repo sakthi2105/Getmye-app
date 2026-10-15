@@ -23,7 +23,7 @@ late FlutterLocalNotificationsPlugin localNotifications;
 void _initializeLocalNotifications(BuildContext context) {
   localNotifications = FlutterLocalNotificationsPlugin();
 
-  var androidInit = AndroidInitializationSettings('@mipmap/logo2');
+  var androidInit = const AndroidInitializationSettings('@mipmap/ic_launcher');
   var iOSInit = DarwinInitializationSettings();
   var initSettings = InitializationSettings(android: androidInit, iOS: iOSInit);
 

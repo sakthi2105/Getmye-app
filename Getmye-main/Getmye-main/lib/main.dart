@@ -885,17 +885,27 @@ class _LoginPageState extends State<LoginPage> {
                     // Brand Logo & Icon
                     Center(
                       child: Container(
-                        height: 68,
-                        width: 68,
+                        height: 76,
+                        width: 76,
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppColors.primaryLight,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: AppColors.primarySubtle, width: 1.5),
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(color: AppColors.border, width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                        child: const Icon(
-                          Icons.restaurant_rounded,
-                          size: 36,
-                          color: AppColors.primaryDark,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.asset(
+                            'assets/G_LOGO.PNG',
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
                     ),

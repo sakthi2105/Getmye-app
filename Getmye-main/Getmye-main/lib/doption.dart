@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/delivery_bill_flow.dart';
-import 'package:flutter_application_1/dprofile.dart';
 import 'package:flutter_application_1/homed.dart';
-import 'package:flutter_application_1/wallet.dart';
 import 'package:flutter_application_1/main.dart';
+import 'deliveryhistroy.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +29,8 @@ class dOptionsPage extends StatelessWidget {
 
   IconData _getIconForOption(String title) {
     switch (title.toLowerCase()) {
+      case 'delivery history':
+        return Icons.receipt_long_rounded;
       case 'terms and conditions':
         return Icons.description_outlined;
       case 'help':
@@ -65,6 +65,7 @@ class dOptionsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final optionsList = [
+      'Delivery History',
       'Switch to Customer Side',
       'Terms and conditions',
       'Help',
@@ -123,7 +124,7 @@ class dOptionsPage extends StatelessWidget {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.015),
+            color: Colors.black.withValues(alpha: 0.015),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -157,6 +158,15 @@ class dOptionsPage extends StatelessWidget {
           color: AppColors.textMuted,
         ),
         onTap: () async {
+          if (title == 'Delivery History') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DeliveryListPage(isTodayOnly: false),
+              ),
+            );
+            return;
+          }
           if (title == 'Switch to Customer Side') {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('is_logged_in', false);

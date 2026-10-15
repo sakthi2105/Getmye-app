@@ -111,36 +111,114 @@ class _HomePageState extends State<HomePage> {
 
   final List<Map<String, dynamic>> _carouselBanners = [
     {
-      'image': 'assets/banner_biryani.jpg',
-      'fallback': 'assets/biryani_shawarma_banner.png',
-      'title': 'Chicken Biryani',
-      'tag': 'HOT SPECIAL',
-      'originalPrice': '199',
-      'offerPrice': '49',
-      'item': 'Chicken Biryani',
-      'budget': '49',
+      'image': 'assets/banner_nonveg_meals.jpg',
+      'fallback': 'assets/banner_nonveg_meals.jpg',
+      'title': 'Non-Veg Meals',
+      'tag': 'SPECIAL MEALS',
+      'originalPrice': '250',
+      'offerPrice': '149',
+      'item': 'Non-Veg Meals',
+      'budget': '149',
       'isAnyDeal': false,
-      'icon': Icons.restaurant_rounded,
+      'icon': Icons.lunch_dining_rounded,
       'color': Color(0xFFEA580C),
     },
     {
-      'image': 'assets/banner_mutton_biryani.jpg',
-      'fallback': 'assets/banner_biryani.jpg',
+      'image': 'assets/banner_variety_rice.png',
+      'fallback': 'assets/banner_variety_rice.png',
+      'title': 'Variety Rice Special Combo',
+      'tag': 'SPECIAL COMBO',
+      'originalPrice': '60',
+      'offerPrice': '30',
+      'item': 'Variety Rice Special Combo',
+      'budget': '30',
+      'isAnyDeal': false,
+      'icon': Icons.rice_bowl_rounded,
+      'color': Color(0xFFD97706),
+    },
+    {
+      'image': 'assets/banner_chicken_noodles.png',
+      'fallback': 'assets/banner_chicken_noodles.png',
+      'title': 'Chicken Noodles',
+      'tag': 'CHINESE SPECIAL',
+      'originalPrice': '140',
+      'offerPrice': '50',
+      'item': 'Chicken Noodles',
+      'budget': '50',
+      'isAnyDeal': false,
+      'icon': Icons.ramen_dining_rounded,
+      'color': Color(0xFFE11D48),
+    },
+    {
+      'image': 'assets/banner_chicken_fried_rice.png',
+      'fallback': 'assets/banner_chicken_fried_rice.png',
+      'title': 'Chicken Fried Rice',
+      'tag': 'HOT DEAL',
+      'originalPrice': '140',
+      'offerPrice': '50',
+      'item': 'Chicken Fried Rice',
+      'budget': '50',
+      'isAnyDeal': false,
+      'icon': Icons.dinner_dining_rounded,
+      'color': Color(0xFFB45309),
+    },
+    {
+      'image': 'assets/banner_half_grill_chicken.png',
+      'fallback': 'assets/banner_half_grill_chicken.png',
+      'title': 'Half Grill Chicken',
+      'tag': 'BBQ GRILL',
+      'originalPrice': '250',
+      'offerPrice': '100',
+      'item': 'Half Grill Chicken',
+      'budget': '100',
+      'isAnyDeal': false,
+      'icon': Icons.local_fire_department_rounded,
+      'color': Color(0xFFDC2626),
+    },
+    {
+      'image': 'assets/banner_chicken_shawarma.jpg',
+      'fallback': 'assets/banner_chicken_shawarma.jpg',
+      'title': 'Chicken Shawarma',
+      'tag': 'SPECIAL OFFER',
+      'originalPrice': '110',
+      'offerPrice': '30',
+      'item': 'Chicken Shawarma',
+      'budget': '30',
+      'isAnyDeal': false,
+      'icon': Icons.fastfood_rounded,
+      'color': Color(0xFFEA580C),
+    },
+    {
+      'image': 'assets/banner_south_meals.jpg',
+      'fallback': 'assets/banner_south_meals.jpg',
+      'title': 'South Indian Meals',
+      'tag': 'LUNCH SPECIAL',
+      'originalPrice': '150',
+      'offerPrice': '49',
+      'item': 'South Indian Meals',
+      'budget': '49',
+      'isAnyDeal': false,
+      'icon': Icons.lunch_dining_rounded,
+      'color': Color(0xFF16A34A),
+    },
+    {
+      'image': 'assets/banner_mutton_biryani_hd.png',
+      'fallback': 'assets/banner_mutton_biryani_hd.png',
       'title': 'Mutton Biryani',
-      'tag': 'SUPER DEAL',
-      'originalPrice': '200',
+      'tag': 'ROYAL FEAST',
+      'originalPrice': '270',
       'offerPrice': '99',
       'item': 'Mutton Biryani',
       'budget': '99',
       'isAnyDeal': false,
       'icon': Icons.restaurant_menu_rounded,
-      'color': Color(0xFFDC2626),
+      'color': Color(0xFF991B1B),
     },
     {
-      'image': 'assets/banner_icecream.jpg',
-      'fallback': 'assets/banner_icecream_cake.jpg',
-      'title': 'Ice Creams',
-      'tag': 'CHILL FEST',
+      'image': 'assets/banner_icecream_fest.jpg',
+      'fallback': 'assets/banner_icecream_fest.jpg',
+      'title': 'Ice Cream Fest',
+      'tag': 'SUMMER SPECIAL',
       'originalPrice': '',
       'offerPrice': '20',
       'item': 'Ice Cream (Any)',
@@ -150,43 +228,17 @@ class _HomePageState extends State<HomePage> {
       'color': Color(0xFF0284C7),
     },
     {
-      'image': 'assets/banner_meals.jpg',
-      'fallback': 'assets/banner_biryani.jpg',
-      'title': 'South Indian Meals',
-      'tag': 'LUNCH SPECIAL',
-      'originalPrice': '150',
-      'offerPrice': '50',
-      'item': 'South Indian Meals',
-      'budget': '50',
+      'image': 'assets/banner_aromatic_biryani.png',
+      'fallback': 'assets/banner_aromatic_biryani.png',
+      'title': 'Aromatic Chicken Biryani',
+      'tag': 'CHEF SPECIAL',
+      'originalPrice': '220',
+      'offerPrice': '49',
+      'item': 'Chicken Biryani',
+      'budget': '49',
       'isAnyDeal': false,
-      'icon': Icons.lunch_dining_rounded,
-      'color': Color(0xFF16A34A),
-    },
-    {
-      'image': 'assets/banner_cakes.jpg',
-      'fallback': 'assets/banner_icecream_cake.jpg',
-      'title': 'Cakes (per kg)',
-      'tag': 'BAKERY DELIGHT',
-      'originalPrice': '300',
-      'offerPrice': '149',
-      'item': 'Cakes (per kg)',
-      'budget': '149',
-      'isAnyDeal': false,
-      'icon': Icons.cake_rounded,
-      'color': Color(0xFF9333EA),
-    },
-    {
-      'image': 'assets/banner_icecream_cake.jpg',
-      'fallback': 'assets/banner_cakes.jpg',
-      'title': 'Ice Cream Cakes (per kg)',
-      'tag': 'PREMIUM TREAT',
-      'originalPrice': '500',
-      'offerPrice': '249',
-      'item': 'Ice Cream Cakes (per kg)',
-      'budget': '249',
-      'isAnyDeal': false,
-      'icon': Icons.cake_rounded,
-      'color': Color(0xFFE11D48),
+      'icon': Icons.restaurant_rounded,
+      'color': Color(0xFFD97706),
     },
   ];
 
@@ -1424,14 +1476,29 @@ class _HomePageState extends State<HomePage> {
   Widget _buildLocationAndProfileRow() {
     return Row(
       children: [
-        // Location Pin Icon
+        // Brand Logo
         Container(
-          padding: const EdgeInsets.all(8),
+          height: 38,
+          width: 38,
+          padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.12),
-            shape: BoxShape.circle,
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(11),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-          child: const Icon(Icons.location_on_rounded, color: Color(0xFFFF5722), size: 20),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.asset(
+              'assets/G_LOGO.PNG',
+              fit: BoxFit.contain,
+            ),
+          ),
         ),
         const SizedBox(width: 10),
         // Location address & picker trigger
@@ -1502,9 +1569,8 @@ class _HomePageState extends State<HomePage> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
-            child: SizedBox(
-              height: 195,
-              width: double.infinity,
+            child: AspectRatio(
+              aspectRatio: 1024 / 571,
               child: PageView.builder(
                 controller: _bannerPageController,
                 itemCount: _carouselBanners.length,
@@ -1515,162 +1581,15 @@ class _HomePageState extends State<HomePage> {
                   final banner = _carouselBanners[index];
                   return InkWell(
                     onTap: () => _applyBannerOffer(banner),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.asset(
-                          banner['image'] as String,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Image.asset(
-                            banner['fallback'] as String,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        // Top Offer Tag Badge
-                        Positioned(
-                          top: 8,
-                          left: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: banner['color'] as Color,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.3),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(banner['icon'] as IconData, color: Colors.white, size: 11),
-                                const SizedBox(width: 4),
-                                Text(
-                                  banner['tag'] as String,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 9,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // Bottom Offer Details & Order Now Button Action
-                        Positioned(
-                          bottom: 8,
-                          left: 10,
-                          right: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF14010E).withValues(alpha: 0.92),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFFFFD700).withValues(alpha: 0.8),
-                                width: 1.2,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    if (banner['isAnyDeal'] == true) ...[
-                                      const Text(
-                                        "Any @ ",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ] else if ((banner['originalPrice'] as String).isNotEmpty) ...[
-                                      Text(
-                                        "₹${banner['originalPrice']}",
-                                        style: const TextStyle(
-                                          color: Colors.white60,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                          decoration: TextDecoration.lineThrough,
-                                          decorationColor: Color(0xFFEF4444),
-                                          decorationThickness: 2.5,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    Text(
-                                      "₹${banner['offerPrice']}",
-                                      style: const TextStyle(
-                                        color: Color(0xFFFFD700),
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 17,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primary,
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: const Text(
-                                        "DEAL",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: 0.4,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                // Order Now Button
-                                GestureDetector(
-                                  onTap: () => _applyBannerOffer(banner),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [Color(0xFFFFD700), Color(0xFFF59E0B)],
-                                      ),
-                                      borderRadius: BorderRadius.circular(8),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(alpha: 0.3),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          "Order Now",
-                                          style: TextStyle(
-                                            color: Color(0xFF260117),
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                        SizedBox(width: 4),
-                                        Icon(Icons.bolt_rounded, color: Color(0xFF260117), size: 14),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: Image.asset(
+                      banner['image'] as String,
+                      fit: BoxFit.fill,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        banner['fallback'] as String,
+                        fit: BoxFit.fill,
+                        filterQuality: FilterQuality.high,
+                      ),
                     ),
                   );
                 },

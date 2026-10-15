@@ -2405,9 +2405,20 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
       await prefs.setBool('active_order_bill_sent', false);
       await prefs.setString('active_order_status', 'Delivered & Paid');
 
-      // Milestone increment upon order completion
-      int touchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 18;
-      await prefs.setInt('partner_milestone_touchpoints', (touchpoints + 4).clamp(0, 50));
+      // Milestone increment upon order completion with 24-hour cycle check
+      final lastResetStr = prefs.getString('partner_milestone_last_reset_time');
+      int touchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 0;
+      final nowTime = DateTime.now();
+      if (lastResetStr != null && lastResetStr.isNotEmpty) {
+        final lastReset = DateTime.tryParse(lastResetStr) ?? nowTime;
+        if (nowTime.difference(lastReset).inHours >= 24) {
+          touchpoints = 0;
+          await prefs.setString('partner_milestone_last_reset_time', nowTime.toIso8601String());
+        }
+      } else {
+        await prefs.setString('partner_milestone_last_reset_time', nowTime.toIso8601String());
+      }
+      await prefs.setInt('partner_milestone_touchpoints', (touchpoints + 4).clamp(0, 40));
 
       // Save to today_completed_deliveries for Today Deliveries / Delivery History
       final localJson = prefs.getString('today_completed_deliveries');

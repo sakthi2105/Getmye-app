@@ -49,6 +49,7 @@ dependencies:
   permission_handler: ^12.0.1
   url_launcher: ^6.3.3
   flutter_dotenv: ^6.0.1
+  flutter_cashfree_pg_sdk: ^2.4.0+52
 
   
 dev_dependencies:
@@ -85,6 +86,16 @@ flutter:
     - assets/
     - assets/G_LOGO.PNG
     - assets/pin_security_toon.png
+    - assets/banner_nonveg_meals.jpg
+    - assets/banner_variety_rice.png
+    - assets/banner_chicken_noodles.png
+    - assets/banner_chicken_fried_rice.png
+    - assets/banner_half_grill_chicken.png
+    - assets/banner_chicken_shawarma.jpg
+    - assets/banner_south_meals.jpg
+    - assets/banner_mutton_biryani_hd.png
+    - assets/banner_icecream_fest.jpg
+    - assets/banner_aromatic_biryani.png
     - assets/banner_cakes.jpg
     - assets/banner_icecream_cake.jpg
     - assets/promo_coins.jpg

@@ -27,7 +27,11 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
   Future<void> _fetchDeliveredOrders() async {
     setState(() => _isLoading = true);
     final prefs = await SharedPreferences.getInstance();
-    _partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
+    _partnerId = prefs.getString('d_id') ??
+        prefs.getString('partner_id') ??
+        prefs.getString('active_order_partner_id') ??
+        prefs.getString('d_phone') ??
+        'dp_005';
 
     List<dynamic> combined = [];
 
@@ -41,13 +45,27 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
     }
 
     try {
-      final res = await http.get(ApiConfig.orderPartner(_partnerId));
+      final res = await http.get(ApiConfig.orderPartner(_partnerId)).timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
         for (var o in orders) {
           if (!combined.any((c) => c['order_id'] == o['order_id'])) {
             combined.add(o);
+          }
+        }
+      }
+
+      // If partner-specific query returned 0 orders, fetch all partner delivery records
+      if (combined.isEmpty) {
+        final fallbackRes = await http.get(ApiConfig.orderPartner('all')).timeout(const Duration(seconds: 6));
+        if (fallbackRes.statusCode == 200) {
+          final data = jsonDecode(fallbackRes.body);
+          final List orders = data['orders'] ?? [];
+          for (var o in orders) {
+            if (!combined.any((c) => c['order_id'] == o['order_id'])) {
+              combined.add(o);
+            }
           }
         }
       }
@@ -65,6 +83,15 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
       }).toList();
     }
 
+    // Sort orders newest first
+    combined.sort((a, b) {
+      final aDate = a['delivered_at'] ?? a['cancelled_at'] ?? a['created_at'];
+      final bDate = b['delivered_at'] ?? b['cancelled_at'] ?? b['created_at'];
+      final dtA = DateTime.tryParse(aDate?.toString() ?? '') ?? DateTime(2020);
+      final dtB = DateTime.tryParse(bDate?.toString() ?? '') ?? DateTime(2020);
+      return dtB.compareTo(dtA);
+    });
+
     if (mounted) {
       setState(() {
         _orders = combined;
@@ -73,19 +100,40 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
     }
   }
 
-  String _formatDateTime(dynamic dateVal) {
-    if (dateVal == null) return "Recent Delivery";
+  String _formatDate(dynamic dateVal) {
+    if (dateVal == null) return "Recent Date";
     try {
       final dt = DateTime.parse(dateVal.toString()).toLocal();
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      final mName = months[dt.month - 1];
+      final now = DateTime.now();
+      if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+        return "Today, ${dt.day} ${_getMonth(dt.month)}";
+      }
+      final yesterday = now.subtract(const Duration(days: 1));
+      if (dt.year == yesterday.year && dt.month == yesterday.month && dt.day == yesterday.day) {
+        return "Yesterday, ${dt.day} ${_getMonth(dt.month)}";
+      }
+      return "${dt.day.toString().padLeft(2, '0')} ${_getMonth(dt.month)} ${dt.year}";
+    } catch (_) {
+      return dateVal.toString().split('T').first;
+    }
+  }
+
+  String _formatTime(dynamic dateVal) {
+    if (dateVal == null) return "--:--";
+    try {
+      final dt = DateTime.parse(dateVal.toString()).toLocal();
       final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
       final m = dt.minute.toString().padLeft(2, '0');
       final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-      return "${dt.day.toString().padLeft(2, '0')} $mName ${dt.year}, $h:$m $ampm";
+      return "$h:$m $ampm";
     } catch (_) {
-      return dateVal.toString();
+      return "";
     }
+  }
+
+  String _getMonth(int month) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return months[(month - 1).clamp(0, 11)];
   }
 
   @override
@@ -188,8 +236,8 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
                             boxShadow: [
                               BoxShadow(
                                 color: isCancelled
-                                    ? const Color(0xFFEF4444).withOpacity(0.06)
-                                    : Colors.black.withOpacity(0.03),
+                                    ? const Color(0xFFEF4444).withValues(alpha: 0.06)
+                                    : Colors.black.withValues(alpha: 0.03),
                                 blurRadius: 10,
                                 offset: const Offset(0, 4),
                               ),
@@ -200,7 +248,61 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Top row: Order ID, Status badge & Date
+                                // Prominent Date & Time Banner
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  decoration: BoxDecoration(
+                                    color: isCancelled ? const Color(0xFFFEF2F2) : AppColors.primarySubtle,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isCancelled ? const Color(0xFFFECACA) : AppColors.border,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.calendar_month_rounded,
+                                            size: 15,
+                                            color: isCancelled ? const Color(0xFFDC2626) : AppColors.primary,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            _formatDate(deliveredAt),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: isCancelled ? const Color(0xFFDC2626) : AppColors.primaryDark,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.access_time_rounded,
+                                            size: 14,
+                                            color: isCancelled ? const Color(0xFFDC2626) : AppColors.textSecondary,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            _formatTime(deliveredAt),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: isCancelled ? const Color(0xFFDC2626) : AppColors.textSecondary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                // Top row: Order ID, Status badge & Amount
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
@@ -341,30 +443,38 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
                                 ),
                                 const Divider(height: 20),
 
-                                // Bottom row: timestamp & payment mode
+                                // Bottom row: payment mode & delivery confirmation
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Row(
                                       children: [
-                                        const Icon(Icons.access_time_rounded, size: 14, color: AppColors.textMuted),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _formatDateTime(deliveredAt),
-                                          style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500),
-                                        ),
-                                      ],
-                                    ),
-                                    Row(
-                                      children: [
-                                        const Icon(Icons.payments_outlined, size: 14, color: AppColors.textMuted),
-                                        const SizedBox(width: 4),
+                                        const Icon(Icons.payments_outlined, size: 15, color: AppColors.textMuted),
+                                        const SizedBox(width: 6),
                                         Text(
                                           payMethod,
-                                          style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w600),
+                                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                                         ),
                                       ],
                                     ),
+                                    if (isDelivered)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFDCFCE7),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Row(
+                                          children: [
+                                            Icon(Icons.check_circle_rounded, size: 12, color: Color(0xFF15803D)),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              "Delivered",
+                                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ],

@@ -16,6 +16,8 @@ import 'services/app_notification_service.dart';
 import 'services/order_chat_sheet.dart';
 import 'services/route_service.dart';
 import 'services/upi_payment_service.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
+import 'services/cashfree_sdk_service.dart';
 import 'ppp.dart';
 import 'theme/app_theme.dart';
 
@@ -34,6 +36,9 @@ class PaymentPage extends StatefulWidget {
 }
 
 class _PaymentPageState extends State<PaymentPage> {
+  final CashfreeSdkService _cashfreeSdk = CashfreeSdkService();
+  bool _isCashfreeProcessing = false;
+  String? _currentCfOrderId;
   bool _isPaymentSuccessShown = false;
   bool hasActiveOrder = false;
   bool isPartnerAccepted = false;
@@ -415,14 +420,14 @@ class _PaymentPageState extends State<PaymentPage> {
       height: 44,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF0F766E), Color(0xFF115E59)],
+          colors: [Color(0xFF0C1B30), Color(0xFF142B4A)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F766E).withValues(alpha: 0.25),
+            color: const Color(0xFF142B4A).withValues(alpha: 0.25),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -444,7 +449,7 @@ class _PaymentPageState extends State<PaymentPage> {
               TextSpan(
                 text: "free",
                 style: TextStyle(
-                  color: Color(0xFF2DD4BF),
+                  color: Color(0xFF60A5FA),
                   fontWeight: FontWeight.w900,
                   fontSize: 10,
                   letterSpacing: -0.5,
@@ -550,23 +555,25 @@ class _PaymentPageState extends State<PaymentPage> {
 
                 // 1. Cashfree Payment Gateway Card
                 InkWell(
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _handleCashfreePayment(payAmount);
-                  },
+                  onTap: _isCashfreeProcessing
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          _handleCashfreePayment(payAmount);
+                        },
                   borderRadius: BorderRadius.circular(18),
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFF0F766E), Color(0xFF134E4A)],
+                        colors: [Color(0xFF0C1B30), Color(0xFF142B4A)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF0F766E).withValues(alpha: 0.28),
+                          color: const Color(0xFF142B4A).withValues(alpha: 0.28),
                           blurRadius: 12,
                           offset: const Offset(0, 4),
                         ),
@@ -590,27 +597,38 @@ class _PaymentPageState extends State<PaymentPage> {
                                     ),
                                   ),
                                   SizedBox(width: 6),
-                                  Icon(Icons.verified_rounded, color: Color(0xFF2DD4BF), size: 16),
+                                  Icon(Icons.verified_rounded, color: Color(0xFF60A5FA), size: 16),
                                 ],
                               ),
                               SizedBox(height: 3),
                               Text(
                                 "UPI (GPay, PhonePe, Paytm), Cards, NetBanking",
-                                style: TextStyle(color: Color(0xFFCCFBF1), fontSize: 12),
+                                style: TextStyle(color: Color(0xFFDBEAFE), fontSize: 12),
                               ),
                             ],
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF2DD4BF),
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
                             borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF2563EB).withValues(alpha: 0.35),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
                           ),
                           child: const Text(
                             "Pay Online",
                             style: TextStyle(
-                              color: Color(0xFF134E4A),
+                              color: Colors.white,
                               fontWeight: FontWeight.w900,
                               fontSize: 12,
                             ),
@@ -707,148 +725,271 @@ class _PaymentPageState extends State<PaymentPage> {
     _showPaymentConfirmationDialog(appName, amount);
   }
 
-  // Cashfree payment gateway integration with redirect and status verification
+  // Cashfree Native SDK Payment Integration (Drop Checkout)
   Future<void> _handleCashfreePayment(double amount) async {
+    if (_isCashfreeProcessing) return; // Prevent multiple simultaneous clicks
+    if (isOnlinePaid) {
+      _showOnlinePaymentSuccessDialog(amount, activeOtp ?? '----');
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final userPhone = prefs.getString('user_phone') ?? '9999999999';
     final userName = prefs.getString('user_name') ?? 'GetMye Customer';
-    final linkId = 'cf_${DateTime.now().millisecondsSinceEpoch}';
+    final userEmail = prefs.getString('user_email') ?? '${userPhone.isNotEmpty ? userPhone : "cust"}@getmye.com';
+    final userId = prefs.getString('user_id') ?? 'USER001';
+
+    setState(() {
+      _isCashfreeProcessing = true;
+    });
 
     // Show loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      builder: (_) => PopScope(
+        canPop: false,
+        child: Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Initializing Secure Checkout",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Connecting to Cashfree Gateway for ₹${amount.toStringAsFixed(0)}...",
+                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
 
-    String? paymentLink;
-
     try {
-      final orderRes = await http.post(
-        Uri.parse('${CashfreeConfig.baseUrl}/links'),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-client-id': CashfreeConfig.appId,
-          'x-client-secret': CashfreeConfig.secretKey,
-          'x-api-version': CashfreeConfig.apiVersion,
-        },
-        body: jsonEncode({
-          'link_id': linkId,
-          'link_amount': amount,
-          'link_currency': 'INR',
-          'link_purpose': 'Food Order #$orderId',
-          'customer_details': {
-            'customer_phone': userPhone.isNotEmpty ? userPhone : '9999999999',
-            'customer_name': userName.isNotEmpty ? userName : 'Customer',
-          },
-          'link_meta': {
-            'return_url': '${ApiConfig.baseUrl}/api/payment/cashfree-return?order_id=$orderId&link_id={link_id}',
-          },
-        }),
-      ).timeout(const Duration(seconds: 10));
+      // Step 1: Securely create order on backend and get payment_session_id
+      final orderResult = await _cashfreeSdk.createBackendOrder(
+        orderId: orderId,
+        amount: amount,
+        customerId: userId,
+        customerName: userName,
+        customerPhone: userPhone,
+        customerEmail: userEmail,
+      );
 
       if (mounted) Navigator.pop(context); // Dismiss loading dialog
 
-      if (orderRes.statusCode == 200) {
-        final orderData = jsonDecode(orderRes.body);
-        paymentLink = orderData['link_url'];
-      } else {
-        debugPrint('Cashfree link error: ${orderRes.body}');
+      if (orderResult.alreadyPaid) {
+        setState(() {
+          _isCashfreeProcessing = false;
+          isOnlinePaid = true;
+          if (orderResult.deliveryOtp != null) activeOtp = orderResult.deliveryOtp;
+          paymentMethod = 'Cashfree Gateway';
+        });
+        _showOnlinePaymentSuccessDialog(amount, activeOtp ?? '----');
+        return;
+      }
+
+      if (!orderResult.success || orderResult.paymentSessionId == null) {
+        setState(() {
+          _isCashfreeProcessing = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(orderResult.errorMessage ?? "Failed to initialize Cashfree payment."),
+              backgroundColor: AppColors.danger,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      _currentCfOrderId = orderResult.cfOrderId;
+
+      // Step 2: Launch Cashfree Official Native SDK Drop Checkout
+      final isProd = orderResult.environment.toUpperCase() == 'PRODUCTION';
+      final launched = await _cashfreeSdk.startNativeDropCheckout(
+        orderId: orderResult.cfOrderId ?? orderId,
+        paymentSessionId: orderResult.paymentSessionId!,
+        isProduction: isProd,
+      );
+
+      if (!launched) {
+        setState(() {
+          _isCashfreeProcessing = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Could not launch Cashfree Checkout. Please try again."),
+              backgroundColor: AppColors.danger,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context);
-      debugPrint('Cashfree payment exception: $e');
-    }
-
-    if (paymentLink == null || paymentLink.isEmpty) {
+      if (mounted) Navigator.pop(context); // Dismiss loading dialog if open
+      setState(() {
+        _isCashfreeProcessing = false;
+      });
+      debugPrint("Exception in _handleCashfreePayment: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to initialize Cashfree Gateway. Please check internet connection."),
-            backgroundColor: Color(0xFFDC2626),
+          SnackBar(
+            content: Text("Error initializing payment: $e"),
+            backgroundColor: AppColors.danger,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
-      return;
     }
-
-    // Launch Cashfree in-app browser view so user stays inside the app
-    try {
-      await launchUrl(
-        Uri.parse(paymentLink),
-        mode: LaunchMode.inAppBrowserView,
-      );
-    } catch (_) {
-      await launchUrl(
-        Uri.parse(paymentLink),
-        mode: LaunchMode.externalApplication,
-      );
-    }
-
-    if (!mounted) return;
-
-    // Immediately verify status and redirect/update Order Tracking page
-    await _checkAndHandleCashfreeReturn(linkId, amount);
   }
 
-  // Verifies Cashfree payment result and redirects / updates Order Tracking Page
-  Future<void> _checkAndHandleCashfreeReturn(String linkId, double amount) async {
-    // 1. Check MongoDB backend for updated order status (updated by /cashfree-return endpoint)
-    try {
-      final res = await http.get(ApiConfig.orderById(orderId)).timeout(const Duration(seconds: 3));
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        final order = data['order'];
-        if (order != null && (order['payment_status'] == 'paid' || order['payment_status'] == 'success')) {
-          final otp = (order['cod_otp'] ?? activeOtp)?.toString();
-          if (mounted) {
-            setState(() {
-              isOnlinePaid = true;
-              if (otp != null && otp.isNotEmpty) {
-                activeOtp = otp;
-              }
-              paymentMethod = 'Cashfree Gateway';
-            });
-            _showOnlinePaymentSuccessDialog(amount, activeOtp ?? '----');
-          }
-          return;
-        }
-      }
-    } catch (e) {
-      debugPrint("Error verifying order status from backend: $e");
-    }
-
-    // 2. Query Cashfree direct API for link status
-    try {
-      final cfRes = await http.get(
-        Uri.parse('${CashfreeConfig.baseUrl}/links/$linkId'),
-        headers: {
-          'x-client-id': CashfreeConfig.appId,
-          'x-client-secret': CashfreeConfig.secretKey,
-          'x-api-version': CashfreeConfig.apiVersion,
-        },
-      ).timeout(const Duration(seconds: 4));
-
-      if (cfRes.statusCode == 200) {
-        final cfData = jsonDecode(cfRes.body);
-        final status = cfData['link_status'];
-        final paidAmount = (cfData['link_amount_paid'] as num?)?.toDouble() ?? 0.0;
-        if (status == 'PAID' || paidAmount > 0) {
-          await _confirmOnlinePayment("Cashfree Gateway", amount);
-          return;
-        }
-      }
-    } catch (e) {
-      debugPrint("Error checking Cashfree link status: $e");
-    }
-
+  // Callback triggered when Cashfree Native SDK completes checkout successfully
+  Future<void> _onCashfreeNativeSuccess(String cfOrderId) async {
+    debugPrint("[Cashfree Native] SDK verify triggered for: $cfOrderId");
     if (!mounted) return;
 
-    // 3. Fallback confirmation dialog if webhook/redirect hasn't triggered yet
-    _showPaymentConfirmationDialog("Cashfree Gateway", amount);
+    // Show verification dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                ),
+                SizedBox(height: 20),
+                Text(
+                  "Verifying Payment...",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  "Confirming transaction securely with server...",
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final verifyOrderId = _currentCfOrderId ?? cfOrderId;
+    final verifyResult = await _cashfreeSdk.verifyPaymentWithBackend(
+      orderId: orderId,
+      cfOrderId: verifyOrderId,
+    );
+
+    if (mounted) Navigator.pop(context); // Dismiss verification dialog
+
+    if (verifyResult.isPaid) {
+      if (mounted) {
+        setState(() {
+          _isCashfreeProcessing = false;
+          isOnlinePaid = true;
+          if (verifyResult.deliveryOtp != null && verifyResult.deliveryOtp!.isNotEmpty) {
+            activeOtp = verifyResult.deliveryOtp!;
+          }
+          paymentMethod = 'Cashfree Gateway';
+        });
+        _showOnlinePaymentSuccessDialog(
+          verifyResult.amount > 0 ? verifyResult.amount : totalAmount,
+          activeOtp ?? '----',
+        );
+      }
+    } else if (verifyResult.isPending) {
+      setState(() {
+        _isCashfreeProcessing = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Payment status is pending with the bank. It will update shortly."),
+            backgroundColor: Color(0xFFD97706),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } else {
+      setState(() {
+        _isCashfreeProcessing = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(verifyResult.message.isNotEmpty ? verifyResult.message : "Payment verification failed."),
+            backgroundColor: AppColors.danger,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // Callback triggered when Cashfree Native SDK encounters failure or cancellation
+  void _onCashfreeNativeError(CFErrorResponse error, String cfOrderId) {
+    debugPrint("[Cashfree Native] SDK error: ${error.getMessage()} (${error.getCode()}) for $cfOrderId");
+    if (!mounted) return;
+
+    setState(() {
+      _isCashfreeProcessing = false;
+    });
+
+    final errorMsg = error.getMessage() ?? 'Payment was not completed.';
+    final isCancelled = errorMsg.toLowerCase().contains('cancel') ||
+        errorMsg.toLowerCase().contains('back') ||
+        (error.getCode()?.toLowerCase().contains('cancel') ?? false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isCancelled
+              ? "Payment was cancelled. You can retry whenever you are ready."
+              : "Payment failed: $errorMsg",
+        ),
+        backgroundColor: isCancelled ? const Color(0xFF475569) : AppColors.danger,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   void _showOnlinePaymentSuccessDialog(double amount, String otp) {
@@ -1244,6 +1385,10 @@ class _PaymentPageState extends State<PaymentPage> {
   @override
   void initState() {
     super.initState();
+    _cashfreeSdk.initCallbacks(
+      onSuccess: _onCashfreeNativeSuccess,
+      onError: _onCashfreeNativeError,
+    );
     _loadInitialPrefs();
     _pollFromBackend();
     _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
@@ -1333,26 +1478,27 @@ class _PaymentPageState extends State<PaymentPage> {
                       else
                         _buildBillDetailsCard(),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 18),
 
-                      // Cancel Order button for customer
-                      SizedBox(
-                        width: double.infinity,
-                        height: 46,
-                        child: OutlinedButton.icon(
-                          onPressed: _cancelOrderFromCustomer,
-                          icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.danger),
-                          label: const Text(
-                            "Cancel Order",
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.danger),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.2),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                            backgroundColor: const Color(0xFFFEF2F2),
+                      // Cancel Order button for customer (Active if not delivered)
+                      if (orderStatus != 'delivered' && orderStatus != 'cancelled')
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: OutlinedButton.icon(
+                            onPressed: _cancelOrderFromCustomer,
+                            icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.danger),
+                            label: const Text(
+                              "Cancel Order",
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.danger),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.2),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              backgroundColor: const Color(0xFFFEF2F2),
+                            ),
                           ),
                         ),
-                      ),
 
                       const SizedBox(height: 100),
                     ],
@@ -1363,34 +1509,8 @@ class _PaymentPageState extends State<PaymentPage> {
   );
 }
 
-  // Customer cancels active order
+  // Customer cancels active order with cancellation reasons
   Future<void> _cancelOrderFromCustomer() async {
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Cancel Order?", style: TextStyle(fontWeight: FontWeight.w800)),
-        content: const Text("Do you really want to cancel this order? Nearby delivery partners will be notified immediately."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Keep Order", style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.danger,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Yes, Cancel", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
     String selectedReason = "Placed order by mistake";
     final TextEditingController reasonController = TextEditingController();
     final List<String> reasons = [
@@ -1401,7 +1521,6 @@ class _PaymentPageState extends State<PaymentPage> {
       "Other reason",
     ];
 
-    if (!mounted) return;
     final reasonConfirmed = await showDialog<bool>(
       context: context,
       builder: (dlgCtx) => StatefulBuilder(
@@ -1412,7 +1531,7 @@ class _PaymentPageState extends State<PaymentPage> {
               children: [
                 Icon(Icons.cancel_rounded, color: AppColors.danger, size: 22),
                 SizedBox(width: 8),
-                Text('Reason for cancellation', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text('Cancel Order', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
               ],
             ),
             content: SingleChildScrollView(
@@ -1421,10 +1540,10 @@ class _PaymentPageState extends State<PaymentPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "Please select why you want to cancel:",
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    "Please select a reason for cancelling this order:",
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   ...reasons.map((r) {
                     final isSel = selectedReason == r;
                     return InkWell(
@@ -1435,8 +1554,8 @@ class _PaymentPageState extends State<PaymentPage> {
                       },
                       borderRadius: BorderRadius.circular(10),
                       child: Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         decoration: BoxDecoration(
                           color: isSel ? const Color(0xFFFEE2E2) : const Color(0xFFF8FAFC),
                           borderRadius: BorderRadius.circular(10),
@@ -1486,13 +1605,14 @@ class _PaymentPageState extends State<PaymentPage> {
             ),
             actions: [
               TextButton(
-                child: const Text('Back', style: TextStyle(color: AppColors.textSecondary)),
+                child: const Text('Keep Order', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
                 onPressed: () => Navigator.pop(dlgCtx, false),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.danger,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
                 child: const Text('Confirm Cancel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 onPressed: () => Navigator.pop(dlgCtx, true),
@@ -1551,7 +1671,7 @@ class _PaymentPageState extends State<PaymentPage> {
             children: [
               const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
               const SizedBox(width: 8),
-              Expanded(child: Text("Order $orderId cancelled successfully.")),
+              Expanded(child: Text("Order $orderId cancelled: $finalReason")),
             ],
           ),
           backgroundColor: AppColors.danger,
@@ -1882,12 +2002,12 @@ class _PaymentPageState extends State<PaymentPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
 
               // Cancel Order button
               SizedBox(
                 width: double.infinity,
-                height: 46,
+                height: 48,
                 child: OutlinedButton.icon(
                   onPressed: _cancelOrderFromCustomer,
                   icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.danger),
@@ -2892,7 +3012,7 @@ class _PaymentPageState extends State<PaymentPage> {
           ],
         ),
         child: ElevatedButton(
-          onPressed: _showPaymentOptions,
+          onPressed: _isCashfreeProcessing ? null : _showPaymentOptions,
           style: ElevatedButton.styleFrom(
             backgroundColor: isPaid ? const Color(0xFF047857) : AppColors.primary,
             foregroundColor: Colors.white,
@@ -2901,28 +3021,44 @@ class _PaymentPageState extends State<PaymentPage> {
             padding: const EdgeInsets.symmetric(vertical: 16),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isPaid ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                isPaid
-                    ? "Payment Done • View OTP"
-                    : "Pay ₹ ${payAmount.toStringAsFixed(0)}",
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                  letterSpacing: 0.3,
+          child: _isCashfreeProcessing
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                    ),
+                    SizedBox(width: 12),
+                    Text(
+                      "Connecting to Cashfree...",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isPaid ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      isPaid
+                          ? "Payment Done • View OTP"
+                          : "Pay ₹ ${payAmount.toStringAsFixed(0)}",
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

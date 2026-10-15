@@ -352,7 +352,7 @@ class OrderStatusPageState extends State<OrderStatusPage> {
       },
       label: const Text('Pay Now'),
       icon: const Icon(Icons.payment_rounded),
-      backgroundColor: const Color(0xFF0F766E),
+      backgroundColor: AppColors.primary,
     ),
     floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );

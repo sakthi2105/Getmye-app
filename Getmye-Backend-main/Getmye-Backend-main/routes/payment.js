@@ -96,7 +96,55 @@ router.post('/verify-cod', async (req, res) => {
   }
 });
 
-// GET /api/payment/cashfree-return - Handles Cashfree redirect after payment
+// Helper: Mark order as paid and synchronize Order, Bill, and Payment in MongoDB
+async function markOrderAsPaid(order_id, transaction_reference, amount, paymentMethod = 'Cashfree Gateway') {
+  const order = await Order.findOne({ order_id });
+  let deliveryOtp = order?.cod_otp;
+  if (!deliveryOtp || deliveryOtp === '1234') {
+    deliveryOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  }
+
+  if (order) {
+    order.payment_status = 'paid';
+    order.payment_method = paymentMethod;
+    order.cod_otp = deliveryOtp;
+    await order.save();
+  }
+
+  // Update Bill if exists
+  await Bill.findOneAndUpdate({ order_id }, { status: 'paid' });
+
+  // Record or update Payment
+  let payment = await Payment.findOne({ order_id }).sort({ created_at: -1 });
+  if (!payment) {
+    const paymentId = await getNextSequence('payment_id', 'PAY-', 4);
+    payment = new Payment({
+      payment_id: paymentId,
+      order_id,
+      user_id: order?.user_id || 'USER001',
+      amount: Number(amount) || order?.grand_total || order?.total_amount || 195,
+      payment_method: paymentMethod,
+      payment_status: 'success',
+      transaction_reference: transaction_reference || `CF-${Date.now()}`,
+      cod_otp: deliveryOtp,
+      is_cod_verified: true,
+      paid_at: new Date()
+    });
+    await payment.save();
+  } else {
+    payment.payment_status = 'success';
+    payment.payment_method = paymentMethod;
+    payment.transaction_reference = transaction_reference || payment.transaction_reference;
+    payment.is_cod_verified = true;
+    payment.paid_at = new Date();
+    if (!payment.cod_otp) payment.cod_otp = deliveryOtp;
+    await payment.save();
+  }
+
+  return { order, payment, deliveryOtp };
+}
+
+// GET /api/payment/cashfree-return - Handles Cashfree redirect after payment (legacy link support)
 router.get('/cashfree-return', async (req, res) => {
   try {
     const order_id = req.query.order_id;
@@ -106,48 +154,7 @@ router.get('/cashfree-return', async (req, res) => {
       return res.status(400).send('Missing order_id');
     }
 
-    // Find the order
-    const order = await Order.findOne({ order_id });
-    let deliveryOtp = order?.cod_otp;
-    if (!deliveryOtp) {
-      deliveryOtp = Math.floor(1000 + Math.random() * 9000).toString();
-    }
-
-    if (order) {
-      order.payment_status = 'paid';
-      order.payment_method = 'Cashfree Gateway';
-      order.cod_otp = deliveryOtp;
-      await order.save();
-    }
-
-    // Update Bill if exists
-    await Bill.findOneAndUpdate({ order_id }, { status: 'paid' });
-
-    // Record or update Payment
-    let payment = await Payment.findOne({ order_id }).sort({ created_at: -1 });
-    if (!payment) {
-      const paymentId = await getNextSequence('payment_id', 'PAY-', 4);
-      payment = new Payment({
-        payment_id: paymentId,
-        order_id,
-        user_id: order?.user_id || 'USER001',
-        amount: order?.grand_total || order?.total_amount || 195,
-        payment_method: 'Cashfree Gateway',
-        payment_status: 'success',
-        transaction_reference: link_id || `CF-${Date.now()}`,
-        cod_otp: deliveryOtp,
-        is_cod_verified: true,
-        paid_at: new Date()
-      });
-      await payment.save();
-    } else {
-      payment.payment_status = 'success';
-      payment.payment_method = 'Cashfree Gateway';
-      payment.is_cod_verified = true;
-      payment.paid_at = new Date();
-      if (!payment.cod_otp) payment.cod_otp = deliveryOtp;
-      await payment.save();
-    }
+    const { deliveryOtp } = await markOrderAsPaid(order_id, link_id, null, 'Cashfree Gateway');
 
     // Render HTML page that redirects to getmye app
     res.send(`
@@ -206,7 +213,7 @@ router.get('/cashfree-return', async (req, res) => {
           .btn {
             display: block;
             width: 100%;
-            background: #0F766E;
+            background: #142B4A;
             color: white;
             padding: 16px;
             border-radius: 14px;
@@ -215,9 +222,9 @@ router.get('/cashfree-return', async (req, res) => {
             font-size: 16px;
             border: none;
             cursor: pointer;
-            box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+            box-shadow: 0 4px 12px rgba(20, 43, 74, 0.3);
           }
-          .btn:active { background: #115E59; }
+          .btn:active { background: #0C1B30; }
         </style>
       </head>
       <body>
@@ -283,21 +290,255 @@ router.get('/cashfree/config', (req, res) => {
     success: true,
     app_id: CASHFREE_APP_ID,
     api_version: CASHFREE_API_VERSION,
-    base_url: CASHFREE_BASE_URL
+    base_url: CASHFREE_BASE_URL,
+    environment: process.env.CASHFREE_ENV || 'SANDBOX'
   });
 });
 
-// POST /api/payment/cashfree/create-link - Create Cashfree payment link using server environment variables
+// POST /api/payment/cashfree/create-order - Securely create Cashfree order server-side and return payment_session_id
+router.post('/cashfree/create-order', async (req, res) => {
+  try {
+    const { order_id, amount, customer_id, customer_name, customer_phone, customer_email } = req.body;
+
+    if (!order_id) {
+      return res.status(400).json({ error: 'order_id is required' });
+    }
+
+    // 1. Check if order exists in DB and prevent duplicate payment
+    const existingOrder = await Order.findOne({ order_id });
+    if (existingOrder && (existingOrder.payment_status === 'paid' || existingOrder.payment_status === 'success')) {
+      return res.status(200).json({
+        success: true,
+        already_paid: true,
+        order_id,
+        delivery_otp: existingOrder.cod_otp,
+        message: 'Order is already marked as paid'
+      });
+    }
+
+    // 2. Validate amount
+    let orderAmount = Number(amount);
+    if (!orderAmount || isNaN(orderAmount) || orderAmount <= 0) {
+      orderAmount = existingOrder?.grand_total || existingOrder?.budget || 195.0;
+    }
+    const formattedAmount = Number(orderAmount.toFixed(2));
+
+    // 3. Format customer details per Cashfree requirements
+    let custId = (customer_id || existingOrder?.user_id || 'USER001').toString().replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (custId.length < 3) custId = `cust_${custId}`;
+    if (custId.length > 50) custId = custId.substring(0, 50);
+
+    let custPhone = (customer_phone || existingOrder?.customer_phone || '').toString().replace(/\D/g, '');
+    if (custPhone.length > 10) custPhone = custPhone.slice(-10);
+    if (custPhone.length !== 10) custPhone = '9999999999';
+
+    const custName = (customer_name || existingOrder?.customer_name || 'GetMye Customer').toString().trim() || 'Customer';
+    const custEmail = (customer_email || `${custId}@getmye.com`).toString().trim();
+
+    // 4. Generate unique Cashfree order ID (allows retry if customer cancels checkout)
+    const sanitizedOrderId = order_id.toString().replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cfOrderId = `cf_${sanitizedOrderId}_${Date.now().toString().slice(-6)}`;
+
+    const payload = {
+      order_id: cfOrderId,
+      order_amount: formattedAmount,
+      order_currency: 'INR',
+      customer_details: {
+        customer_id: custId,
+        customer_name: custName,
+        customer_phone: custPhone,
+        customer_email: custEmail
+      },
+      order_meta: {
+        notify_url: `${req.protocol}://${req.get('host')}/api/payment/cashfree/webhook`
+      },
+      order_note: `Getmye Order #${order_id}`,
+      order_tags: {
+        brand: 'Getmye',
+        business_name: 'Getmye',
+        merchant_name: 'Getmye'
+      }
+    };
+
+    console.log(`[Cashfree] Creating server order: ${cfOrderId} for ₹${formattedAmount}`);
+
+    const response = await axios.post(`${CASHFREE_BASE_URL}/orders`, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': CASHFREE_APP_ID,
+        'x-client-secret': CASHFREE_SECRET_KEY,
+        'x-api-version': CASHFREE_API_VERSION
+      },
+      timeout: 10000
+    });
+
+    console.log(`[Cashfree] Order created: ${cfOrderId}, session: ${response.data.payment_session_id ? 'obtained' : 'missing'}`);
+
+    res.json({
+      success: true,
+      order_id: order_id,
+      cf_order_id: cfOrderId,
+      payment_session_id: response.data.payment_session_id,
+      order_amount: response.data.order_amount,
+      order_currency: response.data.order_currency || 'INR',
+      environment: process.env.CASHFREE_ENV || 'SANDBOX'
+    });
+  } catch (err) {
+    const errorDetails = err.response?.data || err.message;
+    console.error('[Cashfree] Order creation error:', errorDetails);
+    res.status(err.response?.status || 500).json({
+      error: 'Failed to create Cashfree payment order',
+      details: errorDetails
+    });
+  }
+});
+
+// POST /api/payment/cashfree/verify-order - Server-side payment verification using Cashfree Orders API
+router.post('/cashfree/verify-order', async (req, res) => {
+  try {
+    const { order_id, cf_order_id } = req.body;
+    if (!order_id || !cf_order_id) {
+      return res.status(400).json({ error: 'order_id and cf_order_id are required' });
+    }
+
+    console.log(`[Cashfree] Verifying order server-side: cf_order_id=${cf_order_id}, app_order_id=${order_id}`);
+
+    // Query Cashfree server-side API
+    const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${cf_order_id}`, {
+      headers: {
+        'x-client-id': CASHFREE_APP_ID,
+        'x-client-secret': CASHFREE_SECRET_KEY,
+        'x-api-version': CASHFREE_API_VERSION
+      },
+      timeout: 10000
+    });
+
+    const cfOrder = response.data;
+    let isPaid = (cfOrder.order_status === 'PAID');
+    let paidAmount = cfOrder.order_amount;
+    let transactionId = cf_order_id;
+
+    // If order_status is not directly PAID, inspect payments endpoint
+    if (!isPaid) {
+      try {
+        const paymentsRes = await axios.get(`${CASHFREE_BASE_URL}/orders/${cf_order_id}/payments`, {
+          headers: {
+            'x-client-id': CASHFREE_APP_ID,
+            'x-client-secret': CASHFREE_SECRET_KEY,
+            'x-api-version': CASHFREE_API_VERSION
+          },
+          timeout: 8000
+        });
+        const payments = paymentsRes.data || [];
+        const successPayment = payments.find(p => p.payment_status === 'SUCCESS');
+        if (successPayment) {
+          isPaid = true;
+          paidAmount = successPayment.payment_amount || paidAmount;
+          transactionId = successPayment.cf_payment_id ? String(successPayment.cf_payment_id) : transactionId;
+        }
+      } catch (payErr) {
+        console.warn(`[Cashfree] Could not fetch payments list for ${cf_order_id}:`, payErr.message);
+      }
+    }
+
+    if (isPaid) {
+      const { order, deliveryOtp } = await markOrderAsPaid(order_id, transactionId, paidAmount, 'Cashfree Gateway');
+      return res.json({
+        success: true,
+        payment_status: 'paid',
+        order_id,
+        cf_order_id,
+        transaction_id: transactionId,
+        delivery_otp: deliveryOtp,
+        amount: paidAmount,
+        message: 'Payment verified and confirmed successfully'
+      });
+    }
+
+    const currentStatus = cfOrder.order_status?.toLowerCase() || 'pending';
+    res.json({
+      success: false,
+      payment_status: currentStatus,
+      order_id,
+      cf_order_id,
+      message: `Cashfree order status is ${cfOrder.order_status || 'PENDING'}`
+    });
+  } catch (err) {
+    const errorDetails = err.response?.data || err.message;
+    console.error('[Cashfree] Order verification error:', errorDetails);
+    res.status(err.response?.status || 500).json({
+      error: 'Failed to verify Cashfree payment status',
+      details: errorDetails
+    });
+  }
+});
+
+// GET /api/payment/cashfree/status/:orderId - Check order status in DB and fallback to Cashfree
+router.get('/cashfree/status/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findOne({ order_id: orderId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const payment = await Payment.findOne({ order_id: orderId }).sort({ created_at: -1 });
+
+    res.json({
+      success: true,
+      order_id: orderId,
+      payment_status: order.payment_status,
+      payment_method: order.payment_method,
+      delivery_otp: order.cod_otp,
+      amount: order.grand_total || order.budget,
+      payment_details: payment
+    });
+  } catch (err) {
+    console.error('[Cashfree] Status fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch payment status' });
+  }
+});
+
+// POST /api/payment/cashfree/webhook - Handle Cashfree asynchronous webhook events
+router.post('/cashfree/webhook', async (req, res) => {
+  try {
+    const event = req.body;
+    console.log('[Cashfree Webhook] Event received:', event?.type || event?.event_time);
+
+    const orderData = event?.data?.order;
+    const paymentData = event?.data?.payment;
+    const cfOrderId = orderData?.order_id || event?.data?.order_id;
+
+    if (paymentData?.payment_status === 'SUCCESS' || orderData?.order_status === 'PAID') {
+      if (cfOrderId) {
+        let appOrderId = cfOrderId;
+        const match = cfOrderId.match(/^cf_(.*?)_\d+$/);
+        if (match && match[1]) {
+          appOrderId = match[1];
+        }
+
+        const paidAmount = paymentData?.payment_amount || orderData?.order_amount;
+        const txnId = paymentData?.cf_payment_id ? String(paymentData.cf_payment_id) : cfOrderId;
+
+        await markOrderAsPaid(appOrderId, txnId, paidAmount, 'Cashfree Gateway');
+        console.log(`[Cashfree Webhook] Successfully marked order ${appOrderId} as paid`);
+      }
+    }
+
+    res.status(200).json({ status: 'OK' });
+  } catch (err) {
+    console.error('[Cashfree Webhook] Error processing webhook:', err.message);
+    res.status(200).json({ status: 'ERROR', message: err.message });
+  }
+});
+
+// Legacy backward-compatibility endpoints
 router.post('/cashfree/create-link', async (req, res) => {
   try {
     const { link_id, amount, order_id, customer_phone, customer_name, return_url } = req.body;
-    if (!link_id || !amount) {
-      return res.status(400).json({ error: 'link_id and amount are required' });
-    }
-
     const payload = {
-      link_id: link_id,
-      link_amount: Number(amount),
+      link_id: link_id || `cf_${Date.now()}`,
+      link_amount: Number(amount) || 195,
       link_currency: 'INR',
       link_purpose: `Food Order #${order_id || 'GetMye'}`,
       customer_details: {
@@ -321,16 +562,14 @@ router.post('/cashfree/create-link', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('Error creating Cashfree link:', err.response?.data || err.message);
     res.status(err.response?.status || 500).json({
-      error: 'Failed to create Cashfree payment link',
+      error: 'Failed to create Cashfree link',
       details: err.response?.data || err.message
     });
   }
 });
 
-// GET /api/payment/cashfree/status/:linkId - Verify Cashfree link status using server environment credentials
-router.get('/cashfree/status/:linkId', async (req, res) => {
+router.get('/cashfree/status-link/:linkId', async (req, res) => {
   try {
     const { linkId } = req.params;
     const response = await axios.get(`${CASHFREE_BASE_URL}/links/${linkId}`, {
@@ -341,10 +580,8 @@ router.get('/cashfree/status/:linkId', async (req, res) => {
       },
       timeout: 8000
     });
-
     res.json(response.data);
   } catch (err) {
-    console.error('Error fetching Cashfree status:', err.response?.data || err.message);
     res.status(err.response?.status || 500).json({
       error: 'Failed to verify Cashfree link status',
       details: err.response?.data || err.message

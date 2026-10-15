@@ -758,17 +758,27 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                     // Brand Logo & Icon for Partner
                     Center(
                       child: Container(
-                        height: 72,
-                        width: 72,
+                        height: 76,
+                        width: 76,
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
+                          color: Colors.white,
                           borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: const Color(0xFFFDE68A), width: 2),
+                          border: Border.all(color: AppColors.border, width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                        child: const Icon(
-                          Icons.two_wheeler_rounded,
-                          size: 38,
-                          color: Color(0xFFB45309),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.asset(
+                            'assets/G_LOGO.PNG',
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
                     ),

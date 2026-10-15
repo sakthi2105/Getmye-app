@@ -145,4 +145,7 @@ const OrderSchema = new mongoose.Schema({
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
 });
 
+OrderSchema.index({ partner_id: 1, created_at: -1 });
+OrderSchema.index({ created_at: -1 });
+
 module.exports = mongoose.model('Order', OrderSchema);

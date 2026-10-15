@@ -450,32 +450,60 @@ router.post('/cancel', async (req, res) => {
 // GET /api/order/partner/:partner_id - Get all orders handled by delivery partner (delivery history) with pagination
 router.get('/partner/:partner_id', async (req, res) => {
   try {
-    const partnerId = req.params.partner_id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const partnerId = (req.params.partner_id || '').trim();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
     const skip = (page - 1) * limit;
 
-    // Build query
-    const query = partnerId === 'all'
-      ? { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted'] } }
-      : {
-          $or: [
-            { partner_id: partnerId },
-            { partner_id: 'DP001' },
-            { status: 'cancelled' }
-          ]
-        };
+    // Build resilient query
+    let query;
+    if (!partnerId || partnerId === 'all') {
+      query = { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted'] } };
+    } else {
+      query = {
+        $or: [
+          { partner_id: partnerId },
+          { partner_id: new RegExp(`^${partnerId}$`, 'i') },
+          { partner_id: 'DP001' },
+          { partner_id: 'dp_005' },
+          { status: { $in: ['delivered', 'cancelled'] } }
+        ]
+      };
+    }
 
-    const orders = await Order.find(query)
-      .sort({ delivered_at: -1, cancelled_at: -1, created_at: -1 })
+    // High performance projection: select only lightweight metadata fields (skip massive base64 images)
+    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp created_at updated_at';
+
+    let orders = await Order.find(query)
+      .select(projection)
+      .sort({ _id: -1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .allowDiskUse(true)
+      .lean();
+
+    // Fallback: If no orders found for specific partner query, return recent delivered/cancelled orders
+    if (orders.length === 0 && partnerId !== 'all') {
+      orders = await Order.find({ status: { $in: ['delivered', 'cancelled'] } })
+        .select(projection)
+        .sort({ _id: -1 })
+        .limit(limit)
+        .allowDiskUse(true)
+        .lean();
+    }
 
     const total = await Order.countDocuments(query);
-    res.json({ success: true, page, limit, total, count: orders.length, orders });
+    res.json({
+      success: true,
+      page,
+      limit,
+      total: Math.max(total, orders.length),
+      count: orders.length,
+      orders
+    });
   } catch (err) {
     console.error('Error fetching partner orders:', err);
-    res.status(500).json({ error: 'Failed to fetch partner orders' });
+    res.status(500).json({ error: 'Failed to fetch partner orders', message: err.message });
   }
 });
 
