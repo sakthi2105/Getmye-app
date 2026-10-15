@@ -9,7 +9,6 @@ import 'api_config.dart';
 import 'editp.dart';
 import 'history.dart';
 import 'main.dart';
-import 'options.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 import 'ppp.dart';
@@ -380,16 +379,6 @@ class _ProfilePageState extends State<ProfilePage> {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => OrderHistoryPage(order: const {})),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        _buildMenuTile(
-                          icon: Icons.help_outline_rounded,
-                          title: 'Help & Support',
-                          subtitle: 'Customer support, complaints & FAQs',
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const OptionsPage(isDarkMode: false)),
                           ),
                         ),
                         const Divider(height: 1),

@@ -5,6 +5,8 @@ import 'deliveryhistroy.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'help_page.dart';
+import 'terms_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -188,6 +190,24 @@ class dOptionsPage extends StatelessWidget {
                 ),
               ),
               (route) => false,
+            );
+            return;
+          }
+          if (title == 'Help') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const HelpPage(),
+              ),
+            );
+            return;
+          }
+          if (title == 'Terms and conditions') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const TermsPage(),
+              ),
             );
             return;
           }

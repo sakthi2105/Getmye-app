@@ -9,7 +9,8 @@ import 'homed.dart';
 import 'ppp.dart';
 import 'api_config.dart';
 import 'services/app_notification_service.dart';
-import 'dlogin.dart';
+import 'services/alarm_service.dart';
+import 'splash_screen.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -22,41 +23,44 @@ Future<void> initNotifications() async {
   await flutterLocalNotificationsPlugin.initialize(initSettings);
 }
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Launch Flutter UI immediately so SplashScreen displays without delay
+  runApp(const MyApp());
+  _initServicesAsync();
+}
+
+Future<void> _initServicesAsync() async {
   try {
     await dotenv.load(fileName: ".env");
   } catch (e) {
     debugPrint("Failed to load .env file: $e");
   }
-  await initNotifications();
-  await AppNotificationService.init();
-  AppNotificationService.startGlobalChatPolling();
-  AppNotificationService.startGlobalPartnerOrderPolling();
+  try {
+    await initNotifications();
+    await AppNotificationService.init();
+    AppNotificationService.startGlobalChatPolling();
+    AppNotificationService.startGlobalPartnerOrderPolling();
 
-  // Persistent login check: If customer or partner is already logged in on this device,
-  // skip the login page and go straight to the respective home page.
-  final prefs = await SharedPreferences.getInstance();
-  final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
-  final String accountType = prefs.getString('account_type') ?? 'customer';
-
-  Widget initialScreen;
-  if (isLoggedIn) {
-    if (accountType == 'partner') {
-      initialScreen = const DeliveryHomePage();
-    } else {
-      initialScreen = const HomePage();
+    // 🟢 Start background foreground listening service on startup if partner is logged in & online
+    final prefs = await SharedPreferences.getInstance();
+    final accountType = prefs.getString('account_type');
+    final isOnline = prefs.getBool('d_is_online') ?? true;
+    final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+    if (accountType == 'partner' && isOnline) {
+      AlarmService.startOrderListeningService(
+        baseUrl: ApiConfig.baseUrl,
+        partnerId: pId,
+      );
     }
-  } else {
-    initialScreen = const LoginPage();
+  } catch (e) {
+    debugPrint("Failed to init notification services: $e");
   }
-
-  runApp(MyApp(initialScreen: initialScreen));
 }
 
 class MyApp extends StatefulWidget {
-  final Widget initialScreen;
-  const MyApp({super.key, required this.initialScreen});
+  final Widget? initialScreen;
+  const MyApp({super.key, this.initialScreen});
 
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -94,7 +98,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       title: 'GETMYE',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
-      home: widget.initialScreen,
+      home: widget.initialScreen ?? const SplashScreen(),
     );
   }
 }
@@ -1140,7 +1144,7 @@ class _LoginPageState extends State<LoginPage> {
                             child: ElevatedButton(
                               onPressed: _isLoading ? null : (_isSignUp ? _handleSignUp : _handleLogin),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
+                                backgroundColor: _isSignUp ? const Color(0xFFF96E14) : AppColors.primary,
                                 foregroundColor: Colors.white,
                                 elevation: 0,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1175,39 +1179,40 @@ class _LoginPageState extends State<LoginPage> {
                                   _isSignUp = !_isSignUp;
                                 });
                               },
-                              child: Text(
-                                _isSignUp
-                                    ? 'Already have an account? Login'
-                                    : "Don't have an account? Create New Account",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
-                                  color: AppColors.primaryDark,
-                                ),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                               ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 6),
-
-                          // Switch to Delivery Partner Login Option
-                          Center(
-                            child: TextButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => const DeliveryPersonLoginPage()),
-                                );
-                              },
-                              icon: const Icon(Icons.two_wheeler_rounded, size: 18, color: Color(0xFFB45309)),
-                              label: const Text(
-                                'Delivery Partner? Login to Partner Console',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12.5,
-                                  color: Color(0xFFB45309),
-                                ),
-                              ),
+                              child: _isSignUp
+                                  ? const Text(
+                                      'Already have an account? Login',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 16,
+                                        color: AppColors.primary,
+                                      ),
+                                    )
+                                  : const Text.rich(
+                                      TextSpan(
+                                        text: "Don't have an account? ",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: AppColors.primaryDark,
+                                        ),
+                                        children: [
+                                          TextSpan(
+                                            text: "Create a new account",
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 16,
+                                              color: Color(0xFFF96E14),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
                             ),
                           ),
                         ],

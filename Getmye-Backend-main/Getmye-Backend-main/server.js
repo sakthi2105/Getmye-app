@@ -37,6 +37,18 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/support', supportRoutes);
 
+// Serve Privacy Policy & Help (for Play Store & Web View)
+app.use(express.static(require('path').join(__dirname, 'public')));
+app.get('/privacy-policy', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'privacy-policy.html'));
+});
+app.get('/help', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'help.html'));
+});
+app.get(['/terms', '/terms-and-conditions'], (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'terms.html'));
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', database: 'MongoDB', timestamp: new Date() });

@@ -163,10 +163,21 @@ class DeliveryOrderForegroundService : Service() {
 
         when (action) {
             ACTION_START_SERVICE -> {
+                val prefs = getSharedPreferences("getmye_service_prefs", Context.MODE_PRIVATE)
                 val bUrl = intent?.getStringExtra(EXTRA_BASE_URL)
                 val pId = intent?.getStringExtra(EXTRA_PARTNER_ID)
-                if (!bUrl.isNullOrEmpty()) baseUrl = bUrl
-                if (!pId.isNullOrEmpty()) partnerId = pId
+                if (!bUrl.isNullOrEmpty()) {
+                    baseUrl = bUrl
+                    prefs.edit().putString("base_url", bUrl).apply()
+                } else if (baseUrl.isNullOrEmpty()) {
+                    baseUrl = prefs.getString("base_url", null)
+                }
+                if (!pId.isNullOrEmpty()) {
+                    partnerId = pId
+                    prefs.edit().putString("partner_id", pId).apply()
+                } else if (partnerId.isNullOrEmpty()) {
+                    partnerId = prefs.getString("partner_id", null)
+                }
 
                 startAsForeground()
                 startBackgroundPolling()
@@ -393,32 +404,20 @@ class DeliveryOrderForegroundService : Service() {
                 }
 
                 if (orders != null) {
-                    // Pre-populate existing orders on first startup to avoid alerting old orders
-                    if (!isInitialCheckDone) {
-                        isInitialCheckDone = true
-                        for (i in 0 until orders.length()) {
-                            val o = orders.optJSONObject(i)
-                            val oid = o?.optString("order_id") ?: ""
-                            if (oid.isNotEmpty()) {
-                                knownOrderIds.add(oid)
-                            }
-                        }
-                        return
-                    }
-
-                    // Check for newly arriving pending orders
+                    // Check for pending unhandled orders and ring loud alarm
                     for (i in 0 until orders.length()) {
                         val o = orders.optJSONObject(i) ?: continue
                         val oid = o.optString("order_id", "")
                         val status = o.optString("status", "").lowercase()
-                        if (oid.isNotEmpty() && status == "pending" && !knownOrderIds.contains(oid) && !silencedOrderIds.contains(oid)) {
-                            knownOrderIds.add(oid)
-                            val item = o.optString("item_name", "Food Order")
-                            val cName = o.optString("customer_name", "Customer")
-                            val addr = o.optString("delivery_address", "")
-                            val budget = o.optDouble("budget", 150.0)
+                        if (oid.isNotEmpty() && status == "pending" && !silencedOrderIds.contains(oid)) {
+                            if (!isAlarmActive) {
+                                val item = o.optString("item_name", "Food Order")
+                                val cName = o.optString("customer_name", "Customer")
+                                val addr = o.optString("delivery_address", "")
+                                val budget = o.optDouble("budget", 150.0)
 
-                            startAlarmInternal(oid, item, cName, addr, budget)
+                                startAlarmInternal(oid, item, cName, addr, budget)
+                            }
                             break
                         }
                     }
@@ -443,24 +442,40 @@ class DeliveryOrderForegroundService : Service() {
         isAlarmActive = true
         currentAlarmOrderId = orderId
 
+        // 1. Wake up the CPU
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         try {
-            // 1. Wake up the CPU and turn ON the screen even if the phone is locked or screen off
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock?.let { if (it.isHeld) it.release() }
             wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "GetMye:DeliveryAlarmWakeLock"
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "GetMye:DeliveryAlarmCpuWakeLock"
             ).apply {
                 acquire(3 * 60 * 1000L) // 3 min max safety auto-release
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-            // 2. Request Audio Focus with USAGE_ALARM (Forces full alarm volume)
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val audioAttrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
+        // 2. Turn ON screen if locked or off
+        try {
+            @Suppress("DEPRECATION")
+            val screenLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                "GetMye:DeliveryAlarmScreenWakeLock"
+            )
+            screenLock.acquire(30 * 1000L) // Keep bright for 30 seconds
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
+        // 3. Request Audio Focus with USAGE_ALARM (Forces full alarm volume)
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val audioAttrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                     .setAudioAttributes(audioAttrs)
@@ -470,34 +485,38 @@ class DeliveryOrderForegroundService : Service() {
                 @Suppress("DEPRECATION")
                 audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-            // 3. Play order_alarm sound via MediaPlayer in loop
-            var playerStarted = false
-            try {
-                val resId = resources.getIdentifier("order_alarm", "raw", packageName)
-                if (resId != 0) {
-                    val afd = resources.openRawResourceFd(resId)
-                    if (afd != null) {
-                        mediaPlayer?.release()
-                        mediaPlayer = MediaPlayer().apply {
-                            setAudioAttributes(audioAttrs)
-                            setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                            afd.close()
-                            isLooping = true
-                            setVolume(1.0f, 1.0f)
-                            prepare()
-                            start()
-                        }
-                        playerStarted = true
+        // 4. Play order_alarm sound via MediaPlayer in loop
+        var playerStarted = false
+        try {
+            val resId = resources.getIdentifier("order_alarm", "raw", packageName)
+            if (resId != 0) {
+                val afd = resources.openRawResourceFd(resId)
+                if (afd != null) {
+                    mediaPlayer?.release()
+                    mediaPlayer = MediaPlayer().apply {
+                        setAudioAttributes(audioAttrs)
+                        setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        afd.close()
+                        isLooping = true
+                        setVolume(1.0f, 1.0f)
+                        prepare()
+                        start()
                     }
+                    playerStarted = true
                 }
-            } catch (rawEx: Exception) {
-                rawEx.printStackTrace()
             }
+        } catch (rawEx: Exception) {
+            rawEx.printStackTrace()
+        }
 
-            // 4. Fallback to system Ringtone if raw resource failed
-            if (!playerStarted) {
+        // 5. Fallback to system Ringtone if raw resource failed
+        if (!playerStarted) {
+            try {
                 val alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                     ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
                 alertUri?.let {
@@ -509,9 +528,13 @@ class DeliveryOrderForegroundService : Service() {
                         play()
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+        }
 
-            // 5. Heavy Pulsing Vibration
+        // 6. Heavy Pulsing Vibration
+        try {
             vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vibratorManager.defaultVibrator
@@ -527,10 +550,13 @@ class DeliveryOrderForegroundService : Service() {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(pattern, 0)
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-            // 6. Show Full Screen Heads-Up Alarm Notification
+        // 7. Show Full Screen Heads-Up Alarm Notification
+        try {
             showAlarmNotification(orderId, item, custName, address, budget)
-
         } catch (e: Exception) {
             e.printStackTrace()
         }

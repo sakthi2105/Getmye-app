@@ -107,6 +107,9 @@ flutter:
     - assets/banner_icecream.jpg
     - assets/banner_meals.jpg
     - assets/banner_mutton_biryani.jpg
+    - assets/banner_biryani_crushing.jpg
+    - assets/banner_shawarma_crushing.jpg
+    - assets/banner_momos_crushing.jpg
   # - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

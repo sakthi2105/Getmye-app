@@ -7,6 +7,9 @@ import 'dhome.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'theme/app_theme.dart';
 import 'ppp.dart';
+import 'help_page.dart';
+import 'terms_page.dart';
+import 'privacy_policy_page.dart';
 
 class OptionsPage extends StatelessWidget {
   const OptionsPage({super.key, required bool isDarkMode});
@@ -25,8 +28,8 @@ class OptionsPage extends StatelessWidget {
         return Icons.support_agent_rounded;
       case 'feedback':
         return Icons.rate_review_outlined;
-      case 'advertisement':
-        return Icons.campaign_outlined;
+      case 'privacy policy':
+        return Icons.privacy_tip_outlined;
       default:
         return Icons.chevron_right_rounded;
     }
@@ -53,7 +56,7 @@ class OptionsPage extends StatelessWidget {
       'Feedback',
       'Terms and conditions',
       'Help',
-      'Advertisement',
+      'Privacy policy',
     ];
 
     return PopScope(
@@ -92,7 +95,7 @@ class OptionsPage extends StatelessWidget {
             return _buildOption(context, title);
           },
         ),
-        bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 2),
+        bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 3),
       ),
     );
   }
@@ -160,6 +163,21 @@ class OptionsPage extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SubmitFeedbackPage()),
+            );
+          } else if (title == 'Help') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const HelpPage()),
+            );
+          } else if (title == 'Terms and conditions') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TermsPage()),
+            );
+          } else if (title == 'Privacy policy') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PrivacyPolicyPage()),
             );
           } else {
             Navigator.push(

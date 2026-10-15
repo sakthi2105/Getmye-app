@@ -52,10 +52,10 @@ class _CustomerBottomNavBarState extends State<CustomerBottomNavBar> {
         destination = const ProfilePage();
         break;
       case 2:
-        destination = const OptionsPage(isDarkMode: false);
+        destination = const PaymentPage();
         break;
       case 3:
-        destination = const PaymentPage();
+        destination = const OptionsPage(isDarkMode: false);
         break;
       default:
         destination = const HomePage();
@@ -110,17 +110,17 @@ class _CustomerBottomNavBarState extends State<CustomerBottomNavBar> {
             _buildNavItem(
               context: context,
               index: 2,
-              icon: Icons.menu_rounded,
-              activeIcon: Icons.menu_rounded,
-              label: 'Options',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 3,
               icon: Icons.delivery_dining_outlined,
               activeIcon: Icons.delivery_dining_rounded,
               label: 'Orders',
               showBadge: _hasActiveOrder,
+            ),
+            _buildNavItem(
+              context: context,
+              index: 3,
+              icon: Icons.menu_rounded,
+              activeIcon: Icons.menu_rounded,
+              label: 'Options',
             ),
           ],
         ),
