@@ -68,6 +68,16 @@ app.use((err, req, res, next) => {
 // Initialize Database connection
 require('./db');
 
+// Background Dispatch Runner: Checks for 2-minute order timeouts every 5 seconds
+const { checkAndReassignExpiredOrders } = require('./services/orderDispatchService');
+setInterval(async () => {
+  try {
+    await checkAndReassignExpiredOrders();
+  } catch (err) {
+    console.error('Background order dispatch ticker error:', err.message);
+  }
+}, 5000);
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

@@ -98,6 +98,84 @@ class _HomePageState extends State<HomePage> {
   LatLng _customerLocation = const LatLng(10.9601, 79.3845);
   LatLng _riderLocation = const LatLng(10.9620, 79.3860);
 
+  // 📍 Geo-fencing / Service Area Restriction: Kumbakonam Town Exclusivity
+  static const double _kumbakonamCenterLat = 10.9601;
+  static const double _kumbakonamCenterLng = 79.3845;
+  static const double _kumbakonamMaxRadiusKm = 10.0;
+  static const String _kumbakonamUnavailableMsg =
+      "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!";
+
+  bool _isLocationInKumbakonam(double lat, double lng) {
+    final double dLat = (_kumbakonamCenterLat - lat) * (pi / 180.0);
+    final double dLng = (_kumbakonamCenterLng - lng) * (pi / 180.0);
+    final double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat * (pi / 180.0)) * cos(_kumbakonamCenterLat * (pi / 180.0)) *
+        sin(dLng / 2) * sin(dLng / 2);
+    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    final double distKm = 6371.0 * c;
+    return distKm <= _kumbakonamMaxRadiusKm;
+  }
+
+  void _showGeofenceRestrictionDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Colors.white,
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_off_rounded, color: Color(0xFFEF4444), size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                "Service Area Alert",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          _kumbakonamUnavailableMsg,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Got it", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _itemController = TextEditingController();
   final TextEditingController _budgetController = TextEditingController();
@@ -1705,6 +1783,16 @@ class _HomePageState extends State<HomePage> {
                     : "Current Delivery Location";
                 final budgetVal = double.tryParse(_budgetController.text.trim()) ?? 150.0;
 
+                // ⚡ Fast: Live GPS coordinates of selected customer address
+                final orderLat = _customerLocation.latitude;
+                final orderLng = _customerLocation.longitude;
+
+                // 🛑 Strict Geofencing: Initially launching exclusively in Kumbakonam town
+                if (!_isLocationInKumbakonam(orderLat, orderLng)) {
+                  _showGeofenceRestrictionDialog();
+                  return;
+                }
+
                 // Show searching immediately with clean partner state
                 setState(() {
                   showDeliveryDetails = true;
@@ -1729,10 +1817,6 @@ class _HomePageState extends State<HomePage> {
                   }
                   await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
                 }
-
-                // ⚡ Fast: Use live GPS coordinates without blocking delay
-                final orderLat = _customerLocation.latitude;
-                final orderLng = _customerLocation.longitude;
 
                 try {
                   // Call backend to create the real order in MongoDB with customer's fixed OTP
@@ -1764,19 +1848,25 @@ class _HomePageState extends State<HomePage> {
                     }
                   } else {
                     final data = jsonDecode(res.body);
-                    final errMsg = data['error'] ?? data['message'] ?? 'Failed to create order on server';
+                    final isGeofenceErr = data['error'] == 'GEOFENCE_RESTRICTION' ||
+                        (data['message'] != null && data['message'].toString().contains('unavailable in your location'));
                     if (mounted) {
                       setState(() {
                         isSearchingRider = false;
-                        showDeliveryDetails = true;
+                        showDeliveryDetails = false;
                       });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(errMsg),
-                          backgroundColor: AppColors.danger,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                      if (isGeofenceErr) {
+                        _showGeofenceRestrictionDialog();
+                      } else {
+                        final errMsg = data['error'] ?? data['message'] ?? 'Failed to create order on server';
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(errMsg),
+                            backgroundColor: AppColors.danger,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
                     }
                     return;
                   }
@@ -3255,7 +3345,7 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
 
           // Status Heading
           const Text(
-            "Searching & Notifying Delivery Partner...",
+            "Matching Closest Delivery Partner...",
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w900,
@@ -3266,7 +3356,7 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
           ),
           const SizedBox(height: 6),
           const Text(
-            "Connecting with active riders near you. Waiting for partner to click 'Accept Order'...",
+            "Routing order to the closest delivery partner in Kumbakonam. Automatically forwards to the next closest partner if unanswered within 2 minutes.",
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.35),
           ),

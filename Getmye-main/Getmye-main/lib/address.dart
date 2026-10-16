@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -35,6 +36,84 @@ class _AddressScreenState extends State<AddressScreen> {
   String _activeAddressShort = "Current Location";
   String _activeAddressFull = "Detecting delivery address...";
   String? _activeAddId;
+
+  // 📍 Geo-fencing / Service Area Restriction: Kumbakonam Town Exclusivity
+  static const double _kumbakonamCenterLat = 10.9601;
+  static const double _kumbakonamCenterLng = 79.3845;
+  static const double _kumbakonamMaxRadiusKm = 10.0;
+  static const String _kumbakonamUnavailableMsg =
+      "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!";
+
+  bool _isLocationInKumbakonam(double lat, double lng) {
+    final double dLat = (_kumbakonamCenterLat - lat) * (pi / 180.0);
+    final double dLng = (_kumbakonamCenterLng - lng) * (pi / 180.0);
+    final double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat * (pi / 180.0)) * cos(_kumbakonamCenterLat * (pi / 180.0)) *
+        sin(dLng / 2) * sin(dLng / 2);
+    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    final double distKm = 6371.0 * c;
+    return distKm <= _kumbakonamMaxRadiusKm;
+  }
+
+  void _showGeofenceRestrictionDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Colors.white,
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_off_rounded, color: Color(0xFFEF4444), size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                "Service Area Alert",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          _kumbakonamUnavailableMsg,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Got it", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -137,6 +216,14 @@ class _AddressScreenState extends State<AddressScreen> {
 
       final lat = position.latitude;
       final lng = position.longitude;
+
+      // 🛑 Strict Geofencing: Initially launching exclusively in Kumbakonam town
+      if (!_isLocationInKumbakonam(lat, lng)) {
+        if (mounted) {
+          _showGeofenceRestrictionDialog();
+        }
+        return;
+      }
 
       String road = "Current Location";
       String city = "Live Location";
@@ -274,8 +361,16 @@ class _AddressScreenState extends State<AddressScreen> {
     }
 
     if (addr['latitude'] != null && addr['longitude'] != null) {
-      await prefs.setDouble('customer_latitude', (addr['latitude'] as num).toDouble());
-      await prefs.setDouble('customer_longitude', (addr['longitude'] as num).toDouble());
+      final double aLat = (addr['latitude'] as num).toDouble();
+      final double aLng = (addr['longitude'] as num).toDouble();
+      if (!_isLocationInKumbakonam(aLat, aLng)) {
+        if (mounted) {
+          _showGeofenceRestrictionDialog();
+        }
+        return;
+      }
+      await prefs.setDouble('customer_latitude', aLat);
+      await prefs.setDouble('customer_longitude', aLng);
     }
 
     final userId = prefs.getString('user_id');

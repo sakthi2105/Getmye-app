@@ -4,6 +4,14 @@ const Order = require('../models/Order');
 const Profile = require('../models/Profile');
 const DeliveryPerson = require('../models/DeliveryPerson');
 const { getNextSequence } = require('../models/Counter');
+const {
+  KUMBAKONAM_GEOFENCE,
+  isWithinKumbakonam,
+  partnerIdsMatch,
+  isPartnerInList,
+  assignNextClosestPartner,
+  checkAndReassignExpiredOrders
+} = require('../services/orderDispatchService');
 
 // POST /api/order/create - Customer places a new order
 router.post('/create', async (req, res) => {
@@ -13,8 +21,35 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
 
+    // 1. Strict Location-Based Geo-Fencing: Exclusively in Kumbakonam Town
+    if (customer_latitude != null && customer_longitude != null) {
+      const allowed = isWithinKumbakonam(customer_latitude, customer_longitude);
+      if (!allowed) {
+        console.log(`⛔ Geofence Blocked: Customer location (${customer_latitude}, ${customer_longitude}) is outside Kumbakonam.`);
+        return res.status(400).json({
+          success: false,
+          error: 'GEOFENCE_RESTRICTION',
+          message: KUMBAKONAM_GEOFENCE.errorMessage
+        });
+      }
+    } else {
+      // If coordinates are missing, verify whether address text indicates Kumbakonam
+      const addrStr = (delivery_address || '').toString().toLowerCase();
+      if (!addrStr.includes('kumbakonam') && !addrStr.includes('kumbakonam town')) {
+        console.log(`⛔ Geofence Blocked: Address text "${delivery_address}" does not match Kumbakonam town.`);
+        return res.status(400).json({
+          success: false,
+          error: 'GEOFENCE_RESTRICTION',
+          message: KUMBAKONAM_GEOFENCE.errorMessage
+        });
+      }
+    }
+
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
     const finalOtp = (cod_otp || (Math.floor(1000 + Math.random() * 9000))).toString();
+
+    const finalLat = customer_latitude != null ? Number(customer_latitude) : KUMBAKONAM_GEOFENCE.center.latitude;
+    const finalLng = customer_longitude != null ? Number(customer_longitude) : KUMBAKONAM_GEOFENCE.center.longitude;
 
     const newOrder = new Order({
       order_id: orderId,
@@ -24,14 +59,25 @@ router.post('/create', async (req, res) => {
       delivery_address,
       item_name,
       budget: Number(budget) || 0,
-      customer_latitude: customer_latitude != null ? Number(customer_latitude) : null,
-      customer_longitude: customer_longitude != null ? Number(customer_longitude) : null,
+      customer_latitude: finalLat,
+      customer_longitude: finalLng,
       status: 'pending',
-      cod_otp: finalOtp
+      cod_otp: finalOtp,
+      declined_partners: [],
+      timed_out_partners: [],
+      assignment_history: []
     });
 
+    // 2. Proximity-Based Delivery Partner Assignment: Route first to closest available partner
+    const assignedPartner = await assignNextClosestPartner(newOrder);
+
     await newOrder.save();
-    res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
+    res.status(201).json({
+      success: true,
+      message: 'Order created successfully and routed to closest partner',
+      assigned_partner_id: assignedPartner ? assignedPartner.partner_id : null,
+      order: newOrder
+    });
   } catch (err) {
     console.error('Error creating order:', err);
     res.status(500).json({ error: 'Failed to create order', details: err.message });
@@ -41,12 +87,13 @@ router.post('/create', async (req, res) => {
 // GET /api/order/pending - Delivery partners view available pending orders & active orders
 router.get('/pending', async (req, res) => {
   try {
-    const partnerId = req.query.partner_id;
+    // Check and automatically reassign any expired offers (> 2 minutes)
+    await checkAndReassignExpiredOrders();
+
+    const partnerId = req.query.partner_id ? req.query.partner_id.toString().trim() : null;
     const recentThreshold = new Date(Date.now() - 20 * 60 * 1000);
-    let query = {
-      status: 'pending',
-      created_at: { $gte: recentThreshold }
-    };
+    const cancelledThreshold = new Date(Date.now() - 2 * 60 * 1000);
+
     // Auto-cancel any stale/abandoned test orders (> 2 hours old in accepted/purchasing_food state)
     const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await Order.updateMany(
@@ -61,17 +108,38 @@ router.get('/pending', async (req, res) => {
       }
     ).catch(() => {});
 
-    const cancelledThreshold = new Date(Date.now() - 2 * 60 * 1000);
-
+    let query;
     if (partnerId) {
-      const numPart = partnerId.toString().replace(/^dp_?/i, '');
+      const numPart = partnerId.replace(/^dp_?/i, '');
       const pRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
+
       query = {
         $or: [
-          { status: 'pending', declined_by: { $ne: partnerId }, created_at: { $gte: recentThreshold } },
-          { partner_id: { $in: [partnerId, pRegex] }, status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } },
-          { partner_id: { $in: [partnerId, pRegex] }, status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } },
-          { status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } }
+          // Order is pending AND specifically assigned to this partner (closest available partner assignment)
+          {
+            status: 'pending',
+            created_at: { $gte: recentThreshold },
+            $or: [
+              { current_assigned_partner_id: partnerId },
+              { current_assigned_partner_id: pRegex }
+            ],
+            declined_partners: { $nin: [partnerId, pRegex] },
+            timed_out_partners: { $nin: [partnerId, pRegex] }
+          },
+          // Or ongoing accepted active orders for this partner
+          {
+            partner_id: { $in: [partnerId, pRegex] },
+            status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+          },
+          {
+            partner_id: { $in: [partnerId, pRegex] },
+            status: 'cancelled',
+            cancelled_at: { $gte: cancelledThreshold }
+          },
+          {
+            status: 'cancelled',
+            cancelled_at: { $gte: cancelledThreshold }
+          }
         ]
       };
     } else {
@@ -249,7 +317,8 @@ router.post('/accept', async (req, res) => {
         partner_profile_picture: partnerPhotoUrl,
         partner_photo_url: partnerPhotoUrl,
         status: 'accepted',
-        accepted_at: new Date()
+        accepted_at: new Date(),
+        assignment_expires_at: null
       },
       { returnDocument: 'after' }
     );
@@ -260,6 +329,18 @@ router.post('/accept', async (req, res) => {
         error: 'ORDER_NOT_AVAILABLE',
         message: 'Order not found or has already been accepted by another delivery partner.'
       });
+    }
+
+    // Update assignment history status to accepted
+    if (order.assignment_history && order.assignment_history.length > 0) {
+      for (let i = order.assignment_history.length - 1; i >= 0; i--) {
+        if (partnerIdsMatch(order.assignment_history[i].partner_id, resolvedPartnerId)) {
+          order.assignment_history[i].status = 'accepted';
+          order.assignment_history[i].responded_at = new Date();
+          break;
+        }
+      }
+      await order.save();
     }
 
     // Update partner's LiveLocation in MongoDB so status is 'delivering'
@@ -279,7 +360,7 @@ router.post('/accept', async (req, res) => {
   }
 });
 
-// POST /api/order/decline - Partner declines an incoming order with reason stored in DB
+// POST /api/order/decline - Partner declines an incoming order; automatically forwards/reassigns to next closest partner
 router.post('/decline', async (req, res) => {
   try {
     const { order_id, decline_reason, partner_id } = req.body;
@@ -287,17 +368,41 @@ router.post('/decline', async (req, res) => {
       return res.status(400).json({ error: 'order_id is required' });
     }
 
-    const order = await Order.findOneAndUpdate(
-      { order_id },
-      {
-        decline_reason: decline_reason || 'Partner unavailable',
-        declined_by: partner_id || 'DP001'
-      },
-      { returnDocument: 'after' }
-    );
-
+    const order = await Order.findOne({ order_id });
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json({ success: true, message: 'Order declined successfully', order });
+
+    const pId = (partner_id || 'DP001').toString().trim();
+    if (!order.declined_partners) order.declined_partners = [];
+    if (!isPartnerInList(pId, order.declined_partners)) {
+      order.declined_partners.push(pId);
+    }
+    order.declined_by = pId;
+    order.decline_reason = decline_reason || 'Partner declined';
+
+    // Mark current partner offer in history as declined
+    if (order.assignment_history && order.assignment_history.length > 0) {
+      for (let i = order.assignment_history.length - 1; i >= 0; i--) {
+        if (partnerIdsMatch(order.assignment_history[i].partner_id, pId) && order.assignment_history[i].status === 'offered') {
+          order.assignment_history[i].status = 'declined';
+          order.assignment_history[i].responded_at = new Date();
+          order.assignment_history[i].decline_reason = decline_reason || 'Declined by partner';
+          break;
+        }
+      }
+    }
+
+    // Immediately route and reassign to the next closest available partner
+    const nextPartner = await assignNextClosestPartner(order);
+    await order.save();
+
+    console.log(`🚴 Order ${order_id} declined by ${pId}. Automatically reassigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
+
+    res.json({
+      success: true,
+      message: 'Order declined successfully and routed to next closest partner',
+      reassigned_to: nextPartner ? nextPartner.partner_id : null,
+      order
+    });
   } catch (err) {
     console.error('Error declining order:', err);
     res.status(500).json({ error: 'Failed to decline order' });

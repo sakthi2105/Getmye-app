@@ -82,6 +82,43 @@ const OrderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  current_assigned_partner_id: {
+    type: String,
+    default: null,
+    index: true
+  },
+  assignment_expires_at: {
+    type: Date,
+    default: null,
+    index: true
+  },
+  assignment_timeout_seconds: {
+    type: Number,
+    default: 120
+  },
+  declined_partners: {
+    type: [String],
+    default: []
+  },
+  timed_out_partners: {
+    type: [String],
+    default: []
+  },
+  assignment_history: [
+    {
+      partner_id: { type: String },
+      partner_name: { type: String, default: '' },
+      distance_km: { type: Number, default: 0 },
+      offered_at: { type: Date, default: Date.now },
+      responded_at: { type: Date, default: null },
+      status: {
+        type: String,
+        enum: ['offered', 'accepted', 'declined', 'timeout'],
+        default: 'offered'
+      },
+      decline_reason: { type: String, default: null }
+    }
+  ],
   delivery_fee: {
     type: Number,
     default: 0
