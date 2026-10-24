@@ -621,28 +621,11 @@ router.post('/decline', async (req, res) => {
       }
     }
 
-    // Cascade to next closest partner from declining partner's coordinates if available
-    let originLat = order.customer_latitude;
-    let originLng = order.customer_longitude;
-    try {
-      const LiveLocation = require('../models/LiveLocation');
-      const partnerLoc = await LiveLocation.findOne({
-        $or: [
-          { partner_id: pId },
-          { partner_id: new RegExp(`^${pId}$`, 'i') }
-        ]
-      }).lean();
-      if (partnerLoc && partnerLoc.latitude != null && partnerLoc.longitude != null) {
-        originLat = partnerLoc.latitude;
-        originLng = partnerLoc.longitude;
-      }
-    } catch (_) {}
-
-    // Immediately route and reassign to the next closest available partner
-    const nextPartner = await assignNextClosestPartner(order, originLat, originLng);
+    // Immediately route and reassign to the next closest available partner to CUSTOMER LOCATION
+    const nextPartner = await assignNextClosestPartner(order, order.customer_latitude, order.customer_longitude);
     await order.save();
 
-    console.log(`🚴 Order ${order_id} declined by ${pId}. Automatically reassigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
+    console.log(`🚴 Order ${order_id} declined by ${pId}. Automatically reassigned to next closest partner to customer: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
 
     res.json({
       success: true,
