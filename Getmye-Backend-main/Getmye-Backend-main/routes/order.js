@@ -89,18 +89,21 @@ router.get('/pending', async (req, res) => {
 
     let query;
     if (partnerId) {
-      const numPart = partnerId.replace(/^dp_?/i, '');
-      const pRegex = new RegExp(`^dp_?0*${numPart}$`, 'i');
+      const numPart = partnerId.replace(/[^0-9]/g, '');
+      const numClean = numPart.replace(/^0+/, '');
+      const pRegex = new RegExp(`^(dp_?0*)?${numClean || numPart}$`, 'i');
 
       query = {
         $or: [
-          // Order is pending and this partner has not declined it
+          // Strictly single partner routing: Pending order must ONLY match the currently assigned partner!
           {
             status: 'pending',
             created_at: { $gte: recentThreshold },
-            declined_partners: { $nin: [partnerId, pRegex] }
+            current_assigned_partner_id: { $in: [partnerId, pRegex] },
+            declined_partners: { $nin: [partnerId, pRegex] },
+            timed_out_partners: { $nin: [partnerId, pRegex] }
           },
-          // Or ongoing accepted active orders for this partner
+          // Ongoing accepted active orders for this partner
           {
             partner_id: { $in: [partnerId, pRegex] },
             status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
@@ -618,8 +621,25 @@ router.post('/decline', async (req, res) => {
       }
     }
 
+    // Cascade to next closest partner from declining partner's coordinates if available
+    let originLat = order.customer_latitude;
+    let originLng = order.customer_longitude;
+    try {
+      const LiveLocation = require('../models/LiveLocation');
+      const partnerLoc = await LiveLocation.findOne({
+        $or: [
+          { partner_id: pId },
+          { partner_id: new RegExp(`^${pId}$`, 'i') }
+        ]
+      }).lean();
+      if (partnerLoc && partnerLoc.latitude != null && partnerLoc.longitude != null) {
+        originLat = partnerLoc.latitude;
+        originLng = partnerLoc.longitude;
+      }
+    } catch (_) {}
+
     // Immediately route and reassign to the next closest available partner
-    const nextPartner = await assignNextClosestPartner(order);
+    const nextPartner = await assignNextClosestPartner(order, originLat, originLng);
     await order.save();
 
     console.log(`🚴 Order ${order_id} declined by ${pId}. Automatically reassigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);

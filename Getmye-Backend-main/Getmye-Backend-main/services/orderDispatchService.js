@@ -57,7 +57,7 @@ function partnerIdsMatch(id1, id2) {
   if (s1 === s2) return true;
   const num1 = s1.replace(/[^0-9]/g, '').replace(/^0+/, '');
   const num2 = s2.replace(/[^0-9]/g, '').replace(/^0+/, '');
-  return (num1.length > 0 || num2.length > 0) && num1 === num2;
+  return (num1.length > 0 && num2.length > 0 && num1 === num2);
 }
 
 // Check if a partner ID exists in a list of partner IDs
@@ -164,8 +164,10 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
 /**
  * Assigns or reassigns an order to the next closest available delivery partner.
  * Sets a 2-minute (120 seconds) acceptance window.
+ * Strictly assigns to ONE partner at a time.
+ * If all partners decline or time out, loops back from the beginning.
  */
-async function assignNextClosestPartner(orderDoc) {
+async function assignNextClosestPartner(orderDoc, originLat, originLng) {
   if (!orderDoc) return null;
 
   const excluded = [
@@ -177,11 +179,40 @@ async function assignNextClosestPartner(orderDoc) {
     excluded.push(orderDoc.current_assigned_partner_id);
   }
 
-  const candidates = await findAvailablePartners(
-    orderDoc.customer_latitude,
-    orderDoc.customer_longitude,
+  const refLat = originLat != null ? originLat : orderDoc.customer_latitude;
+  const refLng = originLng != null ? originLng : orderDoc.customer_longitude;
+
+  let candidates = await findAvailablePartners(
+    refLat,
+    refLng,
     excluded
   );
+
+  // If no candidates found with exclusions, handle looping!
+  if (candidates.length === 0) {
+    // 1. Try looping back to partners who only timed out (giving them another chance)
+    if ((orderDoc.timed_out_partners || []).length > 0) {
+      console.log(`🔄 [Order Dispatch] Order ${orderDoc.order_id}: Resetting timed-out partners to continue dispatch loop...`);
+      orderDoc.timed_out_partners = [];
+      candidates = await findAvailablePartners(
+        refLat,
+        refLng,
+        orderDoc.declined_partners || []
+      );
+    }
+
+    // 2. If still no candidates and all available partners declined, restart loop from nearest partner!
+    if (candidates.length === 0 && (orderDoc.declined_partners || []).length > 0) {
+      console.log(`🔄 [Order Dispatch] Order ${orderDoc.order_id}: All available partners declined. Looping back to nearest partner!`);
+      orderDoc.declined_partners = [];
+      orderDoc.timed_out_partners = [];
+      candidates = await findAvailablePartners(
+        refLat,
+        refLng,
+        []
+      );
+    }
+  }
 
   const timeoutSeconds = orderDoc.assignment_timeout_seconds || 120;
   const now = new Date();
@@ -206,7 +237,7 @@ async function assignNextClosestPartner(orderDoc) {
     console.log(`📍 [Order Dispatch] Order ${orderDoc.order_id} routed to closest partner: ${nextPartner.partner_id} (${nextPartner.distance_km} km away). 2-minute timer expires at ${orderDoc.assignment_expires_at.toISOString()}`);
     return nextPartner;
   } else {
-    console.log(`⚠️ [Order Dispatch] Order ${orderDoc.order_id}: No additional available partners found in Kumbakonam right now.`);
+    console.log(`⚠️ [Order Dispatch] Order ${orderDoc.order_id}: No available partners registered or online right now.`);
     orderDoc.current_assigned_partner_id = null;
     orderDoc.assignment_expires_at = null;
     return null;
@@ -222,8 +253,10 @@ async function checkAndReassignExpiredOrders() {
     const now = new Date();
     const expiredOrders = await Order.find({
       status: 'pending',
-      current_assigned_partner_id: { $ne: null },
-      assignment_expires_at: { $lte: now }
+      $or: [
+        { current_assigned_partner_id: null },
+        { current_assigned_partner_id: { $ne: null }, assignment_expires_at: { $lte: now } }
+      ]
     });
 
     if (expiredOrders.length === 0) return 0;
@@ -231,26 +264,26 @@ async function checkAndReassignExpiredOrders() {
     let reassignedCount = 0;
     for (const order of expiredOrders) {
       const timedOutPartnerId = order.current_assigned_partner_id;
-      console.log(`⏰ [Order Dispatch] Order ${order.order_id} offer to partner ${timedOutPartnerId} timed out (> 2 minutes without accept). Reassigning to next closest partner...`);
+      if (timedOutPartnerId) {
+        console.log(`⏰ [Order Dispatch] Order ${order.order_id} offer to partner ${timedOutPartnerId} timed out (> 2 minutes without accept). Reassigning to next closest partner...`);
 
-      // Record timeout in timed_out_partners and assignment_history
-      if (!order.timed_out_partners) order.timed_out_partners = [];
-      if (!isPartnerInList(timedOutPartnerId, order.timed_out_partners)) {
-        order.timed_out_partners.push(timedOutPartnerId);
-      }
-      if (!order.declined_partners) order.declined_partners = [];
-      if (!isPartnerInList(timedOutPartnerId, order.declined_partners)) {
-        order.declined_partners.push(timedOutPartnerId);
-      }
+        // Record timeout in timed_out_partners and assignment_history
+        if (!order.timed_out_partners) order.timed_out_partners = [];
+        if (!isPartnerInList(timedOutPartnerId, order.timed_out_partners)) {
+          order.timed_out_partners.push(timedOutPartnerId);
+        }
 
-      if (order.assignment_history && order.assignment_history.length > 0) {
-        for (let i = order.assignment_history.length - 1; i >= 0; i--) {
-          if (partnerIdsMatch(order.assignment_history[i].partner_id, timedOutPartnerId) && order.assignment_history[i].status === 'offered') {
-            order.assignment_history[i].status = 'timeout';
-            order.assignment_history[i].responded_at = now;
-            break;
+        if (order.assignment_history && order.assignment_history.length > 0) {
+          for (let i = order.assignment_history.length - 1; i >= 0; i--) {
+            if (partnerIdsMatch(order.assignment_history[i].partner_id, timedOutPartnerId) && order.assignment_history[i].status === 'offered') {
+              order.assignment_history[i].status = 'timeout';
+              order.assignment_history[i].responded_at = now;
+              break;
+            }
           }
         }
+      } else {
+        console.log(`⏳ [Order Dispatch] Order ${order.order_id} has no assigned partner. Attempting to route to nearest available partner...`);
       }
 
       // Reassign to next closest partner

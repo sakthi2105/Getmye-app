@@ -13,11 +13,16 @@ async function sendEmailOtp(email, otp) {
     try {
       const nodemailer = require('nodemailer');
       const transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
         auth: { user, pass },
         tls: {
           rejectUnauthorized: false
-        }
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000
       });
       await transporter.sendMail({
         from: `"Getmye" <${user}>`,
