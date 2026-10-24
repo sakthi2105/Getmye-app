@@ -157,6 +157,23 @@ async function markOrderAsPaid(order_id, transaction_reference, amount, paymentM
     await payment.save();
   }
 
+  // Save notification in DB for customer
+  try {
+    const Notification = require('../models/Notification');
+    const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+    const paidAmount = Number(amount) || order?.grand_total || order?.total_amount || 0;
+    await Notification.create({
+      notification_id: notifId,
+      recipient_id: order?.user_id || 'customer',
+      recipient_type: 'customer',
+      order_id,
+      title: '✅ Payment Successful',
+      message: `Payment of ₹${paidAmount.toFixed(0)} confirmed for Order #${order_id}. Share Delivery OTP ${deliveryOtp} upon food delivery.`
+    });
+  } catch (notifErr) {
+    console.error('Error saving payment notification in DB:', notifErr.message);
+  }
+
   return { order, payment, deliveryOtp };
 }
 

@@ -13,6 +13,7 @@ import 'api_config.dart';
 import 'services/alarm_service.dart';
 import 'services/app_notification_service.dart';
 import 'widgets/delivery_bottom_nav_bar.dart';
+import 'widgets/price_range_dialogs.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -54,7 +55,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   StreamSubscription<Map<String, dynamic>>? _orderAlertSubscription;
-  final Set<String> _knownOrderIds = {};
   final Set<String> _notifiedCancelledOrderIds = {};
   bool _isFirstOrdersCheckDone = false;
   final DateTime _screenStartTime = DateTime.now();
@@ -193,13 +193,13 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     _pendingOrdersTimer?.cancel();
     _checkPendingOrders();
     _updateLiveLocationToBackend();
-    // ⚡ Fast polling: 1200ms ensures sub-3-second order arrival alerts!
-    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
+    // ⚡ Optimized polling: 2500ms ensures sub-3-second order arrival alerts without battery/network strain!
+    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
       _pollCount++;
-      if (_pollCount % 5 == 0) {
+      if (_pollCount % 4 == 0) {
         _updateLiveLocationToBackend();
       }
-      if (_pollCount % 50 == 0) {
+      if (_pollCount % 25 == 0) {
         _checkMilestoneReset();
       }
       _checkPendingOrders();
@@ -281,14 +281,69 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+      final partnerActiveId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
+
+      // 🚨 CRITICAL: Check live status of current ongoing order directly so cancellation is NEVER missed!
+      final String? curOngoingOrderId = activeDeliveryOrder?['order_id']?.toString() ?? partnerActiveId;
+      if (curOngoingOrderId != null && curOngoingOrderId.isNotEmpty && _pollCount % 2 == 0) {
+        try {
+          final ordRes = await http.get(ApiConfig.orderById(curOngoingOrderId)).timeout(const Duration(seconds: 3));
+          if (ordRes.statusCode == 200) {
+            final ordData = jsonDecode(ordRes.body);
+            final ordObj = ordData['order'] ?? ordData;
+            final st = (ordObj['status']?.toString() ?? '').toLowerCase();
+            if (st == 'cancelled') {
+              final reason = ordObj['cancel_reason']?.toString() ?? 'Cancelled by customer';
+              await _clearActiveOrderStorage(prefs);
+              if (mounted) {
+                setState(() {
+                  activeDeliveryOrder = null;
+                });
+              }
+              AlarmService.silenceOrder(curOngoingOrderId);
+              AlarmService.stopAlarm();
+              AppNotificationService.cancelNotification(999);
+              if (!_notifiedCancelledOrderIds.contains(curOngoingOrderId)) {
+                _notifiedCancelledOrderIds.add(curOngoingOrderId);
+                AppNotificationService.showOrderCancelledNotification(
+                  orderId: curOngoingOrderId,
+                  reason: reason,
+                );
+                if (mounted) {
+                  _showCancellationNoticeDialog(curOngoingOrderId, reason);
+                }
+              }
+            } else if (st == 'delivered' || st == 'completed') {
+              await _clearActiveOrderStorage(prefs);
+              if (mounted) {
+                setState(() {
+                  activeDeliveryOrder = null;
+                });
+              }
+            }
+
+            final prSt = (ordObj['price_range_status'] ?? '').toString().toLowerCase();
+            if (prSt == 'accepted') {
+              final notifKey = 'partner_notified_ack_acc_$curOngoingOrderId';
+              if (prefs.getBool(notifKey) != true) {
+                await prefs.setBool(notifKey, true);
+                await AppNotificationService.showCustomerAckResponseNotification(
+                  orderId: curOngoingOrderId,
+                  isAccepted: true,
+                );
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
       final uri = Uri.parse('${ApiConfig.orderPending}?partner_id=$pId');
-      final res = await http.get(uri).timeout(const Duration(milliseconds: 2000));
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
         final List cancelledOrders = data['cancelled_orders'] ?? [];
         final declinedIds = prefs.getStringList('partner_declined_order_ids') ?? [];
-        final partnerActiveId = prefs.getString('partner_active_order_id');
 
         final allOrdersForCancel = [...cancelledOrders, ...orders];
 
@@ -298,19 +353,25 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         final bool isWithinAppEntryGrace = DateTime.now().difference(_screenStartTime).inSeconds < 8;
         if (!_isFirstOrdersCheckDone || isWithinAppEntryGrace) {
           _isFirstOrdersCheckDone = true;
-          for (final o in allOrdersForCancel) {
+          for (final o in cancelledOrders) {
             final id = o['order_id']?.toString();
             if (id != null && id.isNotEmpty) {
               _notifiedCancelledOrderIds.add(id);
-              _knownOrderIds.add(id);
-              AppNotificationService.registerOrderAsKnown(id);
-            }
-          }
-          for (final o in orders) {
-            final id = o['order_id']?.toString();
-            if (id != null && id.isNotEmpty) {
-              _knownOrderIds.add(id);
-              AppNotificationService.registerOrderAsKnown(id);
+              // If this cancelled order was our active ongoing delivery, clear it immediately and alert partner
+              if (id == curOngoingOrderId || (activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == id)) {
+                final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
+                await _clearActiveOrderStorage(prefs);
+                if (mounted) {
+                  setState(() {
+                    activeDeliveryOrder = null;
+                  });
+                  _showCancellationNoticeDialog(id, cReason);
+                }
+                await AppNotificationService.showOrderCancelledNotification(
+                  orderId: id,
+                  reason: cReason,
+                );
+              }
             }
           }
         } else {
@@ -330,7 +391,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               final bool isCurrentlyRingingThisOrder = (AlarmService.isPlaying && AlarmService.currentAlarmOrderId == oId) ||
                   (_isShowingIncomingModal && _currentIncomingModalOrderId == oId);
               // Must be actively tracked in memory as ongoing delivery - do NOT rely on stale prefs
-              final bool isPartnerActiveOngoingDelivery = activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == oId;
+              final bool isPartnerActiveOngoingDelivery = (activeDeliveryOrder != null && activeDeliveryOrder!['order_id'] == oId) ||
+                  (partnerActiveId != null && partnerActiveId == oId) ||
+                  (curOngoingOrderId != null && curOngoingOrderId == oId);
 
               // 1. Immediately silence and stop any ringing alarm
               if (isCurrentlyRingingThisOrder) {
@@ -355,7 +418,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                     activeDeliveryOrder = null;
                   });
                 }
-                await prefs.remove('partner_active_order_id');
+                await _clearActiveOrderStorage(prefs);
               }
 
               // 4. Show cancellation notice dialog & heads-up notification ONLY if partner was actively involved!
@@ -371,16 +434,42 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             }
           }
 
-          // 🚨 Also: If alarm is currently ringing, but that order is no longer in pending list (cancelled by customer before accept)
-          if (AlarmService.isPlaying && AlarmService.currentAlarmOrderId != null) {
-            final ringingId = AlarmService.currentAlarmOrderId!;
-            final isStillPending = orders.any((o) =>
-                o['order_id']?.toString() == ringingId &&
+          // 🚨 Also: If alarm is currently ringing or incoming modal is open, but that order is cancelled or no longer pending
+          final currentRingingOrModalId = AlarmService.currentAlarmOrderId ?? _currentIncomingModalOrderId;
+          if (currentRingingOrModalId != null && currentRingingOrModalId.isNotEmpty) {
+            final bool isStillPending = orders.any((o) =>
+                o['order_id']?.toString() == currentRingingOrModalId &&
                 (o['status']?.toString() ?? '').toLowerCase() == 'pending');
             if (!isStillPending) {
-              AlarmService.silenceOrder(ringingId);
+              AlarmService.silenceOrder(currentRingingOrModalId);
               AlarmService.stopAlarm();
               AppNotificationService.cancelNotification(999);
+
+              if (_isShowingIncomingModal && mounted) {
+                Navigator.of(context, rootNavigator: true).pop();
+                _isShowingIncomingModal = false;
+                _currentIncomingModalOrderId = null;
+              }
+
+              String cancelReason = 'Order was cancelled by customer';
+              for (final co in allOrdersForCancel) {
+                if (co['order_id']?.toString() == currentRingingOrModalId) {
+                  final r = co['cancel_reason']?.toString();
+                  if (r != null && r.isNotEmpty) cancelReason = r;
+                  break;
+                }
+              }
+
+              if (!_notifiedCancelledOrderIds.contains(currentRingingOrModalId)) {
+                _notifiedCancelledOrderIds.add(currentRingingOrModalId);
+                AppNotificationService.showOrderCancelledNotification(
+                  orderId: currentRingingOrModalId,
+                  reason: cancelReason,
+                );
+                if (mounted) {
+                  _showCancellationNoticeDialog(currentRingingOrModalId, cancelReason);
+                }
+              }
             }
           }
         }
@@ -399,10 +488,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             final oPartnerId = (o['partner_id'] ?? '').toString().trim().toLowerCase();
             final myPId = pId.trim().toLowerCase();
             final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+            final List declinedList = (o['declined_partners'] as List?)
+                ?.map((e) => e.toString().toLowerCase().trim())
+                .toList() ?? [];
+
+            // If old delivery person was declined or order is in their declined list, NEVER match!
+            if (declinedList.contains(myPId) ||
+                (numPart.isNotEmpty && declinedList.any((d) => d.contains(numPart))) ||
+                declinedIds.contains(o['order_id']?.toString())) {
+              return false;
+            }
+
             return oPartnerId.isNotEmpty && (
               oPartnerId == myPId ||
-              (numPart.isNotEmpty && oPartnerId.contains(numPart)) ||
-              (partnerActiveId != null && partnerActiveId.isNotEmpty && o['order_id']?.toString() == partnerActiveId)
+              (numPart.isNotEmpty && oPartnerId.contains(numPart))
             );
           },
           orElse: () => null,
@@ -415,36 +514,41 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               activeDeliveryOrder = safeOngoing;
             });
           }
-          await prefs.setString('partner_active_order_id', safeOngoing['order_id']?.toString() ?? '');
-          await prefs.setString('active_order_id', safeOngoing['order_id']?.toString() ?? '');
-          await prefs.setString('active_order_status', safeOngoing['status']?.toString() ?? 'accepted');
+          final curSavedId = prefs.getString('partner_active_order_id');
+          final curSavedStatus = prefs.getString('active_order_status');
+          final newId = safeOngoing['order_id']?.toString() ?? '';
+          final newStatus = safeOngoing['status']?.toString() ?? 'accepted';
+          if (curSavedId != newId || curSavedStatus != newStatus) {
+            await prefs.setString('partner_active_order_id', newId);
+            await prefs.setString('active_order_id', newId);
+            await prefs.setString('active_order_status', newStatus);
+          }
         } else {
           // If no ongoing delivery exists in backend for this partner, clear activeDeliveryOrder immediately!
-          if (activeDeliveryOrder != null && mounted) {
-            setState(() {
-              activeDeliveryOrder = null;
-            });
+          if (activeDeliveryOrder != null || partnerActiveId != null) {
+            if (activeDeliveryOrder != null && mounted) {
+              setState(() {
+                activeDeliveryOrder = null;
+              });
+            }
+            await _clearActiveOrderStorage(prefs);
           }
-          await prefs.remove('partner_active_order_id');
-          await prefs.remove('active_order_id');
-          await prefs.remove('active_order_status');
-          await prefs.remove('active_order_customer_name');
-          await prefs.remove('active_order_customer_phone');
-          await prefs.remove('active_order_customer_address');
-          await prefs.remove('active_order_item');
-          await prefs.remove('active_order_budget');
-          await prefs.remove('active_order_bill_sent');
-          await prefs.remove('active_order_food_purchased');
-          await prefs.remove('active_order_partner_accepted');
-          await prefs.remove('active_order_restaurant');
-          await prefs.remove('active_order_grand_total');
         }
 
         // Only consider pending orders strictly unhandled
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';
           final status = (o['status']?.toString() ?? '').toLowerCase();
-          return !declinedIds.contains(id) &&
+          final List declinedList = (o['declined_partners'] as List?)
+              ?.map((e) => e.toString().toLowerCase().trim())
+              .toList() ?? [];
+          final myPId = pId.trim().toLowerCase();
+          final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+          final bool isDeclined = declinedIds.contains(id) ||
+              declinedList.contains(myPId) ||
+              (numPart.isNotEmpty && declinedList.any((d) => d.contains(numPart)));
+
+          return !isDeclined &&
               !AlarmService.isOrderSilenced(id) &&
               (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
               status == 'pending';
@@ -453,7 +557,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         // Mark initial check completed so alarm can sound for unhandled orders
         AlarmService.hasCompletedInitialCheck = true;
 
-        if (mounted) {
+        if (mounted && pendingOrderCount != unhandledOrders.length) {
           setState(() {
             pendingOrderCount = unhandledOrders.length;
           });
@@ -461,29 +565,25 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
 
 
-        // 🚨 ONLY NEW ORDERS FROM CUSTOMER TRIGGER ALARM SOUND & POPUP MODAL!
-        final newIncomingOrders = unhandledOrders.where((o) {
-          final id = o['order_id']?.toString() ?? '';
-          return id.isNotEmpty && !_knownOrderIds.contains(id);
-        }).toList();
-
-        if (newIncomingOrders.isNotEmpty && isOnline) {
-          final firstOrder = newIncomingOrders.first;
+        // 🚨 PENDING ORDERS FROM CUSTOMER TRIGGER ALARM SOUND & POPUP MODAL!
+        if (unhandledOrders.isNotEmpty && isOnline) {
+          final firstOrder = unhandledOrders.first;
           final newId = firstOrder['order_id']?.toString() ?? '';
           final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
           final custName = firstOrder['customer_name']?.toString() ?? 'Customer';
           final addr = firstOrder['delivery_address']?.toString() ?? '';
           final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
 
-          _knownOrderIds.add(newId);
-          AppNotificationService.registerOrderAsKnown(newId);
-          AlarmService.startAlarm(
-            orderId: newId,
-            item: itemName,
-            customerName: custName,
-            address: addr,
-            budget: budget,
-          );
+          if (!AlarmService.isPlaying || AlarmService.currentAlarmOrderId != newId) {
+            AlarmService.startAlarm(
+              orderId: newId,
+              item: itemName,
+              customerName: custName,
+              address: addr,
+              budget: budget,
+            );
+          }
+
           if (!_isShowingIncomingModal && mounted) {
             final Map<String, dynamic> safeMap =
                 firstOrder is Map ? Map<String, dynamic>.from(firstOrder) : {};
@@ -530,6 +630,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       context: context,
       isDismissible: false,
       enableDrag: false,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (modalCtx) {
         int secondsLeft = totalRemainingSeconds;
@@ -573,10 +674,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               ),
               child: SafeArea(
                 top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     // Header with glowing icon and distance badge
                     Row(
                       children: [
@@ -620,16 +723,16 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFDCFCE7),
+                            color: const Color(0xFFD1FAE5),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFF86EFAC)),
+                            border: Border.all(color: const Color(0xFF6EE7B7)),
                           ),
                           child: const Text(
                             "⚡ Online Alert",
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF15803D),
+                              color: Color(0xFF047857),
                             ),
                           ),
                         ),
@@ -843,7 +946,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           AlarmService.silenceOrder(orderId);
                           AlarmService.stopAlarm();
                           AppNotificationService.cancelNotification(999);
-                          _notifiedCancelledOrderIds.add(orderId);
 
                           final prefs = await SharedPreferences.getInstance();
                           String pName = prefs.getString('d_name') ?? prefs.getString('partner_name') ?? "";
@@ -884,6 +986,34 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                               }
                             } else {
                               acceptSuccess = false;
+                              try {
+                                final resData = jsonDecode(acceptRes.body);
+                                final isCancelled = resData['cancelled'] == true ||
+                                    resData['error'] == 'ORDER_CANCELLED' ||
+                                    (resData['cancel_reason'] != null && resData['cancel_reason'].toString().isNotEmpty);
+                                if (isCancelled) {
+                                  final cancelReason = (resData['cancel_reason'] ?? resData['message'] ?? 'Customer cancelled the order').toString();
+                                  _notifiedCancelledOrderIds.add(orderId);
+                                  await AppNotificationService.showOrderCancelledNotification(
+                                    orderId: orderId,
+                                    reason: cancelReason,
+                                  );
+                                  if (mounted) {
+                                    _showCancellationNoticeDialog(orderId, cancelReason);
+                                  }
+                                  _checkPendingOrders();
+                                  return;
+                                }
+                              } catch (_) {}
+
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Order is no longer available or was already accepted."),
+                                    backgroundColor: Color(0xFFDC2626),
+                                  ),
+                                );
+                              }
                             }
                           } catch (e) {
                             debugPrint("Error accepting order: $e");
@@ -893,14 +1023,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           }
 
                           if (!acceptSuccess) {
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("Order is no longer available or was already accepted."),
-                                  backgroundColor: Color(0xFFDC2626),
-                                ),
-                              );
-                            }
                             _checkPendingOrders();
                             return;
                           }
@@ -945,12 +1067,57 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           );
 
                           if (mounted) {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+                            // Show popup: Call Customer & Send Estimated Price Range Acknowledgement
+                            final acceptedByCustomer = await showDialog<bool>(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (_) => DeliveryPartnerPriceRangeDialog(
+                                orderId: orderId,
+                                customerName: customerName,
+                                customerPhone: customerPhone,
+                                itemName: itemName,
+                                budget: budget,
                               ),
-                            ).then((_) => _loadPartnerData());
+                            );
+
+                            if (mounted && (acceptedByCustomer == true)) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+                                ),
+                              ).then((_) => _loadPartnerData());
+                            } else if (mounted) {
+                              // Customer declined price range / chose another partner / cancelled
+                              setState(() {
+                                activeDeliveryOrder = null;
+                              });
+                              await prefs.remove('partner_active_order_id');
+                              await prefs.remove('active_order_id');
+                              await prefs.remove('active_order_status');
+                              await prefs.remove('active_order_customer_name');
+                              await prefs.remove('active_order_customer_phone');
+                              await prefs.remove('active_order_customer_address');
+                              await prefs.remove('active_order_item');
+                              await prefs.remove('active_order_budget');
+                              await prefs.remove('active_order_bill_sent');
+                              await prefs.remove('active_order_food_purchased');
+                              await prefs.remove('active_order_partner_accepted');
+                              await prefs.remove('active_order_restaurant');
+                              await prefs.remove('active_order_grand_total');
+
+                              final curDeclined = prefs.getStringList('partner_declined_order_ids') ?? [];
+                              if (!curDeclined.contains(orderId)) {
+                                curDeclined.add(orderId);
+                                await prefs.setStringList('partner_declined_order_ids', curDeclined);
+                              }
+
+                              AlarmService.silenceOrder(orderId);
+                              AlarmService.stopAlarm();
+                              AppNotificationService.cancelNotification(999);
+
+                              _loadPartnerData();
+                            }
                           }
                         },
                         child: const Row(
@@ -975,7 +1142,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               ],
             ),
           ),
-        );
+        ),
+      );
           },
         );
       },
@@ -984,6 +1152,55 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     countdownTimer?.cancel();
     _isShowingIncomingModal = false;
     _currentIncomingModalOrderId = null;
+  }
+
+  Future<void> _clearActiveOrderStorage([SharedPreferences? prefsInstance]) async {
+    try {
+      final prefs = prefsInstance ?? await SharedPreferences.getInstance();
+      await prefs.remove('partner_active_order_id');
+      await prefs.remove('active_order_id');
+      await prefs.remove('active_order_status');
+      await prefs.remove('active_order_customer_name');
+      await prefs.remove('active_order_customer_phone');
+      await prefs.remove('active_order_customer_address');
+      await prefs.remove('active_order_item');
+      await prefs.remove('active_order_budget');
+      await prefs.remove('active_order_bill_sent');
+      await prefs.remove('active_order_food_purchased');
+      await prefs.remove('active_order_partner_accepted');
+      await prefs.remove('active_order_restaurant');
+      await prefs.remove('active_order_grand_total');
+      await prefs.remove('active_order_items_json');
+      await prefs.remove('active_cod_otp');
+    } catch (_) {}
+  }
+
+  Future<void> _verifyOngoingOrderNotCancelled(String orderId) async {
+    try {
+      final res = await http.get(ApiConfig.orderById(orderId)).timeout(const Duration(seconds: 3));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final ord = data['order'] ?? data;
+        final st = (ord['status']?.toString() ?? '').toLowerCase();
+        if (st == 'cancelled') {
+          final cReason = ord['cancel_reason']?.toString() ?? 'Cancelled by customer';
+          await _clearActiveOrderStorage();
+          if (mounted) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
+            _showCancellationNoticeDialog(orderId, cReason);
+          }
+        } else if (st == 'delivered' || st == 'completed') {
+          await _clearActiveOrderStorage();
+          if (mounted) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadPartnerData() async {
@@ -1047,7 +1264,14 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         savedOngoingStatus == 'picked_up' ||
         savedOngoingStatus == 'in_transit';
 
-    if (savedOngoingId != null &&
+    if (savedOngoingStatus == 'cancelled' || savedOngoingStatus == 'delivered' || savedOngoingStatus == 'completed') {
+      await _clearActiveOrderStorage(prefs);
+      if (mounted) {
+        setState(() {
+          activeDeliveryOrder = null;
+        });
+      }
+    } else if (savedOngoingId != null &&
         savedOngoingId.isNotEmpty &&
         isRealOngoingStatus &&
         savedCustName != null &&
@@ -1062,6 +1286,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         'budget': prefs.getString('active_order_budget') ?? '150',
         'status': savedOngoingStatus,
       };
+      _verifyOngoingOrderNotCancelled(savedOngoingId);
     }
 
     // 🟢 Keep listening active in background foreground service so orders alert when app is outside or screen off
@@ -1071,6 +1296,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         baseUrl: ApiConfig.baseUrl,
         partnerId: pId,
       );
+      AlarmService.requestBatteryOptimizationExemption();
     }
 
     _checkPendingOrders();
@@ -1278,10 +1504,10 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
             margin: const EdgeInsets.only(right: 16),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: isOnline ? AppColors.primaryLight : const Color(0xFFF1F5F9),
+              color: isOnline ? const Color(0xFFD1FAE5) : const Color(0xFFF1F5F9),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: isOnline ? AppColors.primarySubtle : AppColors.border,
+                color: isOnline ? const Color(0xFF6EE7B7) : AppColors.border,
               ),
             ),
             child: Row(
@@ -1291,7 +1517,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                   width: 8,
                   height: 8,
                   decoration: BoxDecoration(
-                    color: isOnline ? AppColors.primary : AppColors.textMuted,
+                    color: isOnline ? const Color(0xFF059669) : AppColors.textMuted,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1301,7 +1527,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: isOnline ? AppColors.primaryDark : AppColors.textSecondary,
+                    color: isOnline ? const Color(0xFF047857) : AppColors.textSecondary,
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -1484,46 +1710,58 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: isOnline ? const Color(0xFFECFDF5) : Colors.white,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(
+                    color: isOnline ? const Color(0xFFA7F3D0) : AppColors.border,
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          isOnline ? Icons.check_circle_rounded : Icons.pause_circle_outline_rounded,
-                          color: isOnline ? AppColors.primary : AppColors.textMuted,
-                          size: 22,
-                        ),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              isOnline ? "You are Online" : "You are Offline",
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textPrimary,
-                              ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            isOnline ? Icons.check_circle_rounded : Icons.pause_circle_outline_rounded,
+                            color: isOnline ? const Color(0xFF059669) : AppColors.textMuted,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isOnline ? "You are Online" : "You are Offline",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: isOnline ? const Color(0xFF047857) : AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  isOnline ? "Receiving new delivery orders" : "Toggle online to receive new orders",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              isOnline ? "Receiving new delivery orders" : "Toggle online to receive new orders",
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Switch.adaptive(
                       value: isOnline,
-                      activeThumbColor: AppColors.primary,
+                      activeThumbColor: const Color(0xFF059669),
+                      activeTrackColor: const Color(0xFFA7F3D0),
                       onChanged: (val) async {
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setBool('d_is_online', val);
@@ -1556,6 +1794,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             baseUrl: ApiConfig.baseUrl,
                             partnerId: pId,
                           );
+                          AlarmService.requestBatteryOptimizationExemption();
                           _checkPendingOrders();
                         }
                       },
@@ -2285,10 +2524,41 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     );
   }
 
-  void _openOngoingDeliveryPage(Map<String, dynamic> o) {
-    final status = (o['status']?.toString() ?? '').toLowerCase();
+  Future<void> _openOngoingDeliveryPage(Map<String, dynamic> o) async {
     final deliveryOrder = _createDeliveryOrderFromMap(o);
 
+    // Verify order is not cancelled before continuing
+    try {
+      final res = await http.get(ApiConfig.orderById(deliveryOrder.orderId)).timeout(const Duration(seconds: 3));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final ord = data['order'] ?? data;
+        final st = (ord['status']?.toString() ?? '').toLowerCase();
+        if (st == 'cancelled') {
+          final reason = ord['cancel_reason']?.toString() ?? 'Cancelled by customer';
+          await _clearActiveOrderStorage();
+          if (mounted) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
+            _showCancellationNoticeDialog(deliveryOrder.orderId, reason);
+          }
+          return;
+        } else if (st == 'delivered' || st == 'completed') {
+          await _clearActiveOrderStorage();
+          if (mounted) {
+            setState(() {
+              activeDeliveryOrder = null;
+            });
+          }
+          return;
+        }
+      }
+    } catch (_) {}
+
+    final status = (o['status']?.toString() ?? '').toLowerCase();
+
+    if (!mounted) return;
     if (status == 'bill_sent' || status == 'in_transit' || status == 'picked_up') {
       Navigator.push(
         context,
@@ -2302,6 +2572,45 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ),
       ).then((_) => _loadPartnerData());
     } else {
+      // Strictly verify whether customer has approved the price range acknowledgement
+      bool isPriceRangeAccepted = false;
+      try {
+        final res = await http.get(ApiConfig.orderById(deliveryOrder.orderId)).timeout(const Duration(seconds: 3));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final ord = data['order'];
+          if (ord != null && (ord['price_range_status'] ?? '').toString().toLowerCase() == 'accepted') {
+            isPriceRangeAccepted = true;
+          }
+        }
+      } catch (_) {}
+
+      if (!isPriceRangeAccepted) {
+        if (!mounted) return;
+        final acceptedByCustomer = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => DeliveryPartnerPriceRangeDialog(
+            orderId: deliveryOrder.orderId,
+            customerName: deliveryOrder.customerName,
+            customerPhone: deliveryOrder.customerPhone,
+            itemName: deliveryOrder.items.isNotEmpty ? deliveryOrder.items.first.name : 'Food Order',
+            budget: deliveryOrder.items.isNotEmpty ? deliveryOrder.items.first.price.toString() : '150',
+          ),
+        );
+
+        if (mounted && (acceptedByCustomer == true)) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+            ),
+          ).then((_) => _loadPartnerData());
+        }
+        return;
+      }
+
+      if (!mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute(

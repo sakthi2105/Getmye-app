@@ -21,15 +21,17 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _textFadeAnimation;
   late Animation<Offset> _textSlideAnimation;
   late Animation<double> _taglineFadeAnimation;
+  late Animation<double> _footerFadeAnimation;
+  late Animation<Offset> _footerSlideAnimation;
 
   @override
   void initState() {
     super.initState();
 
-    // Fast, crisp reveal animation (optimized for quick opening)
+    // Fast, crisp reveal animation (optimized for elegant opening)
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 750),
     );
 
     // 1. Logo scales smoothly with slight bounce
@@ -52,14 +54,14 @@ class _SplashScreenState extends State<SplashScreen>
         Tween<Offset>(begin: const Offset(0, 0.35), end: Offset.zero).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.25, 0.75, curve: Curves.easeOutCubic),
+        curve: const Interval(0.2, 0.7, curve: Curves.easeOutCubic),
       ),
     );
 
     _textFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.25, 0.7, curve: Curves.easeIn),
+        curve: const Interval(0.2, 0.65, curve: Curves.easeIn),
       ),
     );
 
@@ -67,7 +69,24 @@ class _SplashScreenState extends State<SplashScreen>
     _taglineFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.55, 0.95, curve: Curves.easeIn),
+        curve: const Interval(0.45, 0.85, curve: Curves.easeIn),
+      ),
+    );
+
+    // 4. "Proud product of" & Coderead logo slides & fades in (like Instagram from Meta)
+    _footerFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.35, 0.95, curve: Curves.easeIn),
+      ),
+    );
+    _footerSlideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.25),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.35, 0.95, curve: Curves.easeOutCubic),
       ),
     );
 
@@ -92,8 +111,8 @@ class _SplashScreenState extends State<SplashScreen>
       target = const LoginPage();
     }
 
-    // Fast redirect to destination screen within 600ms
-    await Future.delayed(const Duration(milliseconds: 600));
+    // Keep splash screen visible for a smooth, branded reveal (1200ms)
+    await Future.delayed(const Duration(milliseconds: 1200));
 
     if (!mounted) return;
 
@@ -101,7 +120,7 @@ class _SplashScreenState extends State<SplashScreen>
     Navigator.pushAndRemoveUntil(
       context,
       PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 200),
+        transitionDuration: const Duration(milliseconds: 250),
         pageBuilder: (_, animation, __) => FadeTransition(
           opacity: animation,
           child: target,
@@ -122,96 +141,139 @@ class _SplashScreenState extends State<SplashScreen>
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Center(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Brand Logo Card with Spring Scale & Fade
-                  FadeTransition(
-                    opacity: _logoFadeAnimation,
-                    child: ScaleTransition(
-                      scale: _logoScaleAnimation,
-                      child: Container(
-                        height: 110,
-                        width: 110,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(28),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF142B4A).withValues(alpha: 0.12),
-                              blurRadius: 26,
-                              offset: const Offset(0, 8),
+        child: Stack(
+          children: [
+            // Center Brand Logo & Name
+            Center(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Brand Logo Card with Spring Scale & Fade
+                      FadeTransition(
+                        opacity: _logoFadeAnimation,
+                        child: ScaleTransition(
+                          scale: _logoScaleAnimation,
+                          child: Container(
+                            height: 110,
+                            width: 110,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(28),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF142B4A).withValues(alpha: 0.12),
+                                  blurRadius: 26,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: Image.asset(
-                            'assets/G_LOGO.PNG',
-                            fit: BoxFit.contain,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: Image.asset(
+                                'assets/G_LOGO.PNG',
+                                fit: BoxFit.contain,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
 
-                  const SizedBox(height: 24),
+                      const SizedBox(height: 24),
 
-                  // "GETMYE" Typography Reveal
-                  SlideTransition(
-                    position: _textSlideAnimation,
+                      // "GETMYE" Typography Reveal
+                      SlideTransition(
+                        position: _textSlideAnimation,
+                        child: FadeTransition(
+                          opacity: _textFadeAnimation,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: const [
+                              Text(
+                                'GET',
+                                style: TextStyle(
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.2,
+                                  color: AppColors.primaryDark,
+                                ),
+                              ),
+                              Text(
+                                'MYE',
+                                style: TextStyle(
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.2,
+                                  color: Color(0xFFF96E14),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      // Tagline
+                      FadeTransition(
+                        opacity: _taglineFadeAnimation,
+                        child: const Text(
+                          'Multi-Restaurant Food Delivery',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+
+            // Bottom Footer: "Proud product of" + Coderead Logo (Instagram style)
+            Positioned(
+              bottom: 26,
+              left: 0,
+              right: 0,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  return SlideTransition(
+                    position: _footerSlideAnimation,
                     child: FadeTransition(
-                      opacity: _textFadeAnimation,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Text(
-                            'GET',
+                      opacity: _footerFadeAnimation,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Proud product of',
                             style: TextStyle(
-                              fontSize: 34,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.2,
-                              color: AppColors.primaryDark,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.6,
+                              color: Color(0xFF94A3B8),
                             ),
                           ),
-                          Text(
-                            'MYE',
-                            style: TextStyle(
-                              fontSize: 34,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.2,
-                              color: Color(0xFFF96E14),
-                            ),
+                          const SizedBox(height: 6),
+                          Image.asset(
+                            'assets/coderead_logo.png',
+                            height: 46,
+                            fit: BoxFit.contain,
                           ),
                         ],
                       ),
                     ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Tagline
-                  FadeTransition(
-                    opacity: _taglineFadeAnimation,
-                    child: const Text(
-                      'Multi-Restaurant Food Delivery',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.3,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

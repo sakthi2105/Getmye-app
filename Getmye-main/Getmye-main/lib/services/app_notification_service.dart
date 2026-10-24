@@ -167,6 +167,148 @@ class AppNotificationService {
     );
   }
 
+  // 3b. Delivery Partner Accepted Order Notification for Customer
+  static Future<void> showOrderAcceptedNotification({
+    required String orderId,
+    required String partnerName,
+    String? partnerPhone,
+  }) async {
+    final phoneInfo = (partnerPhone != null && partnerPhone.trim().isNotEmpty)
+        ? " (Contact: $partnerPhone)"
+        : "";
+    await showNotification(
+      id: 2002,
+      title: '🎉 Delivery Partner Assigned!',
+      body: '$partnerName$phoneInfo has accepted your order #$orderId and is heading to the store.',
+      payload: 'order:$orderId',
+    );
+  }
+
+  // Price range notification disabled per user requirement (only accept, bill, payment success allowed)
+  static Future<void> showPriceRangeAcknowledgementNotification({
+    required String orderId,
+    required String priceRange,
+    String? partnerName,
+  }) async {
+    // No-op
+    return;
+  }
+
+  // 3d. Store Bill Acknowledgement / Upload Notification for Customer
+  static Future<void> showBillAcknowledgementNotification({
+    required String orderId,
+    String? partnerName,
+    double? grandTotal,
+    int? itemCount,
+  }) async {
+    final pName = (partnerName != null && partnerName.trim().isNotEmpty)
+        ? partnerName
+        : "Delivery Partner";
+    final amountText = (grandTotal != null && grandTotal > 0)
+        ? " (₹${grandTotal.toStringAsFixed(0)})"
+        : "";
+    final itemsText = (itemCount != null && itemCount > 0)
+        ? " with $itemCount item${itemCount > 1 ? 's' : ''}"
+        : "";
+
+    await showNotification(
+      id: 2004,
+      title: '🧾 Order Confirmed & Bill Sent$amountText',
+      body: '$pName has confirmed your order and sent the bill$amountText$itemsText for Order #$orderId. Tap to verify and proceed to pay!',
+      payload: 'bill:$orderId',
+    );
+  }
+
+  // 3f. Payment Successful Notification for Customer
+  static Future<void> showPaymentSuccessNotification({
+    required String orderId,
+    required double amount,
+    String? otp,
+    String? partnerName,
+    String? paymentMethod,
+  }) async {
+    final methodStr = (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+        ? " via $paymentMethod"
+        : "";
+    final otpStr = (otp != null && otp.trim().isNotEmpty)
+        ? " Share Delivery OTP $otp with your partner upon food arrival."
+        : " Your delivery partner will hand over your order shortly.";
+
+    await showNotification(
+      id: 2006,
+      title: '✅ Payment Successful: ₹${amount.toStringAsFixed(0)}',
+      body: 'Payment of ₹${amount.toStringAsFixed(0)}$methodStr was successful for Order #$orderId.$otpStr',
+      payload: 'payment_success:$orderId',
+    );
+  }
+
+  // 3g. Order Delivered Notification for Customer
+  static Future<void> showOrderDeliveredCustomerNotification({
+    required String orderId,
+    String? partnerName,
+  }) async {
+    final pName = (partnerName != null && partnerName.trim().isNotEmpty)
+        ? partnerName
+        : "Delivery Partner";
+    await showNotification(
+      id: 2005,
+      title: '🎉 Order Delivered Successfully!',
+      body: '$pName has delivered your order #$orderId. Enjoy your meal! Thank you for choosing GETMYE.',
+      payload: 'delivered:$orderId',
+    );
+  }
+
+  // 3h. Order Delivered Notification for Delivery Partner
+  static Future<void> showOrderDeliveredPartnerNotification({
+    required String orderId,
+    String? customerName,
+  }) async {
+    final cName = (customerName != null && customerName.trim().isNotEmpty)
+        ? " to $customerName"
+        : "";
+    await showNotification(
+      id: 3006,
+      title: '✅ Delivery Completed!',
+      body: 'Order #$orderId has been successfully delivered$cName. Great job!',
+      payload: 'partner_delivered:$orderId',
+    );
+  }
+
+  // 3e. Customer Price Range Response Notification
+  static Future<void> showCustomerAckResponseNotification({
+    required String orderId,
+    required bool isAccepted,
+    String? reason,
+  }) async {
+    if (isAccepted) {
+      await showNotification(
+        id: 3004,
+        title: '✅ Customer Accepted Price Range!',
+        body: 'Customer approved your price acknowledgement for Order #$orderId. You can now proceed to purchase.',
+        payload: 'ack_accepted:$orderId',
+      );
+    } else {
+      final rText = (reason != null && reason.trim().isNotEmpty)
+          ? reason
+          : 'Customer declined the price range acknowledgement';
+      await showNotification(
+        id: 3005,
+        title: '❌ Acknowledgement Declined by Customer',
+        body: 'Order #$orderId: $rText.',
+        payload: 'ack_declined:$orderId',
+      );
+    }
+  }
+
+  static Future<void> checkAndNotifyCollectedItems({
+    required String orderId,
+    required List items,
+    String? partnerName,
+  }) async {
+    // Disabled per user request: only order accept, bill upload, and payment success notifications are sent
+    return;
+  }
+
   // 4. Incoming Delivery Order Alert Notification (Maximum priority, alarm sound & banner)
   static Future<void> showIncomingOrderNotification({
     required String orderId,
@@ -517,6 +659,146 @@ class AppNotificationService {
       debugPrint("Global partner orders check error: $e");
     } finally {
       _isPollingPartnerOrders = false;
+    }
+  }
+
+  // 6. Global Customer Order Status Poller
+  static Timer? _globalCustomerOrderPollingTimer;
+  static bool _isPollingCustomerOrder = false;
+
+  static void startGlobalCustomerOrderPolling() {
+    _globalCustomerOrderPollingTimer?.cancel();
+    _globalCustomerOrderPollingTimer =
+        Timer.periodic(const Duration(milliseconds: 2000), (_) async {
+      await checkAndNotifyCustomerOrderStatus();
+    });
+  }
+
+  static Future<void> checkAndNotifyCustomerOrderStatus() async {
+    if (_isPollingCustomerOrder) return;
+    _isPollingCustomerOrder = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+      if (!isLoggedIn) return;
+
+      final String accountType = prefs.getString('account_type') ?? 'customer';
+      if (accountType != 'customer') return;
+
+      final String? activeOrderId = prefs.getString('active_order_id');
+      if (activeOrderId == null || activeOrderId.isEmpty) return;
+
+      final res = await http
+          .get(ApiConfig.orderById(activeOrderId))
+          .timeout(const Duration(milliseconds: 2500));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final order = data['order'];
+        if (order != null) {
+          final st = (order['status']?.toString() ?? '').toLowerCase();
+          final pName = (order['partner_name'] != null &&
+                  order['partner_name'].toString().trim().isNotEmpty)
+              ? order['partner_name'].toString().trim()
+              : 'Delivery Partner';
+          final pPhone = (order['partner_phone'] != null &&
+                  order['partner_phone'].toString().trim().isNotEmpty)
+              ? order['partner_phone'].toString().trim()
+              : '';
+
+          // 1. Order Accepted Notification (ONLY order accept notification)
+          final bool isAccepted = (st == 'accepted' ||
+              st == 'purchasing_food' ||
+              st == 'bill_sent' ||
+              st == 'picked_up' ||
+              st == 'in_transit');
+
+          final bool alreadyNotifiedAccepted =
+              prefs.getBool('has_notified_partner_accepted_$activeOrderId') ?? false;
+
+          if (isAccepted && !alreadyNotifiedAccepted) {
+            await prefs.setBool('has_notified_partner_accepted_$activeOrderId', true);
+            await prefs.setBool('active_order_partner_accepted', true);
+            await prefs.setString('active_order_status', st);
+            await prefs.setString('active_order_partner_name', pName);
+            if (pPhone.isNotEmpty) {
+              await prefs.setString('active_order_partner_phone', pPhone);
+            }
+
+            await showOrderAcceptedNotification(
+              orderId: activeOrderId,
+              partnerName: pName,
+              partnerPhone: pPhone,
+            );
+          }
+
+          // 2. Store Bill Upload Notification (ONLY when status is bill_sent)
+          final bool hasBill = (st == 'bill_sent') &&
+              ((order['bill_confirmed'] == true) ||
+               (order['bill_image_url'] != null && order['bill_image_url'].toString().trim().isNotEmpty) ||
+               (order['bill_images'] is List && (order['bill_images'] as List).isNotEmpty));
+          if (hasBill) {
+            final bool alreadyNotifiedBill =
+                prefs.getBool('has_notified_bill_ack_$activeOrderId') ?? false;
+            if (!alreadyNotifiedBill) {
+              await prefs.setBool('has_notified_bill_ack_$activeOrderId', true);
+              final num? gTot = order['grand_total'] ?? order['total_amount'];
+              final List? itms = order['items'] is List ? order['items'] : null;
+              await showBillAcknowledgementNotification(
+                orderId: activeOrderId,
+                partnerName: pName,
+                grandTotal: gTot?.toDouble(),
+                itemCount: itms?.length,
+              );
+            }
+          }
+
+          // 3. Payment Successful Notification
+          final String payStatus = (order['payment_status'] ?? '').toString().toLowerCase().trim();
+          final bool isPaid = payStatus == 'paid' || payStatus == 'success' || order['is_paid'] == true;
+          if (isPaid) {
+            final bool alreadyNotifiedPayment =
+                prefs.getBool('has_notified_payment_success_$activeOrderId') ?? false;
+            if (!alreadyNotifiedPayment) {
+              await prefs.setBool('has_notified_payment_success_$activeOrderId', true);
+              final num? gTot = order['grand_total'] ?? order['total_amount'];
+              final String pMethod = (order['payment_method'] ?? 'Online').toString();
+              final String codOtp = (order['cod_otp'] ?? '').toString();
+              await showPaymentSuccessNotification(
+                orderId: activeOrderId,
+                amount: (gTot?.toDouble()) ?? 0.0,
+                otp: codOtp,
+                partnerName: pName,
+                paymentMethod: pMethod,
+              );
+            }
+          }
+
+          // 4. Order Delivered Notification for Customer
+          final bool isDelivered = (st == 'delivered' || st == 'completed');
+          if (isDelivered) {
+            final bool alreadyNotifiedDelivered =
+                prefs.getBool('has_notified_delivered_$activeOrderId') ?? false;
+            if (!alreadyNotifiedDelivered) {
+              await prefs.setBool('has_notified_delivered_$activeOrderId', true);
+              await showOrderDeliveredCustomerNotification(
+                orderId: activeOrderId,
+                partnerName: pName,
+              );
+            }
+            await AlarmService.stopCustomerOrderListeningService();
+          } else if (st == 'cancelled') {
+            await AlarmService.stopCustomerOrderListeningService();
+          } else {
+            AlarmService.startCustomerOrderListeningService(
+              baseUrl: ApiConfig.baseUrl,
+              orderId: activeOrderId,
+            );
+          }
+        }
+      }
+    } catch (_) {
+    } finally {
+      _isPollingCustomerOrder = false;
     }
   }
 }

@@ -43,6 +43,42 @@ class AlarmService {
     }
   }
 
+  /// Start the background foreground service for customer active order.
+  /// Keeps app alive and listening even when minimized, using other apps, or phone locked.
+  static Future<void> startCustomerOrderListeningService({
+    required String baseUrl,
+    required String orderId,
+  }) async {
+    try {
+      await _channel.invokeMethod('startCustomerOrderService', {
+        'baseUrl': baseUrl,
+        'orderId': orderId,
+      });
+      debugPrint("🟢 Started customer order foreground service for order: $orderId");
+    } catch (e) {
+      debugPrint("⚠️ startCustomerOrderListeningService error: $e");
+    }
+  }
+
+  /// Stop the customer background foreground service when order completes or cancels
+  static Future<void> stopCustomerOrderListeningService() async {
+    try {
+      await _channel.invokeMethod('stopCustomerOrderService');
+      debugPrint("🔴 Stopped customer order foreground service");
+    } catch (e) {
+      debugPrint("⚠️ stopCustomerOrderListeningService error: $e");
+    }
+  }
+
+  /// Request exemption from Android Doze battery optimization so background polling continues with screen off
+  static Future<void> requestBatteryOptimizationExemption() async {
+    try {
+      await _channel.invokeMethod('requestBatteryOptimizationExemption');
+    } catch (e) {
+      debugPrint("⚠️ requestBatteryOptimizationExemption error: $e");
+    }
+  }
+
   static void silenceOrder(String? orderId) {
     if (orderId != null && orderId.isNotEmpty) {
       _silencedOrderIds.add(orderId);

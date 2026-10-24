@@ -66,51 +66,50 @@ class DeliveryBottomNavBar extends StatelessWidget {
         color: Colors.white,
         border: Border(top: BorderSide(color: AppColors.border, width: 1)),
       ),
-      child: BottomAppBar(
-        height: 64,
-        color: Colors.white,
-        elevation: 0,
-        padding: EdgeInsets.zero,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(
-              context: context,
-              index: 0,
-              icon: Icons.person_outline_rounded,
-              activeIcon: Icons.person_rounded,
-              label: 'Profile',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 1,
-              icon: Icons.account_balance_wallet_outlined,
-              activeIcon: Icons.account_balance_wallet_rounded,
-              label: 'Wallet',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 2,
-              icon: Icons.home_outlined,
-              activeIcon: Icons.home_rounded,
-              label: 'Home',
-              isCenter: true,
-            ),
-            _buildNavItem(
-              context: context,
-              index: 3,
-              icon: Icons.two_wheeler_rounded,
-              activeIcon: Icons.two_wheeler_rounded,
-              label: 'Orders',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 4,
-              icon: Icons.more_horiz_rounded,
-              activeIcon: Icons.more_horiz_rounded,
-              label: 'Options',
-            ),
-          ],
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 60,
+          child: Row(
+            children: [
+              _buildNavItem(
+                context: context,
+                index: 0,
+                icon: Icons.person_outline_rounded,
+                activeIcon: Icons.person_rounded,
+                label: 'Profile',
+              ),
+              _buildNavItem(
+                context: context,
+                index: 1,
+                icon: Icons.account_balance_wallet_outlined,
+                activeIcon: Icons.account_balance_wallet_rounded,
+                label: 'Wallet',
+              ),
+              _buildNavItem(
+                context: context,
+                index: 2,
+                icon: Icons.home_outlined,
+                activeIcon: Icons.home_rounded,
+                label: 'Home',
+                isCenter: true,
+              ),
+              _buildNavItem(
+                context: context,
+                index: 3,
+                icon: Icons.two_wheeler_rounded,
+                activeIcon: Icons.two_wheeler_rounded,
+                label: 'Orders',
+              ),
+              _buildNavItem(
+                context: context,
+                index: 4,
+                icon: Icons.more_horiz_rounded,
+                activeIcon: Icons.more_horiz_rounded,
+                label: 'Options',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -126,21 +125,23 @@ class DeliveryBottomNavBar extends StatelessWidget {
   }) {
     final isSelected = index == currentIndex;
 
-    if (isSelected) {
-      return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: AppColors.primaryLight,
-          shape: BoxShape.circle,
+    return Expanded(
+      child: InkWell(
+        onTap: () => _onItemTapped(context, index),
+        borderRadius: BorderRadius.circular(12),
+        child: Center(
+          child: isSelected
+              ? Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: const BoxDecoration(
+                    color: AppColors.primaryLight,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(activeIcon, color: AppColors.primaryDark, size: 22),
+                )
+              : Icon(icon, color: AppColors.textSecondary, size: 22),
         ),
-        child: Icon(activeIcon, color: AppColors.primaryDark, size: 24),
-      );
-    }
-
-    return IconButton(
-      icon: Icon(icon, color: AppColors.textSecondary, size: 24),
-      tooltip: label,
-      onPressed: () => _onItemTapped(context, index),
+      ),
     );
   }
 }

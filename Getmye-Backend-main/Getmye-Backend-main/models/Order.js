@@ -139,6 +139,10 @@ const OrderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  bill_images: {
+    type: [String],
+    default: []
+  },
   cod_otp: {
     type: String,
     default: '1234'
@@ -160,6 +164,23 @@ const OrderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  price_range: {
+    type: String,
+    default: null
+  },
+  price_range_status: {
+    type: String,
+    enum: ['none', 'pending', 'accepted', 'rejected'],
+    default: 'none'
+  },
+  price_range_sent_at: {
+    type: Date,
+    default: null
+  },
+  price_range_accepted_at: {
+    type: Date,
+    default: null
+  },
   picked_up_at: {
     type: Date,
     default: null
@@ -176,13 +197,28 @@ const OrderSchema = new mongoose.Schema({
       time: { type: String, default: '' },
       timestamp: { type: Date, default: Date.now }
     }
-  ]
+  ],
+  items: [
+    {
+      name: { type: String, required: true },
+      quantity: { type: Number, default: 1 },
+      price: { type: Number, default: 0 },
+      is_collected: { type: Boolean, default: false }
+    }
+  ],
+  bill_confirmed: {
+    type: Boolean,
+    default: false
+  }
 }, {
   collection: 'orders',
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
 });
 
 OrderSchema.index({ partner_id: 1, created_at: -1 });
+OrderSchema.index({ partner_id: 1, status: 1 });
+OrderSchema.index({ status: 1, current_assigned_partner_id: 1 });
+OrderSchema.index({ status: 1, cancelled_at: -1 });
 OrderSchema.index({ created_at: -1 });
 
 module.exports = mongoose.model('Order', OrderSchema);

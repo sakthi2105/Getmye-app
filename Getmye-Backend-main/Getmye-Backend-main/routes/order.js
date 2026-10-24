@@ -21,11 +21,14 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
 
-    // 1. Strict Location-Based Geo-Fencing: Exclusively in Kumbakonam Town
-    if (customer_latitude != null && customer_longitude != null) {
-      const allowed = isWithinKumbakonam(customer_latitude, customer_longitude);
+    // 1. Location-Based Geo-Fencing: Exclusively in Kumbakonam Town
+    let finalLat = customer_latitude != null ? Number(customer_latitude) : null;
+    let finalLng = customer_longitude != null ? Number(customer_longitude) : null;
+
+    if (finalLat != null && finalLng != null && !isNaN(finalLat) && !isNaN(finalLng) && (finalLat !== 0 || finalLng !== 0)) {
+      const allowed = isWithinKumbakonam(finalLat, finalLng);
       if (!allowed) {
-        console.log(`⛔ Geofence Blocked: Customer location (${customer_latitude}, ${customer_longitude}) is outside Kumbakonam.`);
+        console.log(`⛔ Geofence Blocked: Customer location (${finalLat}, ${finalLng}) is outside Kumbakonam.`);
         return res.status(400).json({
           success: false,
           error: 'GEOFENCE_RESTRICTION',
@@ -33,23 +36,13 @@ router.post('/create', async (req, res) => {
         });
       }
     } else {
-      // If coordinates are missing, verify whether address text indicates Kumbakonam
-      const addrStr = (delivery_address || '').toString().toLowerCase();
-      if (!addrStr.includes('kumbakonam') && !addrStr.includes('kumbakonam town')) {
-        console.log(`⛔ Geofence Blocked: Address text "${delivery_address}" does not match Kumbakonam town.`);
-        return res.status(400).json({
-          success: false,
-          error: 'GEOFENCE_RESTRICTION',
-          message: KUMBAKONAM_GEOFENCE.errorMessage
-        });
-      }
+      // If coordinates are missing or zero, default to Kumbakonam town center so customer order never fails
+      finalLat = KUMBAKONAM_GEOFENCE.center.latitude;
+      finalLng = KUMBAKONAM_GEOFENCE.center.longitude;
     }
 
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
     const finalOtp = (cod_otp || (Math.floor(1000 + Math.random() * 9000))).toString();
-
-    const finalLat = customer_latitude != null ? Number(customer_latitude) : KUMBAKONAM_GEOFENCE.center.latitude;
-    const finalLng = customer_longitude != null ? Number(customer_longitude) : KUMBAKONAM_GEOFENCE.center.longitude;
 
     const newOrder = new Order({
       order_id: orderId,
@@ -63,6 +56,9 @@ router.post('/create', async (req, res) => {
       customer_longitude: finalLng,
       status: 'pending',
       cod_otp: finalOtp,
+      bill_confirmed: false,
+      bill_image_url: null,
+      bill_images: [],
       declined_partners: [],
       timed_out_partners: [],
       assignment_history: []
@@ -87,26 +83,9 @@ router.post('/create', async (req, res) => {
 // GET /api/order/pending - Delivery partners view available pending orders & active orders
 router.get('/pending', async (req, res) => {
   try {
-    // Check and automatically reassign any expired offers (> 2 minutes)
-    await checkAndReassignExpiredOrders();
-
     const partnerId = req.query.partner_id ? req.query.partner_id.toString().trim() : null;
     const recentThreshold = new Date(Date.now() - 20 * 60 * 1000);
-    const cancelledThreshold = new Date(Date.now() - 2 * 60 * 1000);
-
-    // Auto-cancel any stale/abandoned test orders (> 2 hours old in accepted/purchasing_food state)
-    const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    await Order.updateMany(
-      {
-        status: { $in: ['accepted', 'purchasing_food'] },
-        created_at: { $lt: staleThreshold }
-      },
-      {
-        status: 'cancelled',
-        cancel_reason: 'Auto-cancelled: Stale/abandoned test order',
-        cancelled_at: new Date()
-      }
-    ).catch(() => {});
+    const cancelledThreshold = new Date(Date.now() - 30 * 60 * 1000);
 
     let query;
     if (partnerId) {
@@ -115,16 +94,11 @@ router.get('/pending', async (req, res) => {
 
       query = {
         $or: [
-          // Order is pending AND specifically assigned to this partner (closest available partner assignment)
+          // Order is pending and this partner has not declined it
           {
             status: 'pending',
             created_at: { $gte: recentThreshold },
-            $or: [
-              { current_assigned_partner_id: partnerId },
-              { current_assigned_partner_id: pRegex }
-            ],
-            declined_partners: { $nin: [partnerId, pRegex] },
-            timed_out_partners: { $nin: [partnerId, pRegex] }
+            declined_partners: { $nin: [partnerId, pRegex] }
           },
           // Or ongoing accepted active orders for this partner
           {
@@ -162,9 +136,9 @@ router.get('/pending', async (req, res) => {
       status: 'cancelled',
       cancelled_at: { $gte: cancelledThreshold }
     })
-      .select('order_id status cancel_reason cancelled_by cancelled_at')
+      .select('order_id status cancel_reason cancelled_by cancelled_at partner_id')
       .sort({ cancelled_at: -1 })
-      .limit(10)
+      .limit(30)
       .lean();
 
     res.json({ success: true, count: orders.length, orders, cancelled_orders: cancelledOrders });
@@ -241,16 +215,27 @@ async function enrichOrderWithPartner(orderObj, req) {
 router.get('/active/:user_id', async (req, res) => {
   try {
     const rawUserId = (req.params.user_id || '').toString().trim();
-    if (!rawUserId) return res.json({ success: true, order: null });
+    const targetOrderId = req.query.order_id ? req.query.order_id.toString().trim() : null;
+    if (!rawUserId && !targetOrderId) return res.json({ success: true, order: null });
 
-    const activeOrder = await Order.findOne({
-      $or: [
-        { user_id: rawUserId },
-        { customer_phone: rawUserId },
-        { customer_phone: new RegExp(rawUserId.replace(/\D/g, '') + '$') }
-      ],
-      status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-    }).select('-bill_image_url').sort({ created_at: -1 });
+    let query;
+    if (targetOrderId) {
+      query = {
+        order_id: targetOrderId,
+        status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'delivered', 'completed'] }
+      };
+    } else {
+      query = {
+        $or: [
+          { user_id: rawUserId },
+          { customer_phone: rawUserId },
+          { customer_phone: new RegExp(rawUserId.replace(/\D/g, '') + '$') }
+        ],
+        status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      };
+    }
+
+    const activeOrder = await Order.findOne(query).sort({ created_at: -1 });
 
     if (!activeOrder) {
       return res.json({ success: true, order: null });
@@ -308,6 +293,25 @@ router.post('/accept', async (req, res) => {
     const protocol = req.protocol;
     const partnerPhotoUrl = `${protocol}://${host}/api/deliveryperson/photo/${resolvedPartnerId}`;
 
+    // Check if order was cancelled by customer before accepting
+    const existing = await Order.findOne({
+      $or: [
+        { order_id },
+        { order_id: new RegExp(`^${order_id}$`, 'i') }
+      ]
+    });
+    if (existing && existing.status === 'cancelled') {
+      console.log(`⚠️ Order ${order_id} accept blocked: Order was already cancelled by customer: ${existing.cancel_reason}`);
+      return res.status(400).json({
+        success: false,
+        error: 'ORDER_CANCELLED',
+        cancelled: true,
+        cancel_reason: existing.cancel_reason || 'Customer cancelled the order',
+        cancelled_by: existing.cancelled_by || 'customer',
+        message: `Order #${order_id} was cancelled by the customer. Reason: ${existing.cancel_reason || 'Customer cancelled the order'}`
+      });
+    }
+
     const order = await Order.findOneAndUpdate(
       { order_id, status: { $in: ['pending', 'accepted', 'purchasing_food'] } },
       {
@@ -317,6 +321,9 @@ router.post('/accept', async (req, res) => {
         partner_profile_picture: partnerPhotoUrl,
         partner_photo_url: partnerPhotoUrl,
         status: 'accepted',
+        bill_confirmed: false,
+        bill_image_url: null,
+        bill_images: [],
         accepted_at: new Date(),
         assignment_expires_at: null
       },
@@ -352,11 +359,231 @@ router.post('/accept', async (req, res) => {
       );
     } catch (_) {}
 
+    // Save notification in DB for customer
+    try {
+      const Notification = require('../models/Notification');
+      const { getNextSequence } = require('../models/Counter');
+      const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+      await Notification.create({
+        notification_id: notifId,
+        recipient_id: order.user_id || 'customer',
+        recipient_type: 'customer',
+        order_id: order.order_id,
+        title: '🎉 Delivery Partner Assigned!',
+        message: `${actualPartnerName} has accepted your order #${order.order_id} and is heading to the store.`
+      });
+    } catch (notifErr) {
+      console.error('Error saving accepted notification in DB:', notifErr.message);
+    }
+
     const orderObj = await enrichOrderWithPartner(order.toObject(), req);
     res.json({ success: true, message: 'Order accepted successfully', order: orderObj });
   } catch (err) {
     console.error('Error accepting order:', err);
     res.status(500).json({ error: 'Failed to accept order' });
+  }
+});
+
+// POST /api/order/price-range/send - Delivery partner sends estimated price range acknowledgement to customer
+router.post('/price-range/send', async (req, res) => {
+  try {
+    const { order_id, price_range } = req.body;
+    if (!order_id || !price_range) {
+      return res.status(400).json({ error: 'order_id and price_range are required' });
+    }
+
+    const rawId = order_id.toString().trim();
+    const order = await Order.findOneAndUpdate(
+      {
+        $or: [
+          { order_id: rawId },
+          { order_id: rawId.toUpperCase() },
+          { order_id: new RegExp(`^${rawId}$`, 'i') }
+        ]
+      },
+      {
+        price_range: price_range.toString().trim(),
+        price_range_status: 'pending',
+        price_range_sent_at: new Date()
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const orderObj = await enrichOrderWithPartner(order.toObject(), req);
+    console.log(`💰 Price range "${price_range}" sent for order ${order.order_id} by partner`);
+    res.json({ success: true, message: 'Price range sent to customer successfully', order: orderObj });
+  } catch (err) {
+    console.error('Error sending price range:', err);
+    res.status(500).json({ error: 'Failed to send price range' });
+  }
+});
+
+// POST /api/order/price-range/respond - Customer accepts, finds another partner, or stops order
+router.post('/price-range/respond', async (req, res) => {
+  try {
+    const { order_id, action } = req.body; // action: 'accept' | 'find_another' | 'stop_order' | 'reject'
+    if (!order_id || !action) {
+      return res.status(400).json({ error: 'order_id and action are required' });
+    }
+
+    const rawId = order_id.toString().trim();
+    const actionStr = action.toString().toLowerCase().trim();
+
+    const order = await Order.findOne({
+      $or: [
+        { order_id: rawId },
+        { order_id: rawId.toUpperCase() },
+        { order_id: new RegExp(`^${rawId}$`, 'i') }
+      ]
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // 1. Customer chooses: Find Another Delivery Partner
+    if (actionStr === 'find_another' || actionStr === 'reassign') {
+      const currentPartnerId = order.partner_id || order.current_assigned_partner_id;
+      if (currentPartnerId) {
+        if (!order.declined_partners) order.declined_partners = [];
+        if (!isPartnerInList(currentPartnerId, order.declined_partners)) {
+          order.declined_partners.push(currentPartnerId);
+        }
+        order.declined_by = currentPartnerId;
+        order.decline_reason = 'Customer declined price range';
+
+        // Free current partner's LiveLocation
+        try {
+          const LiveLocation = require('../models/LiveLocation');
+          await LiveLocation.updateMany(
+            { partner_id: currentPartnerId },
+            { status: 'idle', order_id: null }
+          );
+        } catch (_) {}
+      }
+
+      order.partner_id = null;
+      order.partner_name = null;
+      order.partner_phone = null;
+      order.partner_profile_picture = null;
+      order.partner_photo_url = null;
+      order.price_range = null;
+      order.price_range_status = 'none';
+      order.status = 'pending';
+
+      const nextPartner = await assignNextClosestPartner(order);
+      await order.save();
+
+      console.log(`🔄 Customer requested another partner for order ${order.order_id}. Assigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
+      return res.json({
+        success: true,
+        message: 'Order moved to next nearest delivery partner',
+        reassigned_to: nextPartner ? nextPartner.partner_id : null,
+        order
+      });
+    }
+
+    // 2. Customer chooses: Stop Order
+    if (actionStr === 'stop_order' || actionStr === 'cancel') {
+      const currentPartnerId = order.partner_id || order.current_assigned_partner_id;
+      if (currentPartnerId) {
+        try {
+          const LiveLocation = require('../models/LiveLocation');
+          await LiveLocation.updateMany(
+            { partner_id: currentPartnerId },
+            { status: 'idle', order_id: null }
+          );
+        } catch (_) {}
+      }
+
+      order.status = 'cancelled';
+      order.cancel_reason = 'Cancelled by customer - Price range declined';
+      order.cancelled_by = 'customer';
+      order.cancelled_at = new Date();
+      order.price_range_status = 'rejected';
+      await order.save();
+
+      if (currentPartnerId) {
+        try {
+          const Notification = require('../models/Notification');
+          const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+          await Notification.create({
+            notification_id: notifId,
+            recipient_id: currentPartnerId,
+            recipient_type: 'partner',
+            order_id: order.order_id,
+            title: '🚨 Order Cancelled by Customer',
+            message: `Order #${order.order_id} was cancelled by customer. Reason: Price range declined`
+          });
+        } catch (notifErr) {
+          console.error('Error saving cancel notification in DB:', notifErr.message);
+        }
+      }
+
+      console.log(`❌ Order ${order.order_id} stopped by customer during price range acknowledgement`);
+      return res.json({
+        success: true,
+        message: 'Order stopped and cancelled successfully',
+        order
+      });
+    }
+
+    // 3. Customer chooses: Accept
+    const isAccepted = (actionStr === 'accept');
+    order.price_range_status = isAccepted ? 'accepted' : 'rejected';
+    order.price_range_accepted_at = new Date();
+    if (isAccepted) {
+      order.status = 'purchasing_food';
+    }
+    await order.save();
+
+    const orderObj = await enrichOrderWithPartner(order.toObject(), req);
+    console.log(`✅ Customer ${actionStr}ed price range for order ${order.order_id}`);
+    res.json({ success: true, message: `Price range ${actionStr}ed successfully`, order: orderObj });
+  } catch (err) {
+    console.error('Error responding to price range:', err);
+    res.status(500).json({ error: 'Failed to respond to price range' });
+  }
+});
+
+// POST /api/order/checklist/update - Delivery partner updates items checklist in real-time
+router.post('/checklist/update', async (req, res) => {
+  try {
+    const { order_id, items } = req.body;
+    if (!order_id) {
+      return res.status(400).json({ error: 'order_id is required' });
+    }
+    const rawId = order_id.toString().trim();
+    const order = await Order.findOne({
+      $or: [
+        { order_id: rawId },
+        { order_id: rawId.toUpperCase() },
+        { order_id: new RegExp(`^${rawId}$`, 'i') }
+      ]
+    });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (Array.isArray(items)) {
+      order.items = items.map(it => ({
+        name: (it.name || 'Food Item').toString(),
+        quantity: Math.max(1, parseInt(it.quantity) || 1),
+        price: Math.max(0, parseFloat(it.price) || 0),
+        is_collected: Boolean(it.is_collected ?? it.isCollected)
+      }));
+      await order.save();
+    }
+
+    const orderObj = await enrichOrderWithPartner(order.toObject(), req);
+    res.json({ success: true, message: 'Checklist updated successfully', items: order.items, order: orderObj });
+  } catch (err) {
+    console.error('Error updating checklist:', err);
+    res.status(500).json({ error: 'Failed to update checklist', details: err.message });
   }
 });
 
@@ -435,6 +662,44 @@ router.post('/update-status', async (req, res) => {
     );
 
     if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    if (status === 'delivered') {
+      try {
+        const LiveLocation = require('../models/LiveLocation');
+        if (order.partner_id) {
+          await LiveLocation.updateMany(
+            { partner_id: order.partner_id },
+            { status: 'idle', order_id: null }
+          );
+        }
+        const Notification = require('../models/Notification');
+        if (order.user_id) {
+          const notifIdCust = await getNextSequence('notification_id', 'NOTIF-', 4);
+          await Notification.create({
+            notification_id: notifIdCust,
+            recipient_id: order.user_id,
+            recipient_type: 'customer',
+            order_id: order.order_id,
+            title: '🎉 Order Delivered!',
+            message: `Your order #${order.order_id} has been delivered successfully. Enjoy your food! Thank you for ordering with GETMYE.`
+          });
+        }
+        if (order.partner_id) {
+          const notifIdPartner = await getNextSequence('notification_id', 'NOTIF-', 4);
+          await Notification.create({
+            notification_id: notifIdPartner,
+            recipient_id: order.partner_id,
+            recipient_type: 'partner',
+            order_id: order.order_id,
+            title: '✅ Delivery Completed!',
+            message: `Great job! Order #${order.order_id} has been delivered successfully.`
+          });
+        }
+      } catch (notifErr) {
+        console.error('Error creating delivered notifications in update-status:', notifErr.message);
+      }
+    }
+
     res.json({ success: true, order });
   } catch (err) {
     console.error('Error updating order status:', err);
@@ -463,6 +728,46 @@ router.post('/verify-delivery-otp', async (req, res) => {
     order.delivered_at = new Date();
     order.payment_status = 'success';
     await order.save();
+
+    // Release partner's LiveLocation to idle
+    try {
+      if (order.partner_id) {
+        const LiveLocation = require('../models/LiveLocation');
+        await LiveLocation.updateMany(
+          { partner_id: order.partner_id },
+          { status: 'idle', order_id: null }
+        );
+      }
+    } catch (_) {}
+
+    // Create notifications for BOTH customer and delivery partner in DB
+    try {
+      const Notification = require('../models/Notification');
+      if (order.user_id) {
+        const notifIdCust = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifIdCust,
+          recipient_id: order.user_id,
+          recipient_type: 'customer',
+          order_id: order.order_id,
+          title: '🎉 Order Delivered!',
+          message: `Your order #${order.order_id} has been delivered successfully. Enjoy your food! Thank you for ordering with GETMYE.`
+        });
+      }
+      if (order.partner_id) {
+        const notifIdPartner = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifIdPartner,
+          recipient_id: order.partner_id,
+          recipient_type: 'partner',
+          order_id: order.order_id,
+          title: '✅ Delivery Completed!',
+          message: `Great job! Order #${order.order_id} has been delivered successfully.`
+        });
+      }
+    } catch (notifErr) {
+      console.error('Error saving delivered notification in DB:', notifErr.message);
+    }
 
     res.json({ success: true, message: 'OTP verified successfully! Order delivered.', order });
   } catch (err) {
@@ -519,8 +824,14 @@ router.post('/cancel', async (req, res) => {
       }
     }
 
+    const orderIdStr = order_id.toString().trim();
     const order = await Order.findOneAndUpdate(
-      { order_id },
+      {
+        $or: [
+          { order_id: orderIdStr },
+          { order_id: new RegExp(`^${orderIdStr}$`, 'i') }
+        ]
+      },
       {
         status: 'cancelled',
         cancel_reason: cancel_reason || defaultReason,
@@ -543,6 +854,25 @@ router.post('/cancel', async (req, res) => {
         );
       }
     } catch (_) {}
+
+    // Create notification in DB for delivery partner if assigned or offered
+    const targetPartner = order.partner_id || order.current_assigned_partner_id;
+    if (targetPartner) {
+      try {
+        const Notification = require('../models/Notification');
+        const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifId,
+          recipient_id: targetPartner,
+          recipient_type: 'partner',
+          order_id: order.order_id,
+          title: '🚨 Order Cancelled by Customer',
+          message: `Order #${order.order_id} was cancelled by customer. Reason: ${cancel_reason || defaultReason}`
+        });
+      } catch (notifErr) {
+        console.error('Error saving cancel notification in DB:', notifErr.message);
+      }
+    }
 
     res.json({ success: true, message: 'Order cancelled successfully', order });
   } catch (err) {
@@ -577,7 +907,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     }
 
     // High performance projection: select only lightweight metadata fields (skip massive base64 images)
-    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp created_at updated_at';
+    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at';
 
     let orders = await Order.find(query)
       .select(projection)
@@ -623,7 +953,6 @@ const handleGetOrder = async (req, res) => {
         { order_id: new RegExp(`^${rawId}$`, 'i') }
       ]
     })
-      .select('-bill_image_url')
       .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
     const enrichedOrder = await enrichOrderWithPartner(order, req);

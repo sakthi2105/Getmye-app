@@ -19,6 +19,7 @@ import 'services/upi_payment_service.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
 import 'services/cashfree_sdk_service.dart';
 import 'ppp.dart';
+import 'widgets/price_range_dialogs.dart';
 import 'theme/app_theme.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -45,8 +46,8 @@ class _PaymentPageState extends State<PaymentPage> {
   bool isFoodPurchased = false;
   bool isBillSent = false;
   String orderStatus = 'pending';
-  String orderId = "ORD-8492";
-  String itemName = "Chicken Rice";
+  String orderId = "";
+  String itemName = "";
   String customerName = "Customer";
   String customerAddress = "Live Delivery Location";
   String partnerName = "";
@@ -58,12 +59,72 @@ class _PaymentPageState extends State<PaymentPage> {
   bool isOnlinePaid = false;
 
   List<Map<String, dynamic>> billItems = [];
-  double itemTotal = 120.0;
+  List<Map<String, dynamic>> checklistItems = [];
+  bool isBillConfirmed = false;
+  double itemTotal = 0.0;
   double deliveryEarnings = 0.0; // Delivery charges removed as requested
   double tipAmount = 0.0;
   String? uploadedBillImageUrl;
+  List<String> uploadedBillImages = [];
   Timer? _pollTimer;
   GoogleMapController? _mapController;
+
+  String? agreedPriceRange;
+  bool _isShowingPriceRangeDialog = false;
+  String? _lastPromptedPriceRange;
+
+  void _checkAndShowCustomerPriceRangeDialog({
+    required String orderId,
+    required String partnerName,
+    required String partnerPhone,
+    String? partnerPhoto,
+    required String priceRange,
+  }) {
+    if (!mounted || _isShowingPriceRangeDialog) return;
+    if (_lastPromptedPriceRange == '${orderId}_$priceRange') return;
+
+    _isShowingPriceRangeDialog = true;
+    _lastPromptedPriceRange = '${orderId}_$priceRange';
+
+    AppNotificationService.showPriceRangeAcknowledgementNotification(
+      orderId: orderId,
+      priceRange: priceRange,
+      partnerName: partnerName,
+    );
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CustomerPriceRangeDialog(
+        orderId: orderId,
+        partnerName: partnerName,
+        partnerPhone: partnerPhone,
+        partnerPhoto: partnerPhoto,
+        priceRange: priceRange,
+        onAccepted: () {
+          _isShowingPriceRangeDialog = false;
+          if (mounted) {
+            setState(() {
+              agreedPriceRange = priceRange;
+            });
+          }
+        },
+        onFindAnotherPartner: () {
+          _isShowingPriceRangeDialog = false;
+          Navigator.of(context).pop(); // redirect back to Home where search resumes!
+        },
+        onStopOrder: () {
+          _isShowingPriceRangeDialog = false;
+          Navigator.of(context).pop(); // redirect back to Home!
+        },
+        onDeclined: () {
+          _isShowingPriceRangeDialog = false;
+        },
+      ),
+    ).then((_) {
+      _isShowingPriceRangeDialog = false;
+    });
+  }
 
   // Live Tracking coordinates & Road Route
   LatLng _partnerLocation = const LatLng(10.9620, 79.3860);
@@ -138,8 +199,20 @@ class _PaymentPageState extends State<PaymentPage> {
       }
     } catch (_) {}
 
-    final savedBillImg = prefs.getString('order_${activeId ?? orderId}_bill_image');
-    final savedTip = prefs.getDouble('order_${activeId ?? orderId}_tip') ?? 0.0;
+    final String effectiveCurrentId = activeId ?? (orderId.isNotEmpty ? orderId : '');
+    final savedBillImgs = effectiveCurrentId.isNotEmpty
+        ? prefs.getStringList('order_${effectiveCurrentId}_bill_images')
+        : null;
+    final savedBillImg = effectiveCurrentId.isNotEmpty
+        ? prefs.getString('order_${effectiveCurrentId}_bill_image')
+        : null;
+    List<String> initialImgs = [];
+    if (savedBillImgs != null && savedBillImgs.isNotEmpty) {
+      initialImgs = List<String>.from(savedBillImgs);
+    } else if (savedBillImg != null && savedBillImg.isNotEmpty) {
+      initialImgs = [savedBillImg];
+    }
+    final savedTip = effectiveCurrentId.isNotEmpty ? (prefs.getDouble('order_${effectiveCurrentId}_tip') ?? 0.0) : 0.0;
 
     final activeStatus = prefs.getString('active_order_status');
     final isDone = activeStatus == 'delivered' || activeStatus == 'completed';
@@ -164,7 +237,8 @@ class _PaymentPageState extends State<PaymentPage> {
         if (savedOtp != null && savedOtp.isNotEmpty) activeOtp = savedOtp;
         if (savedMethod != null) paymentMethod = savedMethod;
         isOnlinePaid = onlinePaid;
-        uploadedBillImageUrl = savedBillImg;
+        uploadedBillImageUrl = savedBillImg ?? (initialImgs.isNotEmpty ? initialImgs.first : null);
+        uploadedBillImages = initialImgs;
         if (savedTip > 0) tipAmount = savedTip;
       });
       _fetchRoadRoute();
@@ -176,23 +250,18 @@ class _PaymentPageState extends State<PaymentPage> {
     _isPollingBackend = true;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final currentOrderId = prefs.getString('active_order_id');
+      final currentOrderId = prefs.getString('active_order_id') ?? (orderId.isNotEmpty ? orderId : null);
       final activeStatus = prefs.getString('active_order_status');
 
-      // If there is no active order or order is already delivered, do not poll past order
-      if (currentOrderId == null || activeStatus == 'delivered' || activeStatus == 'completed' || !hasActiveOrder) {
-        if (mounted && hasActiveOrder) {
-          setState(() {
-            hasActiveOrder = false;
-          });
-        }
+      // If there is no active order ID or order is already delivered, do not poll
+      if (currentOrderId == null || currentOrderId.isEmpty || activeStatus == 'delivered' || activeStatus == 'completed') {
         return;
       }
 
       // 1. Fetch Order Status from backend MongoDB
       String? orderBillImg;
       try {
-        final orderRes = await http.get(ApiConfig.orderById(currentOrderId)).timeout(const Duration(seconds: 2));
+        final orderRes = await http.get(ApiConfig.orderById(currentOrderId)).timeout(const Duration(seconds: 6));
       if (orderRes.statusCode == 200) {
         final orderData = jsonDecode(orderRes.body);
         final order = orderData['order'];
@@ -224,6 +293,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
           // If order is cancelled:
           if (status == 'cancelled') {
+            AlarmService.stopCustomerOrderListeningService();
             await prefs.setBool('has_active_order', false);
             await prefs.remove('active_order_id');
             await prefs.setString('active_order_status', 'cancelled');
@@ -238,6 +308,17 @@ class _PaymentPageState extends State<PaymentPage> {
 
           // If order is completed/delivered:
           if (status == 'delivered' || status == 'completed') {
+            AlarmService.stopCustomerOrderListeningService();
+            final bool alreadyNotifiedDelivered =
+                prefs.getBool('has_notified_delivered_$currentOrderId') ?? false;
+            if (!alreadyNotifiedDelivered) {
+              await prefs.setBool('has_notified_delivered_$currentOrderId', true);
+              await AppNotificationService.showOrderDeliveredCustomerNotification(
+                orderId: currentOrderId,
+                partnerName: pName,
+              );
+            }
+
             await prefs.setBool('has_active_order', false);
             await prefs.remove('active_order_id');
             await prefs.setString('active_order_status', 'delivered');
@@ -274,7 +355,7 @@ class _PaymentPageState extends State<PaymentPage> {
           // Order chat messages are tracked globally and deduplicated via AppNotificationService
 
           final pId = order['partner_id']?.toString() ?? partnerId ?? prefs.getString('active_order_partner_id');
-          if (pId != null && pId.isNotEmpty) {
+          if (pId != null && pId.isNotEmpty && prefs.getString('active_order_partner_id') != pId) {
             prefs.setString('active_order_partner_id', pId);
           }
           final rawPic = (order['partner_profile_picture'] != null && order['partner_profile_picture'].toString().trim().isNotEmpty)
@@ -283,16 +364,54 @@ class _PaymentPageState extends State<PaymentPage> {
           final pPic = (rawPic != null && rawPic.isNotEmpty)
               ? rawPic
               : (partnerProfilePicture ?? prefs.getString('active_order_partner_pic') ?? prefs.getString('active_order_partner_image') ?? (pId != null && pId.isNotEmpty ? '${ApiConfig.baseUrl}/api/deliveryperson/photo/$pId' : null));
-          if (pPic != null && pPic.isNotEmpty) {
+          if (pPic != null && pPic.isNotEmpty && prefs.getString('active_order_partner_pic') != pPic) {
             prefs.setString('active_order_partner_pic', pPic);
             prefs.setString('active_order_partner_image', pPic);
           }
-          if (pName.isNotEmpty && pName != 'Delivery Partner') {
+          if (pName.isNotEmpty && pName != 'Delivery Partner' && prefs.getString('active_order_partner_name') != pName) {
             prefs.setString('active_order_partner_name', pName);
           }
-          if (pPhone.isNotEmpty) {
+          if (pPhone.isNotEmpty && prefs.getString('active_order_partner_phone') != pPhone) {
             prefs.setString('active_order_partner_phone', pPhone);
           }
+
+          AlarmService.startCustomerOrderListeningService(
+            baseUrl: ApiConfig.baseUrl,
+            orderId: currentOrderId,
+          );
+
+          final rawChecklist = order['items'];
+          List<Map<String, dynamic>> parsedChecklist = [];
+          if (rawChecklist is List && rawChecklist.isNotEmpty) {
+            parsedChecklist = rawChecklist.map((e) => {
+              'name': (e['name'] ?? 'Item').toString(),
+              'quantity': (e['quantity'] as num?)?.toInt() ?? 1,
+              'price': (e['price'] as num?)?.toDouble() ?? 0.0,
+              'is_collected': e['is_collected'] == true,
+            }).toList();
+          }
+
+          List<String> parsedOrderImgs = [];
+          if (order['bill_images'] is List) {
+            parsedOrderImgs = (order['bill_images'] as List)
+                .map((e) => e.toString().trim())
+                .where((e) => e.isNotEmpty)
+                .toList();
+          } else if (orderBillImg != null && orderBillImg.isNotEmpty) {
+            parsedOrderImgs = [orderBillImg];
+          }
+
+          final bool billConfirmedFromBackend = (status == 'bill_sent' ||
+                  status == 'in_transit' ||
+                  status == 'delivered') ||
+              (order['bill_confirmed'] == true);
+
+          final bool checklistChanged = parsedChecklist.isNotEmpty && jsonEncode(parsedChecklist) != jsonEncode(checklistItems);
+          final bool billConfirmedChanged = isBillConfirmed != billConfirmedFromBackend;
+
+          final bool imgsChanged = parsedOrderImgs.isNotEmpty &&
+              (parsedOrderImgs.length != uploadedBillImages.length ||
+               (uploadedBillImages.isNotEmpty && parsedOrderImgs.first != uploadedBillImages.first));
 
           final bool hasChanged = orderStatus != status ||
               partnerName != pName ||
@@ -301,7 +420,44 @@ class _PaymentPageState extends State<PaymentPage> {
               (pPic != null && pPic.isNotEmpty && partnerProfilePicture != pPic) ||
               customerAddress != dAddr ||
               itemName != iName ||
+              checklistChanged ||
+              billConfirmedChanged ||
+              imgsChanged ||
               (orderBillImg != null && uploadedBillImageUrl != orderBillImg);
+
+          final String pr = (order['price_range'] ?? '').toString().trim();
+          final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
+          if (pr.isNotEmpty && agreedPriceRange != pr) {
+            agreedPriceRange = pr;
+          }
+          if (pr.isNotEmpty && prStatus == 'pending') {
+            _checkAndShowCustomerPriceRangeDialog(
+              orderId: currentOrderId,
+              partnerName: pName,
+              partnerPhone: pPhone,
+              partnerPhoto: pPic,
+              priceRange: pr,
+            );
+          }
+
+          // 🚨 Customer Notification: Delivery Partner confirmed order and sent bill (ONLY when status is bill_sent)
+          final bool hasBillUploaded = status == 'bill_sent' &&
+              (billConfirmedFromBackend ||
+               (orderBillImg != null && orderBillImg.isNotEmpty) ||
+               parsedOrderImgs.isNotEmpty);
+          if (hasBillUploaded) {
+            final bool alreadyNotifiedBill =
+                prefs.getBool('has_notified_bill_ack_$currentOrderId') ?? false;
+            if (!alreadyNotifiedBill) {
+              await prefs.setBool('has_notified_bill_ack_$currentOrderId', true);
+              await AppNotificationService.showBillAcknowledgementNotification(
+                orderId: currentOrderId,
+                partnerName: pName,
+                grandTotal: (gTot > 0) ? gTot.toDouble() : null,
+                itemCount: parsedChecklist.isNotEmpty ? parsedChecklist.length : null,
+              );
+            }
+          }
 
           if (mounted && hasChanged) {
             setState(() {
@@ -314,7 +470,11 @@ class _PaymentPageState extends State<PaymentPage> {
               hasActiveOrder = true;
               isPartnerAccepted = status != 'pending';
               isFoodPurchased = status == 'purchasing_food' || status == 'bill_sent' || status == 'in_transit' || status == 'delivered';
-              if (status == 'bill_sent' || status == 'in_transit' || status == 'delivered') {
+              if (parsedChecklist.isNotEmpty) {
+                checklistItems = parsedChecklist;
+              }
+              isBillConfirmed = billConfirmedFromBackend;
+              if (billConfirmedFromBackend || status == 'bill_sent' || status == 'in_transit' || status == 'delivered') {
                 isBillSent = true;
               }
               if (gTot > 0 && billItems.isEmpty) {
@@ -335,10 +495,20 @@ class _PaymentPageState extends State<PaymentPage> {
               if (pPic != null && pPic.isNotEmpty) {
                 partnerProfilePicture = pPic;
               }
-              if (orderBillImg != null && orderBillImg.isNotEmpty) {
+              if (parsedOrderImgs.isNotEmpty) {
+                uploadedBillImages = parsedOrderImgs;
+                uploadedBillImageUrl = parsedOrderImgs.first;
+              } else if (orderBillImg != null && orderBillImg.isNotEmpty) {
                 uploadedBillImageUrl = orderBillImg;
+                uploadedBillImages = [orderBillImg];
               }
             });
+            if (uploadedBillImages.isNotEmpty) {
+              await prefs.setStringList('order_${currentOrderId}_bill_images', uploadedBillImages);
+              await prefs.setStringList('active_order_bill_images', uploadedBillImages);
+              await prefs.setString('order_${currentOrderId}_bill_image', uploadedBillImages.first);
+              await prefs.setString('active_order_bill_image', uploadedBillImages.first);
+            }
           }
         }
       }
@@ -348,7 +518,7 @@ class _PaymentPageState extends State<PaymentPage> {
 
     // 2. Fetch Bill Data from backend MongoDB
     try {
-      final billRes = await http.get(ApiConfig.billByOrder(currentOrderId)).timeout(const Duration(seconds: 2));
+      final billRes = await http.get(ApiConfig.billByOrder(currentOrderId)).timeout(const Duration(seconds: 5));
       if (billRes.statusCode == 200) {
         final billData = jsonDecode(billRes.body);
         final bill = billData['bill'];
@@ -368,15 +538,47 @@ class _PaymentPageState extends State<PaymentPage> {
             'quantity': (e['quantity'] as num?)?.toInt() ?? 1,
           }).toList();
 
-          if (mounted) {
+          List<String> billParsedImgs = [];
+          if (bill['bill_images'] is List) {
+            billParsedImgs = (bill['bill_images'] as List)
+                .map((e) => e.toString())
+                .where((e) => e.isNotEmpty)
+                .toList();
+          }
+          final effectiveImgs = billParsedImgs.isNotEmpty
+              ? billParsedImgs
+              : (billImg != null && billImg.isNotEmpty ? [billImg] : <String>[]);
+
+          final bool isBillPhase = (orderStatus == 'bill_sent' || orderStatus == 'in_transit' || orderStatus == 'delivered' || isBillConfirmed || isBillSent);
+          final bool shouldConfirmBill = isBillPhase || (bill != null);
+
+          final bool billItemsChanged = billItems.length != parsedItems.length ||
+              (parsedItems.isNotEmpty && (billItems.isEmpty || billItems.first['name'] != parsedItems.first['name'] || billItems.first['price'] != parsedItems.first['price']));
+          final bool totalChanged = itemTotal != subTot || tipAmount != effectiveTip;
+          final bool billImagesChanged = effectiveImgs.length != uploadedBillImages.length ||
+              (effectiveImgs.isNotEmpty && uploadedBillImages.isNotEmpty && effectiveImgs.first != uploadedBillImages.first);
+          final bool shouldUpdateBill = billItemsChanged || totalChanged || billImagesChanged || (isBillConfirmed != shouldConfirmBill) || !isBillConfirmed;
+
+          if (mounted && shouldUpdateBill) {
             setState(() {
               isBillSent = true;
-              billItems = parsedItems;
-              itemTotal = subTot;
+              isBillConfirmed = true;
+              billItems = parsedItems.isNotEmpty ? parsedItems : (checklistItems.isNotEmpty ? checklistItems : billItems);
+              itemTotal = subTot > 0 ? subTot : itemTotal;
               deliveryEarnings = 0.0;
               tipAmount = effectiveTip;
-              uploadedBillImageUrl = billImg;
+              if (effectiveImgs.isNotEmpty) {
+                uploadedBillImageUrl = effectiveImgs.first;
+                uploadedBillImages = effectiveImgs;
+              } else if (billImg != null && billImg.isNotEmpty) {
+                uploadedBillImageUrl = billImg;
+                uploadedBillImages = [billImg];
+              }
             });
+            if (uploadedBillImages.isNotEmpty && billImagesChanged) {
+              await prefs.setStringList('order_${currentOrderId}_bill_images', uploadedBillImages);
+              await prefs.setString('order_${currentOrderId}_bill_image', uploadedBillImages.first);
+            }
           }
         }
       }
@@ -384,29 +586,31 @@ class _PaymentPageState extends State<PaymentPage> {
       debugPrint("Error polling bill from backend: $e");
     }
 
-    // 3. Fetch Live Tracking Location from backend using dynamic partner ID
-    try {
-      final effectivePid = partnerId ?? prefs.getString('active_order_partner_id') ?? 'DP001';
-      final locRes = await http.get(ApiConfig.trackingByPartner(effectivePid)).timeout(const Duration(seconds: 2));
-      if (locRes.statusCode == 200) {
-        final locData = jsonDecode(locRes.body);
-        final loc = locData['location'];
-        if (loc != null && loc['latitude'] != null && loc['longitude'] != null) {
-          final newLoc = LatLng(
-            (loc['latitude'] as num).toDouble(),
-            (loc['longitude'] as num).toDouble(),
-          );
-          if (mounted && (_partnerLocation.latitude != newLoc.latitude || _partnerLocation.longitude != newLoc.longitude)) {
-            setState(() {
-              _partnerLocation = newLoc;
-            });
-            _fitMapBounds();
-            _fetchRoadRoute();
+    // 3. Fetch Live Tracking Location only when rider is on the road
+    if (orderStatus == 'in_transit' || orderStatus == 'picked_up' || orderStatus == 'bill_sent') {
+      try {
+        final effectivePid = partnerId ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+        final locRes = await http.get(ApiConfig.trackingByPartner(effectivePid)).timeout(const Duration(seconds: 2));
+        if (locRes.statusCode == 200) {
+          final locData = jsonDecode(locRes.body);
+          final loc = locData['location'];
+          if (loc != null && loc['latitude'] != null && loc['longitude'] != null) {
+            final newLoc = LatLng(
+              (loc['latitude'] as num).toDouble(),
+              (loc['longitude'] as num).toDouble(),
+            );
+            if (mounted && (_partnerLocation.latitude != newLoc.latitude || _partnerLocation.longitude != newLoc.longitude)) {
+              setState(() {
+                _partnerLocation = newLoc;
+              });
+              _fitMapBounds();
+              _fetchRoadRoute();
+            }
           }
         }
+      } catch (e) {
+        debugPrint("Error polling tracking from backend: $e");
       }
-    } catch (e) {
-      debugPrint("Error polling tracking from backend: $e");
     }
   } finally {
     _isPollingBackend = false;
@@ -995,10 +1199,16 @@ class _PaymentPageState extends State<PaymentPage> {
   void _showOnlinePaymentSuccessDialog(double amount, String otp) {
     // 🔔 Instant confirmation sound & vibration on customer device!
     AlarmService.playPaymentSuccessSound();
-    AppNotificationService.showNotification(
-      id: 9977,
-      title: "✅ Payment Successful: ₹${amount.toStringAsFixed(0)}",
-      body: "Paid ₹${amount.toStringAsFixed(0)} via Cashfree Gateway. Share Delivery OTP $otp upon food arrival.",
+    final String oId = orderId;
+    if (oId.isNotEmpty) {
+      SharedPreferences.getInstance().then((p) => p.setBool('has_notified_payment_success_$oId', true));
+    }
+    AppNotificationService.showPaymentSuccessNotification(
+      orderId: oId,
+      amount: amount,
+      otp: otp,
+      partnerName: partnerName,
+      paymentMethod: 'Cashfree Gateway',
     );
 
     showDialog(
@@ -1229,10 +1439,16 @@ class _PaymentPageState extends State<PaymentPage> {
 
     // 🔔 Instant confirmation sound & vibration on customer device!
     AlarmService.playPaymentSuccessSound();
-    AppNotificationService.showNotification(
-      id: 9977,
-      title: "✅ Payment Received: ₹${amount.toStringAsFixed(0)}",
-      body: "Paid ₹${amount.toStringAsFixed(0)} via $appName. Share Delivery OTP $onlineOtp upon food arrival.",
+    final String oId = orderId;
+    if (oId.isNotEmpty) {
+      SharedPreferences.getInstance().then((p) => p.setBool('has_notified_payment_success_$oId', true));
+    }
+    AppNotificationService.showPaymentSuccessNotification(
+      orderId: oId,
+      amount: amount,
+      otp: onlineOtp,
+      partnerName: partnerName,
+      paymentMethod: appName,
     );
 
     // Show success dialog with delivery OTP
@@ -1468,12 +1684,16 @@ class _PaymentPageState extends State<PaymentPage> {
                       _buildDeliveryPartnerInfoCard(),
                       const SizedBox(height: 16),
 
+                      // ORDERED ITEMS CHECKLIST (Live synced as partner checks items)
+                      _buildOrderedItemsChecklistCard(),
+                      const SizedBox(height: 16),
+
                       // Order Steps Timeline
                       _buildOrderTimelineCard(),
                       const SizedBox(height: 16),
 
-                      // CONDITIONAL BILL CONTAINER
-                      if (!isBillSent)
+                      // CONDITIONAL BILL CONTAINER (Shown as soon as delivery partner confirms and sends bill)
+                      if (!isBillConfirmed && !isBillSent && orderStatus != 'bill_sent' && orderStatus != 'in_transit' && orderStatus != 'delivered')
                         _buildWaitingForBillCard()
                       else
                         _buildBillDetailsCard(),
@@ -1504,7 +1724,7 @@ class _PaymentPageState extends State<PaymentPage> {
                     ],
                   ),
                 )),
-      bottomNavigationBar: (hasActiveOrder && isPartnerAccepted && isBillSent) ? _buildPayBottomBar() : null,
+      bottomNavigationBar: (hasActiveOrder && isPartnerAccepted) ? _buildPayBottomBar() : null,
     ),
   );
 }
@@ -2205,16 +2425,23 @@ class _PaymentPageState extends State<PaymentPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 20),
-                    SizedBox(width: 6),
-                    Text(
-                      "Delivery Person Live Location",
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
-                    ),
-                  ],
+                const Expanded(
+                  child: Row(
+                    children: [
+                      Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 20),
+                      SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          "Delivery Person Live Location",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
@@ -2293,31 +2520,39 @@ class _PaymentPageState extends State<PaymentPage> {
                 Positioned(
                   top: 12,
                   left: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.two_wheeler_rounded, color: Color(0xFF047857), size: 16),
-                        const SizedBox(width: 6),
-                        Text(
-                          orderStatus == 'in_transit'
-                              ? "Out for Delivery • Live Road Route"
-                              : (isPartnerAccepted ? "Partner Connected • Live GPS" : "Connecting Partner..."),
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
-                        ),
-                      ],
+                  right: 12,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.two_wheeler_rounded, color: Color(0xFF047857), size: 16),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              orderStatus == 'in_transit'
+                                  ? "Out for Delivery • Live Road Route"
+                                  : (isPartnerAccepted ? "Partner Connected • Live GPS" : "Connecting Partner..."),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -2455,6 +2690,8 @@ class _PaymentPageState extends State<PaymentPage> {
               children: [
                 Text(
                   (partnerName.isNotEmpty && partnerName != 'Delivery Partner') ? partnerName : "Delivery Partner",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
                 ),
                 const SizedBox(height: 2),
@@ -2479,7 +2716,30 @@ class _PaymentPageState extends State<PaymentPage> {
                   const SizedBox(height: 2),
                   Text(
                     partnerPhone,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: AppColors.primaryDark, fontWeight: FontWeight.w700),
+                  ),
+                ],
+                if (agreedPriceRange != null && agreedPriceRange!.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF86EFAC)),
+                    ),
+                    child: Text(
+                      "Agreed Budget: ₹$agreedPriceRange",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF166534),
+                      ),
+                    ),
                   ),
                 ],
               ],
@@ -2544,7 +2804,214 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  // Stepper Timeline (Activity-Driven Milestones)
+
+  // ORDERED ITEMS CHECKLIST CARD (Live synced as delivery partner picks up items at the restaurant)
+  Widget _buildOrderedItemsChecklistCard() {
+    final displayItems = checklistItems.isNotEmpty
+        ? checklistItems
+        : [
+            {
+              'name': itemName,
+              'quantity': 1,
+              'price': itemTotal > 0 ? itemTotal : 150.0,
+              'is_collected': isBillConfirmed || isBillSent,
+            }
+          ];
+
+    final collectedCount = displayItems.where((i) => i['is_collected'] == true).length;
+    final totalCount = displayItems.length;
+    final isAllCollected = totalCount > 0 && collectedCount == totalCount;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isAllCollected ? const Color(0xFF10B981) : const Color(0xFFF59E0B).withValues(alpha: 0.5),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: isAllCollected ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isAllCollected ? Icons.checklist_rtl_rounded : Icons.fact_check_outlined,
+                        size: 20,
+                        color: isAllCollected ? const Color(0xFF166534) : const Color(0xFFB45309),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Flexible(
+                      child: Text(
+                        "Ordered Items Checklist",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isAllCollected ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isAllCollected ? const Color(0xFF86EFAC) : const Color(0xFFFDE68A),
+                  ),
+                ),
+                child: Text(
+                  "$collectedCount/$totalCount Collected",
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: isAllCollected ? const Color(0xFF166534) : const Color(0xFFB45309),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+
+          // Items list with real-time collected badges
+          ...displayItems.asMap().entries.map((entry) {
+            final item = entry.value;
+            final bool isCollected = item['is_collected'] == true;
+            final String name = item['name'] ?? 'Item';
+            final int qty = (item['quantity'] as num?)?.toInt() ?? 1;
+            final double price = (item['price'] as num?)?.toDouble() ?? 0.0;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isCollected ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isCollected ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
+                ),
+              ),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isCollected ? const Color(0xFF10B981) : Colors.transparent,
+                      border: Border.all(
+                        color: isCollected ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Icon(
+                      isCollected ? Icons.check : Icons.circle_outlined,
+                      size: 14,
+                      color: isCollected ? Colors.white : Colors.transparent,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "$qty × $name",
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            color: isCollected ? const Color(0xFF14532D) : AppColors.textPrimary,
+                          ),
+                        ),
+                        if (price > 0)
+                          Text(
+                            "₹${price.toStringAsFixed(0)} each",
+                            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isCollected ? const Color(0xFFDCFCE7) : const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isCollected ? const Color(0xFF86EFAC) : const Color(0xFFFFEDD5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (!isCollected) ...[
+                          const SizedBox(
+                            width: 8,
+                            height: 8,
+                            child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFFEA580C)),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(
+                          isCollected ? "Collected" : "Collecting...",
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: isCollected ? const Color(0xFF15803D) : const Color(0xFFC2410C),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.sync_rounded, size: 13, color: AppColors.textSecondary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  isAllCollected
+                      ? "All items collected by $partnerName ✓"
+                      : "Live synced with $partnerName's device as items are picked up",
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+    // Stepper Timeline (Activity-Driven Milestones)
   Widget _buildOrderTimelineCard() {
     final bool s2Done = isPartnerAccepted;
     final bool s3Done = orderStatus == 'bill_sent' || orderStatus == 'in_transit' || orderStatus == 'delivered';
@@ -2738,6 +3205,10 @@ class _PaymentPageState extends State<PaymentPage> {
 
   // OFFICIAL VERIFIED BILL CARD (Shown ONLY after partner clicks Proceed Bill)
   Widget _buildBillDetailsCard() {
+    final displayBillItems = billItems.isNotEmpty
+        ? billItems
+        : (checklistItems.isNotEmpty ? checklistItems : <Map<String, dynamic>>[]);
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -2799,13 +3270,16 @@ class _PaymentPageState extends State<PaymentPage> {
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 8),
-                ...billItems.map((it) {
-                  final name = it['name'] ?? 'Item';
-                  final hotel = it['hotel'] ?? 'Local Shop';
-                  final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-                  final qty = (it['quantity'] as num?)?.toInt() ?? 1;
-                  return _buildBillItem("$qty× $name", hotel, price * qty);
-                }),
+                if (displayBillItems.isNotEmpty)
+                  ...displayBillItems.map((it) {
+                    final name = it['name'] ?? 'Item';
+                    final hotel = it['hotel'] ?? 'Local Shop';
+                    final price = (it['price'] as num?)?.toDouble() ?? 0.0;
+                    final qty = (it['quantity'] as num?)?.toInt() ?? 1;
+                    return _buildBillItem("$qty× $name", hotel, price > 0 ? (price * qty) : (itemTotal > 0 ? itemTotal : totalAmount));
+                  })
+                else
+                  _buildBillItem("1× ${itemName.isNotEmpty ? itemName : 'Food Order'}", "Local Restaurant", itemTotal > 0 ? itemTotal : totalAmount),
                 const Divider(thickness: 1, height: 24),
                 _buildRow("Item Subtotal", "₹ ${itemTotal.toStringAsFixed(0)}"),
                 const SizedBox(height: 6),
@@ -2830,47 +3304,177 @@ class _PaymentPageState extends State<PaymentPage> {
                     ),
                   ],
                 ),
-                // Uploaded Food Bill Receipt (ONLY shown if delivery partner actually uploaded one for this order)
-                if (uploadedBillImageUrl != null && uploadedBillImageUrl!.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  const Divider(height: 1),
-                  const SizedBox(height: 14),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Row(
+                // Uploaded Food Bill Receipts (Support multiple receipts with zero overlap)
+                if (uploadedBillImages.isNotEmpty || (uploadedBillImageUrl != null && uploadedBillImageUrl!.isNotEmpty)) ...[
+                  Builder(
+                    builder: (context) {
+                      final allImgs = uploadedBillImages.isNotEmpty
+                          ? uploadedBillImages
+                          : [uploadedBillImageUrl!];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.receipt_rounded, size: 18, color: AppColors.primaryDark),
-                          SizedBox(width: 6),
-                          Text(
-                            "Uploaded Shop Bill Receipt",
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          const SizedBox(height: 16),
+                          const Divider(height: 1),
+                          const SizedBox(height: 14),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.receipt_long_rounded, size: 18, color: AppColors.primaryDark),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        allImgs.length > 1
+                                            ? "Official Restaurant Bills (${allImgs.length} attached)"
+                                            : "Official Restaurant Bill Receipt",
+                                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              if (allImgs.length == 1)
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    backgroundColor: const Color(0xFFEFF6FF),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  ),
+                                  onPressed: () => _showFullReceiptDialog(allImgs.first),
+                                  icon: const Icon(Icons.fullscreen_rounded, size: 16, color: AppColors.primaryDark),
+                                  label: const Text("View Full", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark)),
+                                ),
+                            ],
                           ),
+                          const SizedBox(height: 10),
+                          if (allImgs.length == 1)
+                            GestureDetector(
+                              onTap: () => _showFullReceiptDialog(allImgs.first),
+                              child: Container(
+                                height: 200,
+                                width: double.infinity,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F172A),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
+                                  boxShadow: [
+                                    BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 3)),
+                                  ],
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(13),
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      _buildBillReceiptWidget(allImgs.first, fit: BoxFit.contain),
+                                      Positioned(
+                                        bottom: 0,
+                                        left: 0,
+                                        right: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [Colors.transparent, Colors.black.withValues(alpha: 0.75)],
+                                              begin: Alignment.topCenter,
+                                              end: Alignment.bottomCenter,
+                                            ),
+                                          ),
+                                          child: const Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.zoom_in_rounded, color: Colors.white, size: 15),
+                                              SizedBox(width: 5),
+                                              Text(
+                                                "Tap to expand & inspect full receipt",
+                                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
+                            SizedBox(
+                              height: 205,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: allImgs.length,
+                                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                                itemBuilder: (context, idx) {
+                                  final imgUrl = allImgs[idx];
+                                  return GestureDetector(
+                                    onTap: () => _showFullReceiptDialog(imgUrl),
+                                    child: Container(
+                                      width: 160,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF0F172A),
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
+                                        boxShadow: [
+                                          BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 3)),
+                                        ],
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(13),
+                                        child: Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            _buildBillReceiptWidget(imgUrl, fit: BoxFit.contain),
+                                            Positioned(
+                                              top: 6,
+                                              left: 6,
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black.withValues(alpha: 0.75),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  "Bill #${idx + 1}",
+                                                  style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                            ),
+                                            Positioned(
+                                              bottom: 0,
+                                              left: 0,
+                                              right: 0,
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                                color: Colors.black.withValues(alpha: 0.6),
+                                                child: const Row(
+                                                  mainAxisAlignment: MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(Icons.zoom_in_rounded, color: Colors.white, size: 12),
+                                                    SizedBox(width: 4),
+                                                    Text("Tap to zoom", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
                         ],
-                      ),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                        onPressed: () => _showFullReceiptDialog(uploadedBillImageUrl!),
-                        icon: const Icon(Icons.fullscreen_rounded, size: 16, color: AppColors.primaryDark),
-                        label: const Text("View Full", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  GestureDetector(
-                    onTap: () => _showFullReceiptDialog(uploadedBillImageUrl!),
-                    child: Container(
-                      height: 160,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: _buildBillReceiptWidget(uploadedBillImageUrl!),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ],
                 const SizedBox(height: 16),
@@ -2933,19 +3537,23 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  Widget _buildBillReceiptWidget(String pathOrUrl) {
+  Widget _buildBillReceiptWidget(String pathOrUrl, {BoxFit fit = BoxFit.cover}) {
     if (pathOrUrl.startsWith('data:image')) {
       final commaIndex = pathOrUrl.indexOf(',');
       final base64Data = commaIndex != -1 ? pathOrUrl.substring(commaIndex + 1) : pathOrUrl;
-      return Image.memory(
-        base64Decode(base64Data),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted)),
-      );
+      try {
+        return Image.memory(
+          base64Decode(base64Data),
+          fit: fit,
+          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted)),
+        );
+      } catch (_) {
+        return const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted));
+      }
     } else if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
       return Image.network(
         pathOrUrl,
-        fit: BoxFit.cover,
+        fit: fit,
         errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted)),
       );
     } else {
@@ -2953,7 +3561,7 @@ class _PaymentPageState extends State<PaymentPage> {
       if (file.existsSync()) {
         return Image.file(
           file,
-          fit: BoxFit.cover,
+          fit: fit,
           errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted)),
         );
       }
@@ -2966,35 +3574,98 @@ class _PaymentPageState extends State<PaymentPage> {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(16),
-        child: Stack(
-          alignment: Alignment.topRight,
-          children: [
-            InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4.0,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: _buildBillReceiptWidget(pathOrUrl),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, 8)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Clean non-overlapping Header bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.receipt_long_rounded, color: AppColors.primaryDark, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          "Restaurant Bill Receipt",
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 22),
+                      tooltip: "Close",
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            IconButton(
-              icon: const CircleAvatar(
-                backgroundColor: Colors.black54,
-                child: Icon(Icons.close_rounded, color: Colors.white, size: 20),
+
+              // Non-overlapping receipt viewer with pan & pinch-to-zoom
+              Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.72,
+                  minHeight: 260,
+                ),
+                color: const Color(0xFF0F172A),
+                child: InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Center(
+                    child: _buildBillReceiptWidget(pathOrUrl, fit: BoxFit.contain),
+                  ),
+                ),
               ),
-              onPressed: () => Navigator.pop(ctx),
-            ),
-          ],
+
+              // Footer guidance bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+                  border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.pinch_rounded, size: 16, color: AppColors.textSecondary),
+                    SizedBox(width: 6),
+                    Text(
+                      "Pinch or double-tap to zoom & pan receipt items",
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // Bottom Navigation Pay Button
+  // Bottom Navigation Pay Button (Locked until delivery partner confirms order & sends bill)
   Widget _buildPayBottomBar() {
-    final payAmount = totalAmount > 0 ? totalAmount : 195.0;
+    final payAmount = totalAmount > 0 ? totalAmount : itemTotal;
     final isPaid = isOnlinePaid;
+    final bool isUnlocked = isBillConfirmed || isBillSent || orderStatus == 'bill_sent' || orderStatus == 'in_transit' || orderStatus == 'delivered';
 
     return SafeArea(
       top: false,
@@ -3011,54 +3682,117 @@ class _PaymentPageState extends State<PaymentPage> {
             ),
           ],
         ),
-        child: ElevatedButton(
-          onPressed: _isCashfreeProcessing ? null : _showPaymentOptions,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: isPaid ? const Color(0xFF047857) : AppColors.primary,
-            foregroundColor: Colors.white,
-            elevation: 3,
-            shadowColor: (isPaid ? const Color(0xFF047857) : AppColors.primary).withValues(alpha: 0.35),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          ),
-          child: _isCashfreeProcessing
-              ? const Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isUnlocked && !isPaid) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                    ),
-                    SizedBox(width: 12),
-                    Text(
-                      "Connecting to Cashfree...",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-                    ),
-                  ],
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      isPaid ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      isPaid
-                          ? "Payment Done • View OTP"
-                          : "Pay ₹ ${payAmount.toStringAsFixed(0)}",
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                        letterSpacing: 0.3,
+                    Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB45309)),
+                    SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        "Pay button unlocks once partner confirms order & bill",
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFB45309)),
                       ),
                     ),
                   ],
                 ),
+              ),
+            ],
+            ElevatedButton(
+              onPressed: (!isUnlocked || _isCashfreeProcessing)
+                  ? (isUnlocked ? null : () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Row(
+                            children: [
+                              const Icon(Icons.lock_outline_rounded, color: Colors.white, size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  "Payment will unlock as soon as $partnerName taps 'Confirm Order and Send to Bill' at the restaurant.",
+                                ),
+                              ),
+                            ],
+                          ),
+                          backgroundColor: const Color(0xFFB45309),
+                          behavior: SnackBarBehavior.floating,
+                          duration: const Duration(seconds: 3),
+                        ),
+                      );
+                    })
+                  : _showPaymentOptions,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isPaid
+                    ? const Color(0xFF047857)
+                    : (isUnlocked ? AppColors.primary : const Color(0xFFCBD5E1)),
+                foregroundColor: isUnlocked || isPaid ? Colors.white : const Color(0xFF64748B),
+                elevation: isUnlocked ? 3 : 0,
+                shadowColor: (isPaid ? const Color(0xFF047857) : AppColors.primary).withValues(alpha: 0.35),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: _isCashfreeProcessing
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                        ),
+                        SizedBox(width: 12),
+                        Text(
+                          "Connecting to Cashfree...",
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          isPaid
+                              ? Icons.check_circle_rounded
+                              : (isUnlocked ? Icons.payment_rounded : Icons.lock_rounded),
+                          color: isUnlocked || isPaid ? Colors.white : const Color(0xFF64748B),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            isPaid
+                                ? "Payment Done • View OTP"
+                                : (isUnlocked
+                                    ? "Pay ₹ ${payAmount.toStringAsFixed(0)}"
+                                    : "Waiting for Bill Confirmation • Locked"),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: isUnlocked ? 17 : 14,
+                              fontWeight: FontWeight.w900,
+                              color: isUnlocked || isPaid ? Colors.white : const Color(0xFF64748B),
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
         ),
       ),
     );

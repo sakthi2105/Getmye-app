@@ -76,9 +76,14 @@ function isPartnerInList(partnerId, list = []) {
 async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = []) {
   try {
     // 1. Get all delivery persons who are registered and not offline
-    const deliveryPersons = await DeliveryPerson.find({
+    let deliveryPersons = await DeliveryPerson.find({
       dp_status: { $ne: 'offline' }
     }).select('DP_id name mobile_number dp_status').lean();
+
+    if (!deliveryPersons || deliveryPersons.length === 0) {
+      // Fallback: If no delivery partners explicitly marked != 'offline', check all registered partners
+      deliveryPersons = await DeliveryPerson.find({}).select('DP_id name mobile_number dp_status').lean();
+    }
 
     if (!deliveryPersons || deliveryPersons.length === 0) {
       return [];

@@ -18,7 +18,10 @@ import 'delivery_bill_flow.dart';
 import 'address.dart';
 import 'api_config.dart';
 import 'services/order_chat_sheet.dart';
+import 'services/app_notification_service.dart';
+import 'services/alarm_service.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
+import 'widgets/price_range_dialogs.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -44,12 +47,12 @@ class HomePage extends StatefulWidget {
   _HomePageState createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool showDeliveryDetails = false;
   bool showCancelButtonContainer = false;
   bool isVegOnly = false;
   String _currentAddressShort = "Current Location";
-  String _currentAddressFull = "Fetching live GPS location...";
+  String _currentAddressFull = "Detecting exact live GPS location...";
 
   bool isSearchingRider = false;
   bool hasRiderAccepted = false;
@@ -60,6 +63,112 @@ class _HomePageState extends State<HomePage> {
   String? assignedPartnerProfileImage;
   double _riderDistanceMeters = 0.0;
   List<LatLng> _trackingRoutePoints = [];
+  List<String> _orderBillImages = [];
+
+  bool _isShowingPriceRangeDialog = false;
+  String? _lastPromptedPriceRange;
+
+  void _checkAndShowCustomerPriceRangeDialog({
+    required String orderId,
+    required String partnerName,
+    required String partnerPhone,
+    String? partnerPhoto,
+    required String priceRange,
+  }) {
+    if (!mounted || _isShowingPriceRangeDialog) return;
+    if (_lastPromptedPriceRange == '${orderId}_$priceRange') return;
+
+    _isShowingPriceRangeDialog = true;
+    _lastPromptedPriceRange = '${orderId}_$priceRange';
+
+    AppNotificationService.showPriceRangeAcknowledgementNotification(
+      orderId: orderId,
+      priceRange: priceRange,
+      partnerName: partnerName,
+    );
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CustomerPriceRangeDialog(
+        orderId: orderId,
+        partnerName: partnerName,
+        partnerPhone: partnerPhone,
+        partnerPhoto: partnerPhoto,
+        priceRange: priceRange,
+        onAccepted: () {
+          _isShowingPriceRangeDialog = false;
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const PaymentPage()),
+          );
+        },
+        onFindAnotherPartner: () async {
+          _isShowingPriceRangeDialog = false;
+          final p = await SharedPreferences.getInstance();
+          await p.setBool('active_order_partner_accepted', false);
+          await p.remove('active_order_partner_name');
+          await p.remove('active_order_partner_phone');
+          await p.remove('active_order_partner_id');
+          await p.remove('active_order_partner_image');
+          await p.remove('active_order_partner_pic');
+          await p.setString('active_order_status', 'pending');
+
+          if (mounted) {
+            setState(() {
+              hasRiderAccepted = false;
+              isSearchingRider = true;
+              showCancelButtonContainer = true;
+              showDeliveryDetails = true;
+              assignedPartnerName = '';
+              assignedPartnerPhone = '';
+              assignedPartnerId = '';
+              assignedPartnerProfileImage = null;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Price range declined. Searching for next delivery partner..."),
+                backgroundColor: Color(0xFF2563EB),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        },
+        onStopOrder: () async {
+          _isShowingPriceRangeDialog = false;
+          final p = await SharedPreferences.getInstance();
+          await p.setBool('has_active_order', false);
+          await p.remove('active_order_id');
+          await p.setString('active_order_status', 'cancelled');
+          await p.remove('active_order_partner_accepted');
+          await p.remove('active_order_partner_name');
+          await p.remove('active_order_partner_phone');
+          await p.remove('active_order_partner_id');
+
+          if (mounted) {
+            setState(() {
+              isSearchingRider = false;
+              hasRiderAccepted = false;
+              showDeliveryDetails = false;
+              showCancelButtonContainer = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Order stopped and cancelled."),
+                backgroundColor: Color(0xFFDC2626),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        },
+        onDeclined: () {
+          _isShowingPriceRangeDialog = false;
+        },
+      ),
+    ).then((_) {
+      _isShowingPriceRangeDialog = false;
+    });
+  }
 
   String _formatRiderDistance() {
     double dist = _riderDistanceMeters;
@@ -181,6 +290,11 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _budgetController = TextEditingController();
   final TextEditingController _chatMsgController = TextEditingController();
   final TextEditingController _customLocationTextController = TextEditingController();
+  final TextEditingController _deliveryLocationController = TextEditingController();
+  final GlobalKey _orderFormCardKey = GlobalKey();
+
+  bool _isLocationDialogShowing = false;
+  bool _isCheckingLocation = false;
 
   // Promotional Banner Carousel Controller & Timer
   late PageController _bannerPageController;
@@ -232,6 +346,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bannerPageController = PageController();
     _loadSavedLocation();
     _startBannerAutoSlide();
@@ -240,15 +355,29 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum"
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Whenever customer returns to app from settings or background, check GPS & refresh exact location
+      _checkAndPromptLocationService();
+    }
+  }
+
+  // 🛰️ Requirement: Check GPS ON/OFF & permissions every time user enters the app, and fetch exact location
   Future<void> _checkAndPromptLocationService() async {
+    if (_isCheckingLocation) return;
+    _isCheckingLocation = true;
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled && mounted) {
-        await _showTurnOnGPSDialog(
-          title: "Turn On GPS Location",
-          message: "Please turn ON your device location (GPS) to accurately detect your delivery address and locate delivery partners.",
-        );
+      if (!serviceEnabled) {
+        if (mounted) {
+          await _showTurnOnGPSDialog(
+            title: "Turn On GPS Location",
+            message: "Please turn ON your device location (GPS) to accurately detect your delivery address and locate delivery partners.",
+            isPermissionSettings: false,
+          );
+        }
+        return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -256,19 +385,28 @@ class _HomePageState extends State<HomePage> {
         permission = await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.deniedForever && mounted) {
-        await _showTurnOnGPSDialog(
-          title: "Location Permission Required",
-          message: "Location permission is disabled for Getmye. Please enable it in device settings to place orders.",
-          isPermissionSettings: true,
-        );
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          await _showTurnOnGPSDialog(
+            title: "Location Permission Required",
+            message: "Location permission is disabled for Getmye. Please enable it in device settings to accurately detect your delivery address.",
+            isPermissionSettings: true,
+          );
+        }
+        return;
       }
 
       if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-        await _requestLiveLocation(silent: true, forceOverrideAddress: false);
+        // Location is enabled & permission granted: get live location
+        final prefs = await SharedPreferences.getInstance();
+        final savedShort = prefs.getString('customer_address_short');
+        final bool hasAddress = savedShort != null && savedShort.isNotEmpty && savedShort != 'Detecting...' && savedShort != 'Current Location';
+        await _requestLiveLocation(forceOverrideAddress: !hasAddress);
       }
     } catch (e) {
       debugPrint("Customer location service check error: $e");
+    } finally {
+      _isCheckingLocation = false;
     }
   }
 
@@ -277,65 +415,68 @@ class _HomePageState extends State<HomePage> {
     required String message,
     bool isPermissionSettings = false,
   }) async {
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEFF6FF),
-                borderRadius: BorderRadius.circular(10),
+    if (_isLocationDialogShowing || !mounted) return;
+    _isLocationDialogShowing = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.location_on_rounded, color: Color(0xFF2563EB), size: 24),
               ),
-              child: const Icon(Icons.location_on_rounded, color: Color(0xFF2563EB), size: 24),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            message,
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Later", style: TextStyle(color: AppColors.textMuted)),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               ),
+              icon: const Icon(Icons.settings_rounded, color: Colors.white, size: 16),
+              label: Text(
+                isPermissionSettings ? "Open Settings" : "Turn On GPS",
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                if (isPermissionSettings) {
+                  await Geolocator.openAppSettings();
+                } else {
+                  await Geolocator.openLocationSettings();
+                }
+              },
             ),
           ],
         ),
-        content: Text(
-          message,
-          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Later", style: TextStyle(color: AppColors.textMuted)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2563EB),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            ),
-            icon: const Icon(Icons.settings_rounded, color: Colors.white, size: 16),
-            label: Text(
-              isPermissionSettings ? "Open Settings" : "Turn On GPS",
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              if (isPermissionSettings) {
-                await Geolocator.openAppSettings();
-              } else {
-                await Geolocator.openLocationSettings();
-              }
-              Future.delayed(const Duration(seconds: 1), () {
-                if (mounted) _checkAndPromptLocationService();
-              });
-            },
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      _isLocationDialogShowing = false;
+    }
   }
 
   void _startBannerAutoSlide() {
@@ -363,6 +504,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _currentAddressShort = shortA;
         _currentAddressFull = (fullA != null && fullA.isNotEmpty) ? fullA : shortA;
+        _deliveryLocationController.text = _currentAddressFull;
       });
     }
 
@@ -422,6 +564,23 @@ class _HomePageState extends State<HomePage> {
       if (pPic != null && pPic.isNotEmpty) await prefs.setString('active_order_partner_image', pPic);
       if (pOtp.isNotEmpty) await prefs.setString('active_cod_otp', pOtp);
 
+      List<String> bImages = [];
+      final bool isBillPhase = status == 'bill_sent' || status == 'in_transit' || status == 'delivered';
+      if (isBillPhase) {
+        if (activeOrderObj['bill_images'] is List) {
+          bImages = (activeOrderObj['bill_images'] as List).map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+        } else if (activeOrderObj['bill_image_url'] != null && activeOrderObj['bill_image_url'].toString().trim().isNotEmpty) {
+          bImages = [activeOrderObj['bill_image_url'].toString().trim()];
+        } else {
+          final savedImgs = prefs.getStringList('order_${curOrderId}_bill_images');
+          if (savedImgs != null && savedImgs.isNotEmpty) bImages = savedImgs;
+        }
+      }
+      if (bImages.isNotEmpty) {
+        await prefs.setStringList('order_${curOrderId}_bill_images', bImages);
+        await prefs.setString('order_${curOrderId}_bill_image', bImages.first);
+      }
+
       if (mounted) {
         setState(() {
           showDeliveryDetails = true;
@@ -435,17 +594,48 @@ class _HomePageState extends State<HomePage> {
           assignedPartnerId = isAccepted ? pId : '';
           if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
           if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
+          _orderBillImages = bImages;
         });
       }
 
       if (isAccepted) {
+        final bool alreadyNotified = prefs.getBool('has_notified_partner_accepted_$curOrderId') ?? false;
+        if (!alreadyNotified) {
+          await prefs.setBool('has_notified_partner_accepted_$curOrderId', true);
+          await AppNotificationService.showOrderAcceptedNotification(
+            orderId: curOrderId,
+            partnerName: pName,
+            partnerPhone: pPhone,
+          );
+        }
+
         _startRiderLocationPolling();
         _startOrderChatPolling();
         _fetchTrackingRoadRoute();
+
+        final String pr = (activeOrderObj['price_range'] ?? '').toString().trim();
+        final String prStatus = (activeOrderObj['price_range_status'] ?? '').toString().toLowerCase().trim();
+        if (pr.isNotEmpty && prStatus == 'pending') {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _checkAndShowCustomerPriceRangeDialog(
+              orderId: curOrderId,
+              partnerName: pName,
+              partnerPhone: pPhone,
+              partnerPhoto: pPic,
+              priceRange: pr,
+            );
+          });
+        }
       }
+      AlarmService.startCustomerOrderListeningService(
+        baseUrl: ApiConfig.baseUrl,
+        orderId: curOrderId,
+      );
+      AlarmService.requestBatteryOptimizationExemption();
       _startOrderPolling(curOrderId);
     } else {
       // Server confirmed NO active order (or clean startup) - clear all local stale state!
+      AlarmService.stopCustomerOrderListeningService();
       await prefs.setBool('has_active_order', false);
       await prefs.remove('active_order_id');
       await prefs.remove('active_order_status');
@@ -471,14 +661,16 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
-    // Refresh live device GPS position in background without wiping user's saved/selected address text
-    await _requestLiveLocation(
-      silent: true,
-      forceOverrideAddress: false,
-    );
+    // Only refresh live device GPS position if no valid address was previously saved
+    if (shortA == null || shortA.isEmpty || shortA == 'Detecting...' || shortA == 'Current Location') {
+      await _requestLiveLocation(
+        silent: true,
+        forceOverrideAddress: true,
+      );
+    }
   }
 
-  Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = false}) async {
+  Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = true}) async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && !silent && mounted) {
@@ -496,16 +688,16 @@ class _HomePageState extends State<HomePage> {
 
       if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
         Position? position;
-        // Fast instant fix from last known position
+        // 1. Fast instant fix from last known position
         try {
           position = await Geolocator.getLastKnownPosition();
         } catch (_) {}
 
-        // Live fix
+        // 2. High-accuracy live fix
         try {
           final livePos = await Geolocator.getCurrentPosition(
             desiredAccuracy: LocationAccuracy.high,
-            timeLimit: const Duration(seconds: 4),
+            timeLimit: const Duration(seconds: 5),
           );
           position = livePos;
         } catch (_) {}
@@ -527,56 +719,55 @@ class _HomePageState extends State<HomePage> {
           );
         }
 
-        final existingShort = prefs.getString('customer_address_short');
-        final hasCustomAddress = existingShort != null &&
-            existingShort.isNotEmpty &&
-            existingShort != "Current Location" &&
-            !existingShort.toLowerCase().contains("matthi");
+        String shortA = "Current Location";
+        String fullA = "Live GPS Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
 
-        if (!hasCustomAddress || forceOverrideAddress) {
-          String shortA = "Current Location";
-          String fullA = "Live GPS Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
+        // Reverse geocoding via OpenStreetMap with street/building accuracy
+        try {
+          final geoRes = await http.get(
+            Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}&zoom=18&addressdetails=1'),
+            headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
+          ).timeout(const Duration(seconds: 5));
 
-          try {
-            final geoRes = await http.get(
-              Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}'),
-              headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
-            ).timeout(const Duration(seconds: 4));
+          if (geoRes.statusCode == 200) {
+            final geoData = jsonDecode(geoRes.body);
+            final address = geoData['address'];
+            if (address != null) {
+              String road = (address['road'] ?? address['pedestrian'] ?? address['neighbourhood'] ?? address['residential'] ?? '').toString().trim();
+              final suburb = (address['suburb'] ?? address['subdistrict'] ?? '').toString().trim();
+              final city = (address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Kumbakonam').toString().trim();
 
-            if (geoRes.statusCode == 200) {
-              final geoData = jsonDecode(geoRes.body);
-              final address = geoData['address'];
-              if (address != null) {
-                String road = address['road'] ?? address['neighbourhood'] ?? address['residential'] ?? '';
-                final suburb = address['suburb'] ?? '';
-                final city = address['city'] ?? address['town'] ?? address['village'] ?? address['state_district'] ?? '';
-
-                // 🛑 Fix for "Matthi": Filter out obscure hamlet tag 'Matthi' if city is known
-                if (road.isEmpty) {
-                  if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
-                    road = suburb;
-                  } else {
-                    road = city.isNotEmpty ? city : 'Current Location';
-                  }
+              if (road.isEmpty) {
+                if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
+                  road = suburb;
+                } else {
+                  road = (city.isNotEmpty && city != 'Live Location') ? city : 'Current Location';
                 }
-
-                if (road.isNotEmpty && city.isNotEmpty && road != city) {
-                  shortA = '$road, $city';
-                } else if (road.isNotEmpty) {
-                  shortA = road;
-                } else if (city.isNotEmpty) {
-                  shortA = city;
-                }
-
-                String cleanFull = geoData['display_name'] ?? fullA;
-                if (cleanFull.startsWith('Matthi, ')) {
-                  cleanFull = cleanFull.replaceFirst('Matthi, ', '');
-                }
-                fullA = cleanFull;
               }
-            }
-          } catch (_) {}
 
+              if (road.isNotEmpty && road != "Current Location" && city.isNotEmpty && city != "Live Location" && road.toLowerCase() != city.toLowerCase()) {
+                shortA = '$road, $city';
+              } else if (road.isNotEmpty && road != "Current Location") {
+                shortA = road;
+              } else if (city.isNotEmpty && city != "Live Location") {
+                shortA = city;
+              } else {
+                shortA = "Kumbakonam";
+              }
+
+              String cleanFull = geoData['display_name'] ?? fullA;
+              if (cleanFull.startsWith('Matthi, ')) {
+                cleanFull = cleanFull.replaceFirst('Matthi, ', '');
+              }
+              fullA = cleanFull;
+            }
+          }
+        } catch (_) {}
+
+        final existingShort = prefs.getString('customer_address_short');
+        final bool shouldUpdateAddress = forceOverrideAddress || existingShort == null || existingShort.isEmpty || existingShort == 'Detecting...' || existingShort == 'Current Location';
+
+        if (shouldUpdateAddress) {
           await prefs.setString('customer_address_short', shortA);
           await prefs.setString('customer_address_full', fullA);
           await prefs.setString('active_order_customer_address', fullA);
@@ -585,6 +776,7 @@ class _HomePageState extends State<HomePage> {
             setState(() {
               _currentAddressShort = shortA;
               _currentAddressFull = fullA;
+              _deliveryLocationController.text = fullA;
             });
           }
         }
@@ -597,7 +789,7 @@ class _HomePageState extends State<HomePage> {
   void _startOrderChatPolling() {
     _inOrderChatTimer?.cancel();
     _fetchInOrderChat();
-    _inOrderChatTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
+    _inOrderChatTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _fetchInOrderChat();
     });
   }
@@ -614,7 +806,7 @@ class _HomePageState extends State<HomePage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List remoteList = data['messages'] ?? [];
-        if (mounted) {
+        if (mounted && remoteList.length != _inOrderChatMessages.length) {
           final mapped = remoteList.map((e) => Map<String, dynamic>.from(e)).toList();
           setState(() {
             _inOrderChatMessages = mapped;
@@ -686,11 +878,11 @@ class _HomePageState extends State<HomePage> {
               _customerLocation.longitude,
             );
             final bool locChanged = (_riderLocation.latitude != lat || _riderLocation.longitude != lng);
-            setState(() {
-              _riderLocation = LatLng(lat, lng);
-              _riderDistanceMeters = dist;
-            });
             if (locChanged) {
+              setState(() {
+                _riderLocation = LatLng(lat, lng);
+                _riderDistanceMeters = dist;
+              });
               _fitTrackingMapBounds();
               _fetchTrackingRoadRoute();
             }
@@ -740,11 +932,23 @@ class _HomePageState extends State<HomePage> {
         duration: const Duration(seconds: 3),
       ),
     );
-    Future.delayed(const Duration(milliseconds: 150), () {
-      if (_scrollController.hasClients) {
+    _scrollToOrderForm();
+  }
+
+  void _scrollToOrderForm() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      final ctx = _orderFormCardKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOutCubic,
+          alignment: 0.06,
+        );
+      } else if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          350,
-          duration: const Duration(milliseconds: 300),
+          380.0,
+          duration: const Duration(milliseconds: 350),
           curve: Curves.easeInOut,
         );
       }
@@ -793,14 +997,106 @@ class _HomePageState extends State<HomePage> {
   }
 
   final List<Map<String, dynamic>> _quickCravings = [
-    {'name': 'Chicken Biryani', 'budget': '49', 'icon': '🍗', 'isVeg': false},
-    {'name': 'Chicken Shawarma', 'budget': '30', 'icon': '🌯', 'isVeg': false},
-    {'name': 'Dosa with Sambar', 'budget': '60', 'icon': '🥞', 'isVeg': true},
-    {'name': 'Paneer Butter Masala', 'budget': '120', 'icon': '🍛', 'isVeg': true},
-    {'name': 'Chicken 65', 'budget': '110', 'icon': '🍗', 'isVeg': false},
-    {'name': 'Fresh Mango Juice', 'budget': '50', 'icon': '🥤', 'isVeg': true},
-    {'name': 'Veg Hakka Noodles', 'budget': '80', 'icon': '🍜', 'isVeg': true},
-    {'name': 'Mushroom Biryani', 'budget': '95', 'icon': '🍄', 'isVeg': true},
+    {
+      'name': 'Chicken Biryani',
+      'budget': '49',
+      'image': 'assets/banner_biryani_crushing.jpg',
+      'icon': '🍗',
+      'isVeg': false,
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'Biryani • North Indian',
+    },
+    {
+      'name': 'Chicken Shawarma',
+      'budget': '30',
+      'image': 'assets/banner_shawarma_crushing.jpg',
+      'icon': '🌯',
+      'isVeg': false,
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Rolls & Fast Food',
+    },
+    {
+      'name': 'Hot Momos',
+      'budget': '39',
+      'image': 'assets/banner_momos_crushing.jpg',
+      'icon': '🥟',
+      'isVeg': false,
+      'rating': '4.4',
+      'time': '15-20 mins',
+      'cuisine': 'Chinese • Street Food',
+    },
+    {
+      'name': 'Dosa with Sambar',
+      'budget': '60',
+      'image': 'assets/craving_dosa.jpg',
+      'icon': '🥞',
+      'isVeg': true,
+      'rating': '4.7',
+      'time': '10-15 mins',
+      'cuisine': 'South Indian • Tiffin',
+    },
+    {
+      'name': 'Paneer Butter Masala',
+      'budget': '120',
+      'image': 'assets/craving_paneer.jpg',
+      'icon': '🍛',
+      'isVeg': true,
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'North Indian • Curry',
+    },
+    {
+      'name': 'Chicken 65',
+      'budget': '110',
+      'image': 'assets/craving_chicken65.jpg',
+      'icon': '🍗',
+      'isVeg': false,
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Starters • Appetizers',
+    },
+    {
+      'name': 'Chicken Fried Rice',
+      'budget': '110',
+      'image': 'assets/banner_chicken_fried_rice.png',
+      'icon': '🍚',
+      'isVeg': false,
+      'rating': '4.3',
+      'time': '20-25 mins',
+      'cuisine': 'Chinese • Fast Food',
+    },
+    {
+      'name': 'Fresh Mango Juice',
+      'budget': '50',
+      'image': 'assets/craving_mango_juice.jpg',
+      'icon': '🥤',
+      'isVeg': true,
+      'rating': '4.8',
+      'time': '10-15 mins',
+      'cuisine': 'Beverages • Juices',
+    },
+    {
+      'name': 'Veg Hakka Noodles',
+      'budget': '80',
+      'image': 'assets/banner_chicken_noodles.png',
+      'icon': '🍜',
+      'isVeg': true,
+      'rating': '4.4',
+      'time': '15-20 mins',
+      'cuisine': 'Chinese • Noodles',
+    },
+    {
+      'name': 'Mushroom Biryani',
+      'budget': '95',
+      'image': 'assets/craving_mushroom_biryani.jpg',
+      'icon': '🍄',
+      'isVeg': true,
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'Biryani • Pure Veg',
+    },
   ];
 
   List<Map<String, dynamic>> get _filteredCravings {
@@ -812,6 +1108,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchRiderTimer?.cancel();
     _riderTrackingTimer?.cancel();
     _bannerTimer?.cancel();
@@ -820,6 +1117,7 @@ class _HomePageState extends State<HomePage> {
     _itemController.dispose();
     _budgetController.dispose();
     _chatMsgController.dispose();
+    _deliveryLocationController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1499,13 +1797,17 @@ class _HomePageState extends State<HomePage> {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      _currentAddressShort,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
+                    Flexible(
+                      child: Text(
+                        _currentAddressShort,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -1608,7 +1910,7 @@ class _HomePageState extends State<HomePage> {
 
 
 
-  // Quick Cravings Suggestions Chips
+  // Quick Cravings Suggestions Food Image Buttons
   Widget _buildQuickCravings() {
     final cravings = _filteredCravings;
     return Column(
@@ -1617,22 +1919,37 @@ class _HomePageState extends State<HomePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              isVegOnly ? "Pure Veg Delights 🌱" : "Quick Cravings",
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      isVegOnly ? "Pure Veg Delights 🌱" : "Quick Cravings",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text("⚡", style: TextStyle(fontSize: 14)),
+                ],
+              ),
             ),
-            if (isVegOnly)
+            if (isVegOnly) ...[
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
+                  color: const Color(0xFFDCFCE7),
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF86EFAC)),
                 ),
-                child: const Text("VEG ONLY ACTIVE", style: TextStyle(color: AppColors.primaryDark, fontSize: 10, fontWeight: FontWeight.bold)),
+                child: const Text("VEG ONLY ACTIVE", style: TextStyle(color: Color(0xFF15803D), fontSize: 10, fontWeight: FontWeight.bold)),
               ),
+            ],
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         if (cravings.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
@@ -1652,28 +1969,217 @@ class _HomePageState extends State<HomePage> {
         else
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: cravings.map((dish) {
+                final isSelected = _itemController.text.trim().toLowerCase() == (dish['name'] as String).trim().toLowerCase();
                 return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ActionChip(
-                    avatar: Text(dish['icon'] as String, style: const TextStyle(fontSize: 14)),
-                    label: Text('${dish['name']} • ₹${dish['budget']}'),
-                    backgroundColor: Colors.white,
-                    labelStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                    side: const BorderSide(color: AppColors.border, width: 1),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    onPressed: () {
+                  padding: const EdgeInsets.only(right: 14),
+                  child: InkWell(
+                    onTap: () {
                       setState(() {
                         _itemController.text = dish['name'] as String;
                         _budgetController.text = dish['budget'] as String;
                       });
-                      scrollToBottom();
+                      _scrollToOrderForm();
                     },
+                    borderRadius: BorderRadius.circular(20),
+                    child: SizedBox(
+                      width: 148,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 1. Food Image Card with Overlay
+                          Container(
+                            width: 148,
+                            height: 142,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isSelected ? AppColors.primary : Colors.transparent,
+                                width: isSelected ? 2.5 : 0,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(isSelected ? 17.5 : 20),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  // Food Image
+                                  Image.asset(
+                                    dish['image'] as String,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: AppColors.primaryLight,
+                                      child: Center(
+                                        child: Text(dish['icon'] as String, style: const TextStyle(fontSize: 44)),
+                                      ),
+                                    ),
+                                  ),
+                                  // Gradient Overlay at bottom for readable text
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        stops: const [0.0, 0.4, 0.72, 1.0],
+                                        colors: [
+                                          Colors.transparent,
+                                          Colors.black.withValues(alpha: 0.0),
+                                          Colors.black.withValues(alpha: 0.65),
+                                          Colors.black.withValues(alpha: 0.95),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  // Top-Right: Heart Outline Icon
+                                  Positioned(
+                                    top: 10,
+                                    right: 10,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(alpha: 0.25),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.favorite_border_rounded,
+                                        color: Colors.white,
+                                        size: 19,
+                                      ),
+                                    ),
+                                  ),
+                                  // Top-Left: Veg / Non-Veg Indicator
+                                  Positioned(
+                                    top: 10,
+                                    left: 10,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.95),
+                                        borderRadius: BorderRadius.circular(5),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(alpha: 0.15),
+                                            blurRadius: 3,
+                                          ),
+                                        ],
+                                      ),
+                                      child: Icon(
+                                        Icons.circle,
+                                        size: 7,
+                                        color: dish['isVeg'] == true ? AppColors.vegGreen : AppColors.nonVegRed,
+                                      ),
+                                    ),
+                                  ),
+                                  // Bottom: ITEMS AT ₹Price
+                                  Positioned(
+                                    left: 12,
+                                    right: 12,
+                                    bottom: 10,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          "ITEMS",
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.92),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.5,
+                                            height: 1.0,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          "AT ₹${dish['budget']}",
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: -0.3,
+                                            height: 1.1,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          // 2. Food Name Below Image
+                          Text(
+                            dish['name'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: isSelected ? AppColors.primary : const Color(0xFF1E293B),
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+
+                          // 3. Star Rating & Delivery Time Row
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF15803D),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.star_rounded,
+                                  size: 11,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  "${dish['rating']} • ${dish['time']}",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF334155),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+
+                          // 4. Cuisine / Category
+                          Text(
+                            dish['cuisine'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 );
               }).toList(),
@@ -1686,39 +2192,92 @@ class _HomePageState extends State<HomePage> {
   // Custom Food Order Form Card
   Widget _buildOrderFormCard() {
     return Container(
+      key: _orderFormCardKey,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.border, width: 1),
-        boxShadow: AppColors.subtleShadow,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF142B4A).withValues(alpha: 0.10),
+            blurRadius: 28,
+            spreadRadius: 2,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
-                  borderRadius: BorderRadius.circular(10),
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBFDBFE).withValues(alpha: 0.6)),
+                      ),
+                      child: const Icon(Icons.restaurant_rounded, color: AppColors.primary, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Order Anything You Crave",
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            "Enter food item & budget to order instantly",
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                child: const Icon(Icons.restaurant_rounded, color: AppColors.primaryDark, size: 20),
               ),
-              const SizedBox(width: 10),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Order Anything You Crave",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
-                  ),
-                  Text(
-                    "Enter food item & budget to order instantly",
-                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                  ),
-                ],
+              Container(
+                margin: const EdgeInsets.only(left: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("⚡", style: TextStyle(fontSize: 10)),
+                    SizedBox(width: 3),
+                    Text(
+                      "CUSTOM",
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFB45309),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1778,9 +2337,11 @@ class _HomePageState extends State<HomePage> {
                 final userId = prefs.getString('user_id') ?? 'usr_001';
                 final custName = prefs.getString('user_name') ?? 'Customer';
                 final custPhone = prefs.getString('mobile_number') ?? '+91 98765 43210';
-                final custAddr = _currentAddressFull.isNotEmpty
-                    ? _currentAddressFull
-                    : "Current Delivery Location";
+                final custAddr = _deliveryLocationController.text.trim().isNotEmpty
+                    ? _deliveryLocationController.text.trim()
+                    : (_currentAddressFull.isNotEmpty
+                        ? _currentAddressFull
+                        : "Current Delivery Location");
                 final budgetVal = double.tryParse(_budgetController.text.trim()) ?? 150.0;
 
                 // ⚡ Fast: Live GPS coordinates of selected customer address
@@ -1834,7 +2395,7 @@ class _HomePageState extends State<HomePage> {
                       'customer_latitude': orderLat,
                       'customer_longitude': orderLng,
                     }),
-                  ).timeout(const Duration(seconds: 6));
+                  ).timeout(const Duration(seconds: 15));
                   if (res.statusCode == 200 || res.statusCode == 201) {
                     final data = jsonDecode(res.body);
                     if (data['order'] != null) {
@@ -1891,7 +2452,21 @@ class _HomePageState extends State<HomePage> {
                 await prefs.setString('active_order_id', newOrderId);
                 await prefs.setString('active_cod_otp', customerFixedOtp);
                 await prefs.setBool('has_active_order', true);
+                await prefs.remove('active_order_bill_images');
+                await prefs.remove('active_order_bill_image');
+                await prefs.remove('order_${newOrderId}_bill_images');
+                await prefs.remove('order_${newOrderId}_bill_image');
+                if (mounted) {
+                  setState(() {
+                    _orderBillImages = [];
+                  });
+                }
                 await prefs.remove('order_${newOrderId}_chat_messages'); // Reset chat for fresh new order
+                await prefs.remove('has_notified_partner_accepted_$newOrderId');
+                await prefs.remove('order_${newOrderId}_notified_collected_items');
+                await prefs.remove('has_notified_bill_ack_$newOrderId');
+                await prefs.remove('has_notified_payment_success_$newOrderId');
+                await prefs.remove('has_notified_delivered_$newOrderId');
                 await prefs.setString('active_order_item', itemText);
                 await prefs.setString('active_order_budget', _budgetController.text.trim());
                 await prefs.setString('active_order_customer_name', custName);
@@ -1904,8 +2479,11 @@ class _HomePageState extends State<HomePage> {
                 await prefs.remove('active_order_partner_phone');
                 await prefs.remove('active_order_partner_id');
                 await prefs.remove('active_order_partner_image');
-                await prefs.remove('active_order_partner_pic');
-
+                AlarmService.startCustomerOrderListeningService(
+                  baseUrl: ApiConfig.baseUrl,
+                  orderId: newOrderId,
+                );
+                AlarmService.requestBatteryOptimizationExemption();
                 _startOrderPolling(newOrderId);
                 scrollToBottom();
               },
@@ -1963,7 +2541,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildDropdown() {
-    final profileAddress = _currentAddressFull.isNotEmpty ? _currentAddressFull : "Current Delivery Location";
+    final displayAddress = _deliveryLocationController.text.trim().isNotEmpty
+        ? _deliveryLocationController.text.trim()
+        : (_currentAddressFull.isNotEmpty ? _currentAddressFull : "Detecting live GPS location...");
 
     return Container(
       decoration: BoxDecoration(
@@ -1984,41 +2564,57 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              const Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 22),
+              const Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 24),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'Delivery Location (From Profile)',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                    Row(
+                      children: [
+                        const Text(
+                          'Delivery Location',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.gps_fixed_rounded, size: 9, color: Color(0xFF15803D)),
+                              SizedBox(width: 3),
+                              Text(
+                                "Live GPS",
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
-                      profileAddress,
+                      displayAddress,
                       style: const TextStyle(fontSize: 13, color: AppColors.textPrimary, fontWeight: FontWeight.w700),
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
-              Container(
-                margin: const EdgeInsets.only(left: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  "Profile",
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.primary),
-                ),
+              IconButton(
+                icon: const Icon(Icons.my_location_rounded, color: AppColors.primary, size: 20),
+                tooltip: "Re-detect exact live location",
+                onPressed: () => _requestLiveLocation(forceOverrideAddress: true),
               ),
-              const SizedBox(width: 6),
-              const Icon(Icons.edit_location_alt_outlined, color: AppColors.primary, size: 20),
+              const Icon(Icons.keyboard_arrow_right_rounded, color: AppColors.textMuted, size: 20),
             ],
           ),
         ),
@@ -2035,7 +2631,7 @@ class _HomePageState extends State<HomePage> {
 
   void _startOrderPolling(String orderId) {
     _searchRiderTimer?.cancel();
-    _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
+    _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 2500), (timer) async {
       if (_isPollingRider) return;
       _isPollingRider = true;
       try {
@@ -2047,6 +2643,7 @@ class _HomePageState extends State<HomePage> {
             final st = (order['status']?.toString() ?? '').toLowerCase();
             if (st == 'cancelled') {
               timer.cancel();
+              AlarmService.stopCustomerOrderListeningService();
               final reason = order['cancel_reason'] ?? 'Order was cancelled';
               final p = await SharedPreferences.getInstance();
               await p.setBool('has_active_order', false);
@@ -2076,6 +2673,36 @@ class _HomePageState extends State<HomePage> {
               return;
             }
 
+            if (st == 'delivered' || st == 'completed') {
+              timer.cancel();
+              AlarmService.stopCustomerOrderListeningService();
+              final curOId = (order['order_id'] ?? orderId).toString();
+              final p = await SharedPreferences.getInstance();
+              final bool alreadyNotified = p.getBool('has_notified_delivered_$curOId') ?? false;
+              if (!alreadyNotified) {
+                await p.setBool('has_notified_delivered_$curOId', true);
+                final pName = (order['partner_name'] != null && order['partner_name'].toString().trim().isNotEmpty)
+                    ? order['partner_name'].toString().trim()
+                    : 'Delivery Partner';
+                await AppNotificationService.showOrderDeliveredCustomerNotification(
+                  orderId: curOId,
+                  partnerName: pName,
+                );
+              }
+              await p.setBool('has_active_order', false);
+              await p.remove('active_order_id');
+              await p.setString('active_order_status', 'delivered');
+              if (mounted) {
+                setState(() {
+                  isSearchingRider = false;
+                  hasRiderAccepted = false;
+                  showDeliveryDetails = false;
+                  showCancelButtonContainer = false;
+                });
+              }
+              return;
+            }
+
             final isAccepted = (st == 'accepted' ||
                 st == 'purchasing_food' ||
                 st == 'bill_sent' ||
@@ -2096,13 +2723,89 @@ class _HomePageState extends State<HomePage> {
               final pOtp = (order['cod_otp'] ?? '').toString();
 
               final p = await SharedPreferences.getInstance();
-              if (pName.isNotEmpty) await p.setString('active_order_partner_name', pName);
-              if (pPhone.isNotEmpty) await p.setString('active_order_partner_phone', pPhone);
-              if (pId.isNotEmpty) await p.setString('active_order_partner_id', pId);
-              if (pPic != null && pPic.isNotEmpty) await p.setString('active_order_partner_image', pPic);
-              if (pOtp.isNotEmpty) await p.setString('active_cod_otp', pOtp);
-              await p.setString('active_order_status', order['status']);
-              await p.setBool('active_order_partner_accepted', true);
+              if (pName.isNotEmpty && p.getString('active_order_partner_name') != pName) await p.setString('active_order_partner_name', pName);
+              if (pPhone.isNotEmpty && p.getString('active_order_partner_phone') != pPhone) await p.setString('active_order_partner_phone', pPhone);
+              if (pId.isNotEmpty && p.getString('active_order_partner_id') != pId) await p.setString('active_order_partner_id', pId);
+              if (pPic != null && pPic.isNotEmpty && p.getString('active_order_partner_image') != pPic) await p.setString('active_order_partner_image', pPic);
+              if (pOtp.isNotEmpty && p.getString('active_cod_otp') != pOtp) await p.setString('active_cod_otp', pOtp);
+              if (p.getString('active_order_status') != order['status']) await p.setString('active_order_status', order['status']);
+              if (p.getBool('active_order_partner_accepted') != true) await p.setBool('active_order_partner_accepted', true);
+              final orderBillUrl = (order['bill_image_url'] ?? '').toString();
+              List<String> bImages = [];
+              if (order['bill_images'] is List) {
+                bImages = (order['bill_images'] as List).map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+              }
+              if (bImages.isNotEmpty) {
+                await p.setStringList('order_${order['order_id']}_bill_images', bImages);
+                await p.setStringList('active_order_bill_images', bImages);
+                await p.setString('order_${order['order_id']}_bill_image', bImages.first);
+                await p.setString('active_order_bill_image', bImages.first);
+              } else if (orderBillUrl.isNotEmpty) {
+                await p.setString('order_${order['order_id']}_bill_image', orderBillUrl);
+                await p.setString('active_order_bill_image', orderBillUrl);
+                await p.setStringList('order_${order['order_id']}_bill_images', [orderBillUrl]);
+                await p.setStringList('active_order_bill_images', [orderBillUrl]);
+              }
+
+              final effectiveBillImgs = bImages.isNotEmpty
+                  ? bImages
+                  : (orderBillUrl.isNotEmpty
+                      ? [orderBillUrl]
+                      : (p.getStringList('order_${order['order_id']}_bill_images') ?? <String>[]));
+              final bool billImgsChanged = effectiveBillImgs.isNotEmpty &&
+                  (effectiveBillImgs.length != _orderBillImages.length ||
+                   (_orderBillImages.isNotEmpty && effectiveBillImgs.first != _orderBillImages.first));
+
+              final curOId = (order['order_id'] ?? orderId).toString();
+              final bool alreadyNotified = p.getBool('has_notified_partner_accepted_$curOId') ?? false;
+              if (!alreadyNotified) {
+                await p.setBool('has_notified_partner_accepted_$curOId', true);
+                await AppNotificationService.showOrderAcceptedNotification(
+                  orderId: curOId,
+                  partnerName: pName,
+                  partnerPhone: pPhone,
+                );
+              }
+
+              final bool hasBill = (st == 'bill_sent') &&
+                  ((order['bill_confirmed'] == true) ||
+                   orderBillUrl.isNotEmpty ||
+                   bImages.isNotEmpty);
+              if (hasBill) {
+                final bool alreadyNotifiedBill =
+                    p.getBool('has_notified_bill_ack_$curOId') ?? false;
+                if (!alreadyNotifiedBill) {
+                  await p.setBool('has_notified_bill_ack_$curOId', true);
+                  final num? gTot = order['grand_total'];
+                  final List? oItems = order['items'] is List ? order['items'] : null;
+                  await AppNotificationService.showBillAcknowledgementNotification(
+                    orderId: curOId,
+                    partnerName: pName,
+                    grandTotal: gTot?.toDouble(),
+                    itemCount: oItems?.length,
+                  );
+                }
+              }
+
+              final String payStatus = (order['payment_status'] ?? '').toString().toLowerCase().trim();
+              final bool isPaid = payStatus == 'paid' || payStatus == 'success' || order['is_paid'] == true;
+              if (isPaid) {
+                final bool alreadyNotifiedPayment =
+                    p.getBool('has_notified_payment_success_$curOId') ?? false;
+                if (!alreadyNotifiedPayment) {
+                  await p.setBool('has_notified_payment_success_$curOId', true);
+                  final num? gTot = order['grand_total'] ?? order['total_amount'];
+                  final String pMethod = (order['payment_method'] ?? 'Online').toString();
+                  final String codOtp = (order['cod_otp'] ?? pOtp).toString();
+                  await AppNotificationService.showPaymentSuccessNotification(
+                    orderId: curOId,
+                    amount: (gTot?.toDouble()) ?? 0.0,
+                    otp: codOtp,
+                    partnerName: pName,
+                    paymentMethod: pMethod,
+                  );
+                }
+              }
 
               if (mounted) {
                 final bool wasSearching = isSearchingRider;
@@ -2113,7 +2816,8 @@ class _HomePageState extends State<HomePage> {
                     assignedPartnerPhone != pPhone ||
                     (pId.isNotEmpty && assignedPartnerId != pId) ||
                     (pPic != null && pPic.isNotEmpty && assignedPartnerProfileImage != pPic) ||
-                    (pOtp.isNotEmpty && assignedOrderOtp != pOtp);
+                    (pOtp.isNotEmpty && assignedOrderOtp != pOtp) ||
+                    billImgsChanged;
 
                 if (hasChanged) {
                   setState(() {
@@ -2126,6 +2830,9 @@ class _HomePageState extends State<HomePage> {
                     if (pId.isNotEmpty) assignedPartnerId = pId;
                     if (pPic != null && pPic.isNotEmpty) assignedPartnerProfileImage = pPic;
                     if (pOtp.isNotEmpty) assignedOrderOtp = pOtp;
+                    if (effectiveBillImgs.isNotEmpty) {
+                      _orderBillImages = effectiveBillImgs;
+                    }
                   });
                 }
                 if (wasSearching) {
@@ -2133,9 +2840,22 @@ class _HomePageState extends State<HomePage> {
                   _startOrderChatPolling();
                   _fetchTrackingRoadRoute();
                 }
+
+                final String pr = (order['price_range'] ?? '').toString().trim();
+                final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
+                if (pr.isNotEmpty && prStatus == 'pending') {
+                  _checkAndShowCustomerPriceRangeDialog(
+                    orderId: orderId,
+                    partnerName: pName,
+                    partnerPhone: pPhone,
+                    partnerPhoto: pPic,
+                    priceRange: pr,
+                  );
+                }
               }
             } else if (st == 'delivered') {
               timer.cancel();
+              AlarmService.stopCustomerOrderListeningService();
               final p = await SharedPreferences.getInstance();
               await p.setBool('has_active_order', false);
               await p.setString('active_order_status', 'delivered');
@@ -2606,6 +3326,8 @@ class _HomePageState extends State<HomePage> {
                 assignedPartnerPhone.isNotEmpty
                     ? 'Call $assignedPartnerName ($assignedPartnerPhone)'
                     : 'Call $assignedPartnerName',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
               ),
               style: ElevatedButton.styleFrom(
@@ -2617,6 +3339,10 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          if (_orderBillImages.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildRestaurantBillReceiptsSection(),
+          ],
           const SizedBox(height: 10),
           // View Delivery Bill & Make Payment Button
           SizedBox(
@@ -2689,6 +3415,8 @@ class _HomePageState extends State<HomePage> {
                       ),
                       const Text(
                         "Direct message for address or instructions",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
                       ),
                     ],
@@ -2836,6 +3564,268 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  void _showFullReceiptDialog(String path) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFF334155), width: 1.5),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 20, offset: const Offset(0, 10)),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header Bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                color: const Color(0xFF1E293B),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.receipt_long_rounded, color: Colors.white, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          "Restaurant Bill Receipt",
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white, size: 22),
+                      onPressed: () => Navigator.pop(ctx),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // Interactive Pinch-to-zoom Bill Preview
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.65,
+                ),
+                child: InteractiveViewer(
+                  panEnabled: true,
+                  boundaryMargin: const EdgeInsets.all(20),
+                  minScale: 0.8,
+                  maxScale: 4.0,
+                  child: Center(
+                    child: _buildBillReceiptWidget(path, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBillReceiptWidget(String path, {BoxFit fit = BoxFit.cover}) {
+    if (path.isEmpty) return const SizedBox();
+    if (File(path).existsSync()) {
+      return Image.file(File(path), fit: fit);
+    }
+    if (path.startsWith('data:image')) {
+      try {
+        final commaIdx = path.indexOf(',');
+        final base64Str = commaIdx != -1 ? path.substring(commaIdx + 1) : path;
+        return Image.memory(base64Decode(base64Str), fit: fit);
+      } catch (_) {}
+    }
+    return Image.network(
+      path,
+      fit: fit,
+      errorBuilder: (_, __, ___) => const Center(
+        child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 40),
+      ),
+      loadingBuilder: (_, child, progress) {
+        if (progress == null) return child;
+        return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      },
+    );
+  }
+
+  Widget _buildRestaurantBillReceiptsSection() {
+    if (_orderBillImages.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.receipt_long_rounded, size: 18, color: AppColors.primaryDark),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _orderBillImages.length > 1
+                            ? "Restaurant Bills (${_orderBillImages.length} attached)"
+                            : "Restaurant Bill Receipt",
+                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_orderBillImages.length == 1)
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: const Color(0xFFEFF6FF),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  ),
+                  onPressed: () => _showFullReceiptDialog(_orderBillImages.first),
+                  icon: const Icon(Icons.fullscreen_rounded, size: 16, color: AppColors.primaryDark),
+                  label: const Text("View Full", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_orderBillImages.length == 1)
+            GestureDetector(
+              onTap: () => _showFullReceiptDialog(_orderBillImages.first),
+              child: Container(
+                height: 180,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _buildBillReceiptWidget(_orderBillImages.first, fit: BoxFit.contain),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.transparent, Colors.black.withValues(alpha: 0.75)],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.zoom_in_rounded, color: Colors.white, size: 15),
+                              SizedBox(width: 5),
+                              Text(
+                                "Tap to expand & inspect full receipt",
+                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else
+            SizedBox(
+              height: 180,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _orderBillImages.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, idx) {
+                  final imgUrl = _orderBillImages[idx];
+                  return GestureDetector(
+                    onTap: () => _showFullReceiptDialog(imgUrl),
+                    child: Container(
+                      width: 145,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(13),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _buildBillReceiptWidget(imgUrl, fit: BoxFit.contain),
+                            Positioned(
+                              top: 6,
+                              left: 6,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  "Bill #${idx + 1}",
+                                  style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                color: Colors.black.withValues(alpha: 0.6),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.zoom_in_rounded, color: Colors.white, size: 12),
+                                    SizedBox(width: 4),
+                                    Text("Tap to zoom", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
         ],
       ),
     );

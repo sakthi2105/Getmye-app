@@ -233,7 +233,7 @@ class _AddressScreenState extends State<AddressScreen> {
 
       try {
         final geoRes = await http.get(
-          Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng'),
+          Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1'),
           headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
         ).timeout(const Duration(seconds: 5));
 
@@ -241,17 +241,17 @@ class _AddressScreenState extends State<AddressScreen> {
           final geoData = jsonDecode(geoRes.body);
           final address = geoData['address'];
           if (address != null) {
-            road = address['road'] ?? address['neighbourhood'] ?? address['residential'] ?? '';
-            final suburb = address['suburb'] ?? '';
-            city = address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Live Location';
-            state = address['state'] ?? 'Tamil Nadu';
-            pincode = address['postcode'] ?? '';
+            road = (address['road'] ?? address['pedestrian'] ?? address['neighbourhood'] ?? address['residential'] ?? '').toString().trim();
+            final suburb = (address['suburb'] ?? address['subdistrict'] ?? '').toString().trim();
+            city = (address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Kumbakonam').toString().trim();
+            state = (address['state'] ?? 'Tamil Nadu').toString().trim();
+            pincode = (address['postcode'] ?? '').toString().trim();
 
             if (road.isEmpty) {
               if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
                 road = suburb;
               } else {
-                road = city != 'Live Location' ? city : 'Current Location';
+                road = (city.isNotEmpty && city != 'Live Location') ? city : 'Current Location';
               }
             }
 
@@ -264,7 +264,16 @@ class _AddressScreenState extends State<AddressScreen> {
         }
       } catch (_) {}
 
-      final shortA = (road != "Current Location" && city != "Live Location") ? "$road, $city" : (road != "Current Location" ? road : city);
+      String shortA;
+      if (road.isNotEmpty && road != "Current Location" && city.isNotEmpty && city != "Live Location" && road.toLowerCase() != city.toLowerCase()) {
+        shortA = "$road, $city";
+      } else if (road.isNotEmpty && road != "Current Location") {
+        shortA = road;
+      } else if (city.isNotEmpty && city != "Live Location") {
+        shortA = city;
+      } else {
+        shortA = "Kumbakonam";
+      }
       final fullA = fullDisplayName;
 
       final prefs = await SharedPreferences.getInstance();
@@ -337,10 +346,18 @@ class _AddressScreenState extends State<AddressScreen> {
 
   // 🎯 Set an existing address as Active Delivery Address
   Future<void> _selectAddressAsActive(Map<String, dynamic> addr, {bool notify = true}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final shortA = (addr['city'] != null && addr['city'].toString().isNotEmpty)
-        ? addr['city'].toString()
-        : (addr['line1'] ?? 'Home').toString();
+    final line1 = (addr['line1'] ?? '').toString().trim();
+    final city = (addr['city'] ?? '').toString().trim();
+    String shortA;
+    if (line1.isNotEmpty && line1 != 'Live GPS Location' && city.isNotEmpty && line1.toLowerCase() != city.toLowerCase()) {
+      shortA = "$line1, $city";
+    } else if (city.isNotEmpty) {
+      shortA = city;
+    } else if (line1.isNotEmpty && line1 != 'Live GPS Location') {
+      shortA = line1;
+    } else {
+      shortA = "Kumbakonam";
+    }
 
     final parts = [
       addr['line1'],
@@ -352,7 +369,7 @@ class _AddressScreenState extends State<AddressScreen> {
 
     final fullA = parts.isNotEmpty ? parts : shortA;
     final addId = addr['add_id']?.toString();
-
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setString('customer_address_short', shortA);
     await prefs.setString('customer_address_full', fullA);
     await prefs.setString('active_order_customer_address', fullA);

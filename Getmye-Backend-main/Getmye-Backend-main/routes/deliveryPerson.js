@@ -177,8 +177,18 @@ router.post('/login', async (req, res) => {
 
     if (!savedPassword) {
       partner.password = rawPassword;
-      await partner.save();
     }
+    partner.dp_status = 'online';
+    await partner.save();
+
+    try {
+      const LiveLocation = require('../models/LiveLocation');
+      await LiveLocation.findOneAndUpdate(
+        { partner_id: partner.DP_id },
+        { is_online: true, status: 'idle', last_updated: new Date() },
+        { upsert: true }
+      );
+    } catch (_) {}
 
     const host = req.get('host');
     const protocol = req.protocol;

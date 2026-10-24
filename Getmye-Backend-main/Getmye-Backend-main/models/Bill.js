@@ -59,6 +59,10 @@ const BillSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  bill_images: {
+    type: [String],
+    default: []
+  },
   status: {
     type: String,
     enum: ['submitted', 'paid', 'rejected'],

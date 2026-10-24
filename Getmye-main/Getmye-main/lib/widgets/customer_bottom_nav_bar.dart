@@ -85,44 +85,43 @@ class _CustomerBottomNavBarState extends State<CustomerBottomNavBar> {
         color: Colors.white,
         border: Border(top: BorderSide(color: AppColors.border, width: 1)),
       ),
-      child: BottomAppBar(
-        height: 64,
-        color: Colors.white,
-        elevation: 0,
-        padding: EdgeInsets.zero,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(
-              context: context,
-              index: 0,
-              icon: Icons.home_outlined,
-              activeIcon: Icons.home_rounded,
-              label: 'Home',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 1,
-              icon: Icons.person_outline_rounded,
-              activeIcon: Icons.person_rounded,
-              label: 'Profile',
-            ),
-            _buildNavItem(
-              context: context,
-              index: 2,
-              icon: Icons.delivery_dining_outlined,
-              activeIcon: Icons.delivery_dining_rounded,
-              label: 'Orders',
-              showBadge: _hasActiveOrder,
-            ),
-            _buildNavItem(
-              context: context,
-              index: 3,
-              icon: Icons.menu_rounded,
-              activeIcon: Icons.menu_rounded,
-              label: 'Options',
-            ),
-          ],
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 60,
+          child: Row(
+            children: [
+              _buildNavItem(
+                context: context,
+                index: 0,
+                icon: Icons.home_outlined,
+                activeIcon: Icons.home_rounded,
+                label: 'Home',
+              ),
+              _buildNavItem(
+                context: context,
+                index: 1,
+                icon: Icons.person_outline_rounded,
+                activeIcon: Icons.person_rounded,
+                label: 'Profile',
+              ),
+              _buildNavItem(
+                context: context,
+                index: 2,
+                icon: Icons.delivery_dining_outlined,
+                activeIcon: Icons.delivery_dining_rounded,
+                label: 'Orders',
+                showBadge: _hasActiveOrder,
+              ),
+              _buildNavItem(
+                context: context,
+                index: 3,
+                icon: Icons.menu_rounded,
+                activeIcon: Icons.menu_rounded,
+                label: 'Options',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -165,21 +164,23 @@ class _CustomerBottomNavBarState extends State<CustomerBottomNavBar> {
       );
     }
 
-    if (isSelected) {
-      return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: const BoxDecoration(
-          color: AppColors.primaryLight,
-          shape: BoxShape.circle,
+    return Expanded(
+      child: InkWell(
+        onTap: () => _onItemTapped(context, index),
+        borderRadius: BorderRadius.circular(12),
+        child: Center(
+          child: isSelected
+              ? Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: const BoxDecoration(
+                    color: AppColors.primaryLight,
+                    shape: BoxShape.circle,
+                  ),
+                  child: iconWidget,
+                )
+              : iconWidget,
         ),
-        child: iconWidget,
-      );
-    }
-
-    return IconButton(
-      icon: iconWidget,
-      tooltip: label,
-      onPressed: () => _onItemTapped(context, index),
+      ),
     );
   }
 }

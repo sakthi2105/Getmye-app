@@ -41,6 +41,7 @@ Future<void> _initServicesAsync() async {
     await AppNotificationService.init();
     AppNotificationService.startGlobalChatPolling();
     AppNotificationService.startGlobalPartnerOrderPolling();
+    AppNotificationService.startGlobalCustomerOrderPolling();
 
     // 🟢 Start background foreground listening service on startup if partner is logged in & online
     final prefs = await SharedPreferences.getInstance();
@@ -52,6 +53,17 @@ Future<void> _initServicesAsync() async {
         baseUrl: ApiConfig.baseUrl,
         partnerId: pId,
       );
+      AlarmService.requestBatteryOptimizationExemption();
+    } else if (accountType != 'partner') {
+      final activeOrderId = prefs.getString('active_order_id');
+      final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
+      if (activeOrderId != null && activeOrderId.isNotEmpty && activeStatus != 'delivered' && activeStatus != 'cancelled') {
+        AlarmService.startCustomerOrderListeningService(
+          baseUrl: ApiConfig.baseUrl,
+          orderId: activeOrderId,
+        );
+        AlarmService.requestBatteryOptimizationExemption();
+      }
     }
   } catch (e) {
     debugPrint("Failed to init notification services: $e");
@@ -81,15 +93,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // 🏠 When user leaves the app and comes back, always ensure Home Page is shown
-      try {
-        MyApp.navigatorKey.currentState?.popUntil((route) => route.isFirst);
-      } catch (_) {}
-    }
-  }
+
 
   @override
   Widget build(BuildContext context) {

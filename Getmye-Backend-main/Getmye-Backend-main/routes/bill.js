@@ -17,12 +17,27 @@ router.post('/submit', async (req, res) => {
       delivery_fee,
       tip_amount,
       grand_total,
-      bill_image_url
+      bill_image_url,
+      bill_images
     } = req.body;
 
     if (!order_id || !items || !grand_total) {
       return res.status(400).json({ error: 'order_id, items, and grand_total are required' });
     }
+
+    let imagesList = [];
+    if (Array.isArray(bill_images) && bill_images.length > 0) {
+      imagesList = bill_images.filter(Boolean);
+    } else if (bill_image_url) {
+      try {
+        const parsed = JSON.parse(bill_image_url);
+        if (Array.isArray(parsed)) imagesList = parsed.filter(Boolean);
+        else imagesList = [bill_image_url];
+      } catch (_) {
+        imagesList = [bill_image_url];
+      }
+    }
+    const primaryBillImage = imagesList.length > 0 ? imagesList[0] : (bill_image_url || null);
 
     const processedItems = (items || []).map(item => ({
       name: item.name || 'Item',
@@ -46,29 +61,92 @@ router.post('/submit', async (req, res) => {
       delivery_fee: Number(delivery_fee) || 0,
       tip_amount: Number(tip_amount) || 0,
       grand_total: Number(grand_total) || 0,
-      bill_image_url: bill_image_url || null,
+      bill_image_url: primaryBillImage,
+      bill_images: imagesList,
       status: 'submitted'
     });
 
     await newBill.save();
 
-    // Update order status to 'bill_sent' / 'purchasing_food' with item_total, tip_amount, grand_total, and bill_image_url
-    await Order.findOneAndUpdate(
-      { order_id },
-      {
-        status: 'bill_sent',
-        grand_total: Number(grand_total),
-        item_total: Number(item_total) || 0,
-        tip_amount: Number(tip_amount) || 0,
-        delivery_fee: Number(delivery_fee) || 0,
-        bill_image_url: bill_image_url || null
-      }
-    );
+    // Update order status to 'bill_sent' with bill_confirmed: true, updated items and bill image(s)
+    const orderUpdatePayload = {
+      status: 'bill_sent',
+      bill_confirmed: true,
+      grand_total: Number(grand_total),
+      item_total: Number(item_total) || 0,
+      tip_amount: Number(tip_amount) || 0,
+      delivery_fee: Number(delivery_fee) || 0,
+      bill_image_url: primaryBillImage,
+      bill_images: imagesList,
+      items: processedItems.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        price: it.price,
+        is_collected: true
+      }))
+    };
+    if (partner_id) {
+      orderUpdatePayload.partner_id = partner_id;
+    }
+    await Order.findOneAndUpdate({ order_id }, orderUpdatePayload);
+
+    try {
+      const Notification = require('../models/Notification');
+      const updatedOrder = await Order.findOne({ order_id });
+      const targetUserId = (updatedOrder && updatedOrder.user_id) ? updatedOrder.user_id : (user_id || 'customer');
+      const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+      await Notification.create({
+        notification_id: notifId,
+        recipient_id: targetUserId,
+        recipient_type: 'customer',
+        order_id: order_id,
+        title: '🧾 Order Confirmed & Bill Sent',
+        message: `Delivery Partner has confirmed order #${order_id} and sent the store bill (₹${Number(grand_total).toFixed(0)}). Tap to review and pay!`
+      });
+    } catch (notifErr) {
+      console.error('Error saving bill notification in DB:', notifErr.message);
+    }
 
     res.status(201).json({ success: true, message: 'Bill submitted successfully', bill: newBill });
   } catch (err) {
     console.error('Error submitting bill:', err);
     res.status(500).json({ error: 'Failed to submit bill', details: err.message });
+  }
+});
+
+// POST /api/bill/upload-image - Update or upload bill receipt image(s)
+router.post('/upload-image', async (req, res) => {
+  try {
+    const { order_id, bill_image_url, bill_images } = req.body;
+    if (!order_id) {
+      return res.status(400).json({ error: 'order_id is required' });
+    }
+    let imagesList = [];
+    if (Array.isArray(bill_images) && bill_images.length > 0) {
+      imagesList = bill_images.filter(Boolean);
+    } else if (bill_image_url) {
+      try {
+        const parsed = JSON.parse(bill_image_url);
+        if (Array.isArray(parsed)) imagesList = parsed.filter(Boolean);
+        else imagesList = [bill_image_url];
+      } catch (_) {
+        imagesList = [bill_image_url];
+      }
+    }
+    const primaryBillImage = imagesList.length > 0 ? imagesList[0] : (bill_image_url || null);
+    await Bill.findOneAndUpdate(
+      { order_id },
+      { bill_image_url: primaryBillImage, bill_images: imagesList },
+      { sort: { created_at: -1 } }
+    );
+    await Order.findOneAndUpdate(
+      { order_id },
+      { bill_image_url: primaryBillImage, bill_images: imagesList, bill_confirmed: true }
+    );
+    res.json({ success: true, message: 'Bill image(s) uploaded and synced successfully', bill_images: imagesList });
+  } catch (err) {
+    console.error('Error updating bill image:', err);
+    res.status(500).json({ error: 'Failed to update bill image' });
   }
 });
 

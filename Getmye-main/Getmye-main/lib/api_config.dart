@@ -43,10 +43,14 @@ class ApiConfig {
   static Uri get orderCancel => Uri.parse('$baseUrl/api/order/cancel');
   static Uri orderMessages(String orderId) => Uri.parse('$baseUrl/api/order/$orderId/messages');
   static Uri orderSendMessage(String orderId) => Uri.parse('$baseUrl/api/order/$orderId/message');
+  static Uri get orderSendPriceRange => Uri.parse('$baseUrl/api/order/price-range/send');
+  static Uri get orderRespondPriceRange => Uri.parse('$baseUrl/api/order/price-range/respond');
+  static Uri get orderUpdateChecklist => Uri.parse('$baseUrl/api/order/checklist/update');
 
   // Bill Endpoints
   static Uri get billSubmit => Uri.parse('$baseUrl/api/bill/submit');
   static Uri get billTip => Uri.parse('$baseUrl/api/bill/tip');
+  static Uri get billUploadImage => Uri.parse('$baseUrl/api/bill/upload-image');
   static Uri billByOrder(String orderId) => Uri.parse('$baseUrl/api/bill/$orderId');
 
   // Live Location Tracking Endpoints

@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -43,17 +45,21 @@ class DeliveryOrderForegroundService : Service() {
     companion object {
         const val SERVICE_CHANNEL_ID = "getmye_online_service_v1"
         const val ALARM_CHANNEL_ID = "getmye_order_alarm_high_v7"
+        const val ALERTS_CHANNEL_ID = "getmye_alerts_v2"
         const val SERVICE_NOTIFICATION_ID = 1001
         const val ALARM_NOTIFICATION_ID = 999
 
         const val ACTION_START_SERVICE = "com.getmye.ACTION_START_SERVICE"
         const val ACTION_STOP_SERVICE = "com.getmye.ACTION_STOP_SERVICE"
+        const val ACTION_START_CUSTOMER_SERVICE = "com.getmye.ACTION_START_CUSTOMER_SERVICE"
+        const val ACTION_STOP_CUSTOMER_SERVICE = "com.getmye.ACTION_STOP_CUSTOMER_SERVICE"
         const val ACTION_START_ALARM = "com.getmye.ACTION_START_ALARM"
         const val ACTION_STOP_ALARM = "com.getmye.ACTION_STOP_ALARM"
         const val ACTION_SILENCE_ORDER = "com.getmye.ACTION_SILENCE_ORDER"
 
         const val EXTRA_BASE_URL = "extra_base_url"
         const val EXTRA_PARTNER_ID = "extra_partner_id"
+        const val EXTRA_CUSTOMER_ORDER_ID = "extra_customer_order_id"
         const val EXTRA_ORDER_ID = "extra_order_id"
         const val EXTRA_ITEM = "extra_item"
         const val EXTRA_CUSTOMER_NAME = "extra_customer_name"
@@ -63,6 +69,26 @@ class DeliveryOrderForegroundService : Service() {
         var instance: DeliveryOrderForegroundService? = null
         var isAlarmActive = false
         var currentAlarmOrderId: String? = null
+
+        fun startCustomerService(context: Context, baseUrl: String, orderId: String) {
+            val intent = Intent(context, DeliveryOrderForegroundService::class.java).apply {
+                action = ACTION_START_CUSTOMER_SERVICE
+                putExtra(EXTRA_BASE_URL, baseUrl)
+                putExtra(EXTRA_CUSTOMER_ORDER_ID, orderId)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stopCustomerService(context: Context) {
+            val intent = Intent(context, DeliveryOrderForegroundService::class.java).apply {
+                action = ACTION_STOP_CUSTOMER_SERVICE
+            }
+            context.startService(intent)
+        }
 
         fun startService(context: Context, baseUrl: String, partnerId: String) {
             val intent = Intent(context, DeliveryOrderForegroundService::class.java).apply {
@@ -138,13 +164,21 @@ class DeliveryOrderForegroundService : Service() {
 
     private var baseUrl: String? = null
     private var partnerId: String? = null
+    private var isCustomerMode = false
+    private var customerOrderId: String? = null
+    private val customerNotifiedCollectedItems = Collections.synchronizedSet(HashSet<String>())
+    private var customerNotifiedDelivered = false
+    private var customerNotifiedCancelled = false
+    private var customerNotifiedBill = false
+    private var customerNotifiedPartner = false
+    private var customerNotifiedPayment = false
     private var isServiceRunning = false
 
     private var mediaPlayer: MediaPlayer? = null
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
-
+    private var serviceWakeLock: PowerManager.WakeLock? = null
     private var scheduler: ScheduledExecutorService? = null
     private val knownOrderIds = Collections.synchronizedSet(HashSet<String>())
     private val silencedOrderIds = Collections.synchronizedSet(HashSet<String>())
@@ -163,6 +197,7 @@ class DeliveryOrderForegroundService : Service() {
 
         when (action) {
             ACTION_START_SERVICE -> {
+                isCustomerMode = false
                 val prefs = getSharedPreferences("getmye_service_prefs", Context.MODE_PRIVATE)
                 val bUrl = intent?.getStringExtra(EXTRA_BASE_URL)
                 val pId = intent?.getStringExtra(EXTRA_PARTNER_ID)
@@ -184,6 +219,56 @@ class DeliveryOrderForegroundService : Service() {
             }
             ACTION_STOP_SERVICE -> {
                 stopAlarmInternal()
+                stopBackgroundPolling()
+                isServiceRunning = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                stopSelf()
+            }
+            ACTION_START_CUSTOMER_SERVICE -> {
+                isCustomerMode = true
+                val prefs = getSharedPreferences("getmye_customer_prefs", Context.MODE_PRIVATE)
+                val bUrl = intent?.getStringExtra(EXTRA_BASE_URL)
+                val oId = intent?.getStringExtra(EXTRA_CUSTOMER_ORDER_ID)
+                if (!bUrl.isNullOrEmpty()) {
+                    baseUrl = bUrl
+                    prefs.edit().putString("base_url", bUrl).apply()
+                } else if (baseUrl.isNullOrEmpty()) {
+                    baseUrl = prefs.getString("base_url", null)
+                }
+                if (!oId.isNullOrEmpty()) {
+                    if (customerOrderId != oId) {
+                        customerNotifiedPartner = false
+                        customerNotifiedBill = false
+                        customerNotifiedPayment = false
+                        customerNotifiedDelivered = false
+                        customerNotifiedCancelled = false
+                        customerNotifiedCollectedItems.clear()
+                    }
+                    customerOrderId = oId
+                    prefs.edit().putString("customer_order_id", oId).apply()
+                } else if (customerOrderId.isNullOrEmpty()) {
+                    customerOrderId = prefs.getString("customer_order_id", null)
+                }
+
+                startAsForeground()
+                startBackgroundPolling()
+            }
+            ACTION_STOP_CUSTOMER_SERVICE -> {
+                isCustomerMode = false
+                customerOrderId = null
+                customerNotifiedCollectedItems.clear()
+                customerNotifiedDelivered = false
+                customerNotifiedCancelled = false
+                customerNotifiedBill = false
+                customerNotifiedPartner = false
+                customerNotifiedPayment = false
+                val prefs = getSharedPreferences("getmye_customer_prefs", Context.MODE_PRIVATE)
+                prefs.edit().remove("customer_order_id").apply()
                 stopBackgroundPolling()
                 isServiceRunning = false
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -224,18 +309,18 @@ class DeliveryOrderForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            // 1. Silent Service Channel for online persistent status
+            // 1. Silent Service Channel for persistent online / order tracking status
             val serviceChannel = NotificationChannel(
                 SERVICE_CHANNEL_ID,
-                "Getmye Partner Online Service",
+                "Getmye Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps delivery app active in background to receive orders"
+                description = "Keeps app active in background to receive updates and orders"
                 setShowBadge(false)
             }
             manager.createNotificationChannel(serviceChannel)
 
-            // 2. High-priority Alarm Channel for loud incoming orders
+            // 2. High-priority Alarm Channel for loud incoming orders (Delivery Partner)
             val alarmSoundUri = Uri.parse("android.resource://$packageName/${R.raw.order_alarm}")
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
@@ -254,6 +339,26 @@ class DeliveryOrderForegroundService : Service() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             manager.createNotificationChannel(alarmChannel)
+
+            // 3. High-priority Alerts Channel for items collected, order status & delivered (Customer & Partner)
+            val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val alertAudioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val alertsChannel = NotificationChannel(
+                ALERTS_CHANNEL_ID,
+                "Getmye Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Real-time alerts for orders, chat, items, and delivery status"
+                setSound(defaultSoundUri, alertAudioAttrs)
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 350, 200, 350)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            manager.createNotificationChannel(alertsChannel)
         }
     }
 
@@ -274,6 +379,19 @@ class DeliveryOrderForegroundService : Service() {
         }
     }
 
+    private fun getNotificationIcon(): Int {
+        val resId = resources.getIdentifier("ic_getmye_logo", "mipmap", packageName)
+        return if (resId != 0) resId else applicationInfo.icon
+    }
+
+    private fun getLargeIconBitmap(): Bitmap? {
+        return try {
+            BitmapFactory.decodeResource(resources, getNotificationIcon())
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun buildServiceNotification(): Notification {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
         launchIntent.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -291,16 +409,28 @@ class DeliveryOrderForegroundService : Service() {
             Notification.Builder(this)
         }
 
-        return builder
-            .setContentTitle("🟢 Getmye Partner: Online")
-            .setContentText("Listening for new orders in background")
-            .setSmallIcon(applicationInfo.icon)
+        val iconRes = getNotificationIcon()
+        val largeBitmap = getLargeIconBitmap()
+
+        val title = if (isCustomerMode) "🛒 GETMYE: Order #${customerOrderId ?: "Active"}" else "🟢 Getmye Partner: Online"
+        val text = if (isCustomerMode) "Tracking your delivery in real-time..." else "Listening for new orders in background"
+
+        builder
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(iconRes)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .build()
+
+        if (largeBitmap != null) {
+            builder.setLargeIcon(largeBitmap)
+        }
+
+        return builder.build()
     }
 
     private fun startBackgroundPolling() {
+        acquireServiceWakeLock()
         if (scheduler != null && !scheduler!!.isShutdown) return
         scheduler = Executors.newSingleThreadScheduledExecutor()
         scheduler?.scheduleWithFixedDelay({
@@ -312,21 +442,59 @@ class DeliveryOrderForegroundService : Service() {
         }, 1, 2, TimeUnit.SECONDS)
     }
 
+    private fun acquireServiceWakeLock() {
+        try {
+            if (serviceWakeLock == null) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                serviceWakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "GetMye:DeliveryPollingWakeLock"
+                ).apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (serviceWakeLock?.isHeld == false) {
+                serviceWakeLock?.acquire()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseServiceWakeLock() {
+        try {
+            serviceWakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+            serviceWakeLock = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun stopBackgroundPolling() {
         try {
             scheduler?.shutdownNow()
             scheduler = null
         } catch (e: Exception) {}
+        releaseServiceWakeLock()
     }
 
     private fun checkPendingOrders() {
-        val bUrl = baseUrl ?: return
-        val pId = partnerId ?: return
         if (!isServiceRunning) return
+        if (isCustomerMode) {
+            checkCustomerOrder()
+            return
+        }
+
+        val prefs = getSharedPreferences("getmye_service_prefs", Context.MODE_PRIVATE)
+        val bUrl = baseUrl ?: prefs.getString("base_url", null) ?: "http://192.168.29.196:5000"
+        val pId = partnerId ?: prefs.getString("partner_id", null) ?: "DP001"
 
         var conn: HttpURLConnection? = null
         try {
-            val url = URL("$bUrl/api/order/pending?partner_id=$pId")
+            val cleanUrl = bUrl.trimEnd('/')
+            val url = URL("$cleanUrl/api/order/pending?partner_id=$pId")
             conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = 3000
@@ -463,7 +631,7 @@ class DeliveryOrderForegroundService : Service() {
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
                 "GetMye:DeliveryAlarmScreenWakeLock"
             )
-            screenLock.acquire(30 * 1000L) // Keep bright for 30 seconds
+            screenLock.acquire(60 * 1000L) // Keep bright for 60 seconds
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -474,6 +642,15 @@ class DeliveryOrderForegroundService : Service() {
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
+
+        // 3b. Boost alarm volume so it rings loud even if muted or low
+        try {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            if (curVol < (maxVol * 0.7).toInt()) {
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, (maxVol * 0.85).toInt(), 0)
+            }
+        } catch (_: Exception) {}
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -560,6 +737,19 @@ class DeliveryOrderForegroundService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        // 8. Directly launch MainActivity to pop up incoming order screen even when locked/screen was off
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
+            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            launchIntent.putExtra("order_id", orderId)
+            launchIntent.putExtra("route", "incoming_order")
+            startActivity(launchIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun showAlarmNotification(
@@ -596,10 +786,13 @@ class DeliveryOrderForegroundService : Service() {
             Notification.Builder(this)
         }
 
-        val notif = builder
+        val iconRes = getNotificationIcon()
+        val largeBitmap = getLargeIconBitmap()
+
+        val notifBuilder = builder
             .setContentTitle("🚨 NEW DELIVERY ORDER: #$orderId")
             .setContentText(body)
-            .setSmallIcon(applicationInfo.icon)
+            .setSmallIcon(iconRes)
             .setContentIntent(fullScreenPendingIntent)
             .setFullScreenIntent(fullScreenPendingIntent, true)
             .setCategory(Notification.CATEGORY_ALARM)
@@ -607,7 +800,12 @@ class DeliveryOrderForegroundService : Service() {
             .setAutoCancel(false)
             .setOngoing(true)
             .setPriority(Notification.PRIORITY_MAX)
-            .build()
+
+        if (largeBitmap != null) {
+            notifBuilder.setLargeIcon(largeBitmap)
+        }
+
+        val notif = notifBuilder.build()
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(ALARM_NOTIFICATION_ID, notif)
@@ -630,16 +828,195 @@ class DeliveryOrderForegroundService : Service() {
             Notification.Builder(this)
         }
 
-        val notif = builder
+        val iconRes = getNotificationIcon()
+        val largeBitmap = getLargeIconBitmap()
+
+        val notifBuilder = builder
             .setContentTitle("🚨 Order Cancelled by Customer")
             .setContentText("Order #$orderId was cancelled by customer: $reason")
-            .setSmallIcon(applicationInfo.icon)
+            .setSmallIcon(iconRes)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .build()
+
+        if (largeBitmap != null) {
+            notifBuilder.setLargeIcon(largeBitmap)
+        }
+
+        val notif = notifBuilder.build()
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(3003, notif)
+    }
+
+    private fun checkCustomerOrder() {
+        val prefs = getSharedPreferences("getmye_customer_prefs", Context.MODE_PRIVATE)
+        val bUrl = baseUrl ?: prefs.getString("base_url", null) ?: "http://10.0.2.2:5000"
+        val oId = customerOrderId ?: prefs.getString("customer_order_id", null) ?: return
+        if (!isServiceRunning || !isCustomerMode) return
+
+        var conn: HttpURLConnection? = null
+        try {
+            val cleanUrl = bUrl.trimEnd('/')
+            val url = URL("$cleanUrl/api/order/$oId")
+            conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.setRequestProperty("Accept", "application/json")
+
+            val code = conn.responseCode
+            if (code == 200) {
+                val reader = BufferedReader(InputStreamReader(conn.inputStream))
+                val sb = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    sb.append(line)
+                }
+                reader.close()
+
+                val json = JSONObject(sb.toString())
+                val order = json.optJSONObject("order") ?: return
+                val status = order.optString("status", "").lowercase().trim()
+                val partnerName = order.optString("partner_name", "").trim().ifEmpty { "Delivery Partner" }
+                val partnerPhone = order.optString("partner_phone", "").trim()
+
+                // Check flutter shared preferences so we don't repeat notifications Flutter already sent
+                val flutterPrefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+
+                // 1. Partner Assigned Notification
+                val isAccepted = status == "accepted" || status == "purchasing_food" ||
+                        status == "bill_sent" || status == "picked_up" || status == "in_transit"
+                val flutterAcceptedNotified = flutterPrefs.getBoolean("flutter.has_notified_partner_accepted_$oId", false)
+                if (isAccepted && !customerNotifiedPartner && !flutterAcceptedNotified) {
+                    customerNotifiedPartner = true
+                    flutterPrefs.edit().putBoolean("flutter.has_notified_partner_accepted_$oId", true).apply()
+                    val phoneInfo = if (partnerPhone.isNotEmpty()) " (Contact: $partnerPhone)" else ""
+                    showCustomerAlertNotification(
+                        2002,
+                        "🎉 Delivery Partner Assigned!",
+                        "$partnerName$phoneInfo has accepted your order #$oId and is heading to the store."
+                    )
+                }
+
+                // 2. Store Bill Uploaded / Sent (ONLY when status is bill_sent)
+                val hasBill = status == "bill_sent" && (order.optBoolean("bill_confirmed", false) ||
+                        order.optString("bill_image_url", "").isNotEmpty() ||
+                        (order.optJSONArray("bill_images")?.length() ?: 0) > 0)
+                val flutterBillNotified = flutterPrefs.getBoolean("flutter.has_notified_bill_ack_$oId", false)
+                if (hasBill && !customerNotifiedBill && !flutterBillNotified) {
+                    customerNotifiedBill = true
+                    flutterPrefs.edit().putBoolean("flutter.has_notified_bill_ack_$oId", true).apply()
+                    val gTot = order.optDouble("grand_total", order.optDouble("total_amount", 0.0))
+                    val amountText = if (gTot > 0) " (₹${gTot.toInt()})" else ""
+                    showCustomerAlertNotification(
+                        2004,
+                        "🧾 Order Confirmed & Bill Sent$amountText",
+                        "$partnerName has confirmed your order and sent the bill$amountText for Order #$oId. Tap to verify and proceed to pay!"
+                    )
+                }
+
+                // 3b. Payment Successful Notification
+                val paymentStatus = order.optString("payment_status", "").lowercase().trim()
+                val isPaid = paymentStatus == "paid" || paymentStatus == "success" || order.optBoolean("is_paid", false)
+                val flutterPaymentNotified = flutterPrefs.getBoolean("flutter.has_notified_payment_success_$oId", false)
+                if (isPaid && !customerNotifiedPayment && !flutterPaymentNotified) {
+                    customerNotifiedPayment = true
+                    flutterPrefs.edit().putBoolean("flutter.has_notified_payment_success_$oId", true).apply()
+                    val gTot = order.optDouble("grand_total", order.optDouble("total_amount", 0.0))
+                    val codOtp = order.optString("cod_otp", "")
+                    val otpInfo = if (codOtp.isNotEmpty()) " Share Delivery OTP $codOtp upon food arrival." else " Delivery partner is on the way!"
+                    showCustomerAlertNotification(
+                        2006,
+                        "✅ Payment Successful: ₹${gTot.toInt()}",
+                        "Payment of ₹${gTot.toInt()} confirmed for Order #$oId.$otpInfo"
+                    )
+                }
+
+                // 4. Order Delivered / Completed
+                val isDelivered = status == "delivered" || status == "completed"
+                val flutterDeliveredNotified = flutterPrefs.getBoolean("flutter.has_notified_delivered_$oId", false)
+                if (isDelivered && !customerNotifiedDelivered && !flutterDeliveredNotified) {
+                    customerNotifiedDelivered = true
+                    flutterPrefs.edit().putBoolean("flutter.has_notified_delivered_$oId", true).apply()
+                    showCustomerAlertNotification(
+                        2005,
+                        "🎉 Order Delivered Successfully!",
+                        "$partnerName has delivered your order #$oId. Enjoy your meal! Thank you for choosing GETMYE."
+                    )
+                    scheduler?.schedule({
+                        stopCustomerService(applicationContext)
+                    }, 6, TimeUnit.SECONDS)
+                }
+
+                // 5. Order Cancelled
+                if (status == "cancelled" && !customerNotifiedCancelled) {
+                    customerNotifiedCancelled = true
+                    val reason = order.optString("cancel_reason", "Order was cancelled")
+                    showCustomerAlertNotification(
+                        3003,
+                        "🚨 Order Cancelled",
+                        "Order #$oId was cancelled: $reason"
+                    )
+                    scheduler?.schedule({
+                        stopCustomerService(applicationContext)
+                    }, 4, TimeUnit.SECONDS)
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun showCustomerAlertNotification(id: Int, title: String, body: String) {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
+        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pendingIntent = PendingIntent.getActivity(this, id, launchIntent, pendingIntentFlags)
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, ALERTS_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        val iconRes = getNotificationIcon()
+        val largeBitmap = getLargeIconBitmap()
+
+        builder
+            .setContentTitle(title)
+            .setContentText(body)
+            .setSmallIcon(iconRes)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(Notification.PRIORITY_MAX)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.style = Notification.BigTextStyle().bigText(body)
+        }
+
+        if (largeBitmap != null) {
+            builder.setLargeIcon(largeBitmap)
+        }
+
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(350)
+            }
+        } catch (_: Exception) {}
+
+        val notif = builder.build()
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(id, notif)
     }
 
     fun stopAlarm() {

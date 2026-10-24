@@ -16,6 +16,11 @@ class MainActivity : FlutterActivity() {
         enableLockScreenAndTurnScreenOn()
     }
 
+    override fun onResume() {
+        super.onResume()
+        enableLockScreenAndTurnScreenOn()
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -28,14 +33,35 @@ class MainActivity : FlutterActivity() {
             setTurnScreenOn(true)
             val km = getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
             km?.requestDismissKeyguard(this, null)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-            )
+        }
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = android.net.Uri.parse("package:$packageName")
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    try {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+            }
         }
     }
 
@@ -52,6 +78,16 @@ class MainActivity : FlutterActivity() {
                 }
                 "stopOrderService" -> {
                     DeliveryOrderForegroundService.stopService(applicationContext)
+                    result.success(true)
+                }
+                "startCustomerOrderService" -> {
+                    val baseUrl = call.argument<String>("baseUrl") ?: "http://10.0.2.2:5000"
+                    val orderId = call.argument<String>("orderId") ?: ""
+                    DeliveryOrderForegroundService.startCustomerService(applicationContext, baseUrl, orderId)
+                    result.success(true)
+                }
+                "stopCustomerOrderService" -> {
+                    DeliveryOrderForegroundService.stopCustomerService(applicationContext)
                     result.success(true)
                 }
                 "startAlarm" -> {
@@ -74,6 +110,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "playSuccessSound" -> {
                     playPaymentSuccessSound()
+                    result.success(true)
+                }
+                "requestBatteryOptimizationExemption" -> {
+                    requestIgnoreBatteryOptimizations()
                     result.success(true)
                 }
                 else -> result.notImplemented()

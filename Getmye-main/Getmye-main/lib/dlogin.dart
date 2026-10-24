@@ -6,6 +6,7 @@ import 'api_config.dart';
 import 'homed.dart';
 import 'theme/app_theme.dart';
 import 'ppp.dart';
+import 'services/alarm_service.dart';
 import 'main.dart';
 
 class DeliveryPersonLoginPage extends StatefulWidget {
@@ -173,6 +174,13 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
           await prefs.setString('partner_photo_url', photoUrl);
           await prefs.setString('active_order_partner_pic_url', photoUrl);
         }
+
+        // 🟢 Start background foreground listening service immediately upon login
+        AlarmService.startOrderListeningService(
+          baseUrl: ApiConfig.baseUrl,
+          partnerId: dpId,
+        );
+        AlarmService.requestBatteryOptimizationExemption();
 
         if (!mounted) return;
         _showSuccess('Welcome back, ${data['name']?.toString().isNotEmpty == true ? data['name'] : 'Partner'}!');

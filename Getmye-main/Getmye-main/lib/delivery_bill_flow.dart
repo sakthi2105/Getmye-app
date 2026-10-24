@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api_config.dart';
@@ -18,6 +19,7 @@ import 'widgets/delivery_bottom_nav_bar.dart';
 import 'ppp.dart';
 import 'homed.dart';
 import 'services/route_service.dart';
+import 'widgets/price_range_dialogs.dart';
 
 class BillItem {
   String name;
@@ -83,6 +85,39 @@ class DeliveryOrder {
   double get grandTotal => subtotal + deliveryFee;
 }
 
+/// Helper to comprehensively wipe active delivery order state from storage and stop alarms
+Future<void> clearDeliveryPartnerActiveOrder({String? orderId}) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('partner_active_order_id');
+    await prefs.remove('active_order_id');
+    await prefs.remove('active_order_status');
+    await prefs.remove('active_order_customer_name');
+    await prefs.remove('active_order_customer_phone');
+    await prefs.remove('active_order_customer_address');
+    await prefs.remove('active_order_item');
+    await prefs.remove('active_order_budget');
+    await prefs.remove('active_order_bill_sent');
+    await prefs.remove('active_order_food_purchased');
+    await prefs.remove('active_order_partner_accepted');
+    await prefs.remove('active_order_restaurant');
+    await prefs.remove('active_order_grand_total');
+    await prefs.remove('active_order_items_json');
+    await prefs.remove('active_cod_otp');
+    if (orderId != null && orderId.isNotEmpty) {
+      await prefs.setString('order_${orderId}_status', 'cancelled');
+      final curDeclined = prefs.getStringList('partner_declined_order_ids') ?? [];
+      if (!curDeclined.contains(orderId)) {
+        curDeclined.add(orderId);
+        await prefs.setStringList('partner_declined_order_ids', curDeclined);
+      }
+      AlarmService.silenceOrder(orderId);
+    }
+    AlarmService.stopAlarm();
+    AppNotificationService.cancelNotification(999);
+  } catch (_) {}
+}
+
 /// 1. New Orders Page for Delivery Partner
 class NewOrdersPage extends StatefulWidget {
   const NewOrdersPage({super.key});
@@ -103,7 +138,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
   void initState() {
     super.initState();
     _fetchPendingOrders();
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
       _fetchPendingOrders();
     });
   }
@@ -154,6 +189,10 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
           // 1. Handle Customer Order Cancellation
           if (status == 'cancelled' || localStatus == 'cancelled') {
             final cReason = o['cancel_reason']?.toString() ?? 'Cancelled by customer';
+            final curActiveId = prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id');
+            if (curActiveId == oId) {
+              await clearDeliveryPartnerActiveOrder(orderId: oId);
+            }
             if (!_notifiedCancelledOrderIds.contains(oId)) {
               _notifiedCancelledOrderIds.add(oId);
               AlarmService.silenceOrder(oId);
@@ -163,6 +202,36 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                 orderId: oId,
                 reason: cReason,
               );
+              if (curActiveId == oId && mounted) {
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (ctx) => AlertDialog(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    title: const Row(
+                      children: [
+                        Icon(Icons.cancel_rounded, color: Color(0xFFDC2626)),
+                        SizedBox(width: 8),
+                        Text("Order Cancelled", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      ],
+                    ),
+                    content: Text(
+                      "Customer has cancelled Order #$oId.\n\nReason: $cReason",
+                      style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                    ),
+                    actions: [
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryDark,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text("OK", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                );
+              }
             }
 
             // Save to today_completed_deliveries so it stays visible in Today Deliveries list
@@ -255,48 +324,61 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
           );
         }
 
-        if (mounted) {
-          setState(() {
-            // Keep any currently accepted, declined or cancelled order in _orders so it NEVER disappears, unless completed
-            for (var cur in _orders) {
-              final isDone = (prefs.getString('order_${cur.orderId}_status') == 'delivered') || (prefs.getBool('order_${cur.orderId}_completed') ?? false);
-              final isKeep = cur.status == "Accepted" || cur.status == "declined" || cur.status == "rejected" || cur.status == "cancelled";
-              if (isKeep && !isDone && !loaded.any((l) => l.orderId == cur.orderId)) {
-                loaded.insert(0, cur);
-              }
+        // Keep any currently accepted, declined or cancelled order in loaded so it NEVER disappears, unless completed
+        for (var cur in _orders) {
+          final isDone = (prefs.getString('order_${cur.orderId}_status') == 'delivered') || (prefs.getBool('order_${cur.orderId}_completed') ?? false);
+          final isKeep = cur.status == "Accepted" || cur.status == "declined" || cur.status == "rejected" || cur.status == "cancelled";
+          if (isKeep && !isDone && !loaded.any((l) => l.orderId == cur.orderId)) {
+            loaded.insert(0, cur);
+          }
+        }
+
+        bool listChanged = _orders.length != loaded.length;
+        if (!listChanged) {
+          for (int i = 0; i < loaded.length; i++) {
+            if (_orders[i].orderId != loaded[i].orderId ||
+                _orders[i].status != loaded[i].status ||
+                _orders[i].cancelReason != loaded[i].cancelReason) {
+              listChanged = true;
+              break;
             }
+          }
+        }
+
+        if (listChanged && mounted) {
+          setState(() {
             _orders.clear();
             _orders.addAll(loaded);
-
-            // Ring alarm continuously only for unhandled pending orders (stop immediately for accepted, declined, cancelled, silenced)
-            final hasPending = _orders.any((o) =>
-                !_declinedOrderIds.contains(o.orderId) &&
-                !_acceptedOrderIds.contains(o.orderId) &&
-                !AlarmService.isOrderSilenced(o.orderId) &&
-                o.status != "Accepted" &&
-                o.status != "declined" &&
-                o.status != "rejected" &&
-                o.status != "cancelled");
-            if (hasPending && isOnline) {
-              final pendingOrder = _orders.firstWhere((o) =>
-                  !_declinedOrderIds.contains(o.orderId) &&
-                  !_acceptedOrderIds.contains(o.orderId) &&
-                  !AlarmService.isOrderSilenced(o.orderId) &&
-                  o.status != "Accepted" &&
-                  o.status != "declined" &&
-                  o.status != "rejected" &&
-                  o.status != "cancelled");
-              AlarmService.startAlarm(
-                orderId: pendingOrder.orderId,
-                item: pendingOrder.items.isNotEmpty ? pendingOrder.items.first.name : 'Food Order',
-                customerName: pendingOrder.customerName,
-                address: pendingOrder.deliveryAddress,
-                budget: pendingOrder.grandTotal,
-              );
-            } else {
-              AlarmService.stopAlarm();
-            }
           });
+        }
+
+        // Ring alarm continuously only for unhandled pending orders (stop immediately for accepted, declined, cancelled, silenced)
+        final hasPending = _orders.any((o) =>
+            !_declinedOrderIds.contains(o.orderId) &&
+            !_acceptedOrderIds.contains(o.orderId) &&
+            !AlarmService.isOrderSilenced(o.orderId) &&
+            o.status != "Accepted" &&
+            o.status != "declined" &&
+            o.status != "rejected" &&
+            o.status != "cancelled");
+        if (hasPending && isOnline) {
+          final pendingOrder = _orders.firstWhere((o) =>
+              !_declinedOrderIds.contains(o.orderId) &&
+              !_acceptedOrderIds.contains(o.orderId) &&
+              !AlarmService.isOrderSilenced(o.orderId) &&
+              o.status != "Accepted" &&
+              o.status != "declined" &&
+              o.status != "rejected" &&
+              o.status != "cancelled");
+          AlarmService.startAlarm(
+            orderId: pendingOrder.orderId,
+            item: pendingOrder.items.isNotEmpty ? pendingOrder.items.first.name : 'Food Order',
+            customerName: pendingOrder.customerName,
+            address: pendingOrder.deliveryAddress,
+            budget: pendingOrder.grandTotal,
+          );
+        } else {
+          AlarmService.stopAlarm();
         }
       }
     } catch (e) {
@@ -900,12 +982,54 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           await prefs.setString('active_order_restaurant', order.restaurantName);
                                           await prefs.setDouble('active_order_grand_total', order.grandTotal);
                                           if (!context.mounted) return;
-                                           Navigator.push(
-                                             context,
-                                             MaterialPageRoute(
-                                               builder: (_) => DeliveryBillPostPage(order: order),
-                                             ),
-                                           );
+                                          final acceptedByCustomer = await showDialog<bool>(
+                                            context: context,
+                                            barrierDismissible: false,
+                                            builder: (_) => DeliveryPartnerPriceRangeDialog(
+                                              orderId: order.orderId,
+                                              customerName: order.customerName,
+                                              customerPhone: order.customerPhone,
+                                              itemName: order.items.isNotEmpty ? order.items.first.name : 'Food Order',
+                                              budget: order.items.isNotEmpty ? order.items.first.price.toString() : '150',
+                                            ),
+                                          );
+
+                                          if (context.mounted && acceptedByCustomer == true) {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) => DeliveryBillPostPage(order: order),
+                                              ),
+                                            );
+                                          } else if (context.mounted) {
+                                            final prefs = await SharedPreferences.getInstance();
+                                            await prefs.remove("partner_active_order_id");
+                                            await prefs.remove("active_order_id");
+                                            await prefs.remove("active_order_status");
+                                            await prefs.remove("active_order_customer_name");
+                                            await prefs.remove("active_order_customer_phone");
+                                            await prefs.remove("active_order_customer_address");
+                                            await prefs.remove("active_order_item");
+                                            await prefs.remove("active_order_budget");
+                                            await prefs.remove("active_order_bill_sent");
+                                            await prefs.remove("active_order_food_purchased");
+                                            await prefs.remove("active_order_partner_accepted");
+                                            await prefs.remove("active_order_restaurant");
+                                            await prefs.remove("active_order_grand_total");
+                                            final curDeclined = prefs.getStringList("partner_declined_order_ids") ?? [];
+                                            if (!curDeclined.contains(order.orderId)) {
+                                              curDeclined.add(order.orderId);
+                                              await prefs.setStringList("partner_declined_order_ids", curDeclined);
+                                            }
+                                            AlarmService.silenceOrder(order.orderId);
+                                            AlarmService.stopAlarm();
+                                            AppNotificationService.cancelNotification(999);
+                                            if (!context.mounted) return;
+                                            Navigator.of(context).pushAndRemoveUntil(
+                                              MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+                                              (route) => false,
+                                            );
+                                          }
                                         },
                                       ),
                                     ),
@@ -938,13 +1062,12 @@ class DeliveryBillPostPage extends StatefulWidget {
 
 class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
   late DeliveryOrder _order;
-  XFile? _billImage;
+  List<XFile> _billImages = [];
   final ImagePicker _picker = ImagePicker();
   late List<BillItem> _items;
   double _deliveryFee = 0.0;
   Timer? _statusCheckTimer;
   bool _isCheckingStatus = false;
-  int _lastSeenMsgCount = 0;
   bool _isShowingCancelledDialog = false;
 
   @override
@@ -978,7 +1101,18 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       );
     } catch (_) {}
 
-    _statusCheckTimer = Timer.periodic(const Duration(seconds: 4), (_) => _checkOrderCancelled());
+    // Save active order ID so background monitors track it for cancellation alerts
+    SharedPreferences.getInstance().then((p) {
+      p.setString('partner_active_order_id', _order.orderId);
+      p.setString('active_order_id', _order.orderId);
+      p.setString('active_order_status', 'purchasing_food');
+    });
+
+    _statusCheckTimer = Timer.periodic(const Duration(seconds: 2), (_) => _checkOrderCancelled());
+    _checkOrderCancelled();
+    _syncChecklistToBackend();
+    _loadSavedBillImage();
+    _retrieveLostData();
   }
 
   @override
@@ -986,6 +1120,27 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
     _statusCheckTimer?.cancel();
     super.dispose();
   }
+
+  Future<void> _syncChecklistToBackend() async {
+    try {
+      await http.post(
+        ApiConfig.orderUpdateChecklist,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'order_id': _order.orderId,
+          'items': _items.map((i) => {
+            'name': i.name,
+            'quantity': i.quantity,
+            'price': i.price,
+            'is_collected': i.isCollected,
+          }).toList(),
+        }),
+      ).timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint("Error syncing checklist to backend: $e");
+    }
+  }
+
 
   Future<void> _checkOrderCancelled() async {
     if (_isCheckingStatus) return;
@@ -1002,6 +1157,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
           if (_isShowingCancelledDialog) return;
           _isShowingCancelledDialog = true;
           final reason = orderData['cancel_reason'] ?? 'Customer cancelled the order';
+          await clearDeliveryPartnerActiveOrder(orderId: _order.orderId);
           AppNotificationService.showOrderCancelledNotification(
             orderId: _order.orderId,
             reason: reason,
@@ -1053,76 +1209,316 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
   double get _subtotal => _items.fold(0.0, (sum, item) => sum + item.total);
   double get _grandTotal => _subtotal + _deliveryFee;
 
-  Future<void> _pickImage(ImageSource source) async {
+  Future<void> _loadSavedBillImage() async {
     try {
-      final XFile? image = await _picker.pickImage(source: source, imageQuality: 85);
-      if (image != null) {
+      final prefs = await SharedPreferences.getInstance();
+      final savedPaths = prefs.getStringList('order_${_order.orderId}_bill_images');
+      if (savedPaths != null && savedPaths.isNotEmpty) {
+        final existingFiles = savedPaths
+            .where((p) => File(p).existsSync())
+            .map((p) => XFile(p))
+            .toList();
+        if (existingFiles.isNotEmpty && mounted) {
+          setState(() {
+            _billImages = existingFiles;
+          });
+          return;
+        }
+      }
+      final savedPath = prefs.getString('order_${_order.orderId}_bill_image');
+      if (savedPath != null && File(savedPath).existsSync() && mounted) {
         setState(() {
-          _billImage = image;
+          _billImages = [XFile(savedPath)];
         });
       }
     } catch (e) {
-      debugPrint("Error picking image: $e");
+      debugPrint("Error loading cached bill images: $e");
     }
   }
 
-  void _showImagePickerModal() {
-    // Only open camera directly - Gallery upload removed
-    _pickImage(ImageSource.camera);
+  Future<void> _pickImage([ImageSource source = ImageSource.camera]) async {
+    try {
+      final status = await Permission.camera.request();
+      if (status.isPermanentlyDenied && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Camera permission is required. Please enable it in Settings."),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+        return;
+      }
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 75,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+      if (image != null) {
+        final prefs = await SharedPreferences.getInstance();
+        setState(() {
+          _billImages.add(image);
+        });
+        await prefs.setStringList('order_${_order.orderId}_bill_images', _billImages.map((e) => e.path).toList());
+        await prefs.setString('order_${_order.orderId}_bill_image', _billImages.first.path);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Bill receipt #${_billImages.length} attached ✓"),
+              backgroundColor: const Color(0xFF047857),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error picking bill image with camera: $e");
+    }
   }
 
-  void _showAddItemDialog() {
+  Future<void> _retrieveLostData() async {
+    try {
+      final LostDataResponse response = await _picker.retrieveLostData();
+      if (response.isEmpty) return;
+      if (response.file != null && mounted) {
+        final prefs = await SharedPreferences.getInstance();
+        setState(() {
+          if (!_billImages.any((img) => img.path == response.file!.path)) {
+            _billImages.add(response.file!);
+          }
+        });
+        await prefs.setStringList('order_${_order.orderId}_bill_images', _billImages.map((e) => e.path).toList());
+        await prefs.setString('order_${_order.orderId}_bill_image', _billImages.first.path);
+      }
+    } catch (e) {
+      debugPrint("Lost camera data error: $e");
+    }
+  }
+
+  void _showAddFoodDialog() {
     final nameController = TextEditingController();
     final priceController = TextEditingController();
-    final qtyController = TextEditingController(text: "1");
+    int qty = 1;
+    String? dialogError;
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Add Food Item", style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: "Dish Name", hintText: "e.g. Parotta"),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Price (₹)", hintText: "e.g. 50"),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Quantity", hintText: "e.g. 2"),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryDark),
-            onPressed: () {
-              final name = nameController.text.trim();
-              final price = double.tryParse(priceController.text.trim()) ?? 0.0;
-              final qty = int.tryParse(qtyController.text.trim()) ?? 1;
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Dialog Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryLight,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.lunch_dining_rounded, color: AppColors.primaryDark, size: 22),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            "Add Food Item",
+                            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.textPrimary),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.textSecondary),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
 
-              if (name.isNotEmpty && price > 0) {
-                setState(() {
-                  _items.add(BillItem(name: name, quantity: qty, price: price, isCollected: true));
-                });
-                Navigator.pop(context);
-              }
-            },
-            child: const Text("Add Item", style: TextStyle(color: Colors.white)),
-          ),
-        ],
+                  // 1. Food Name Input
+                  const Text("Food / Dish Name *", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textPrimary)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: nameController,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      hintText: "e.g. Chicken Dum Biryani, Parotta",
+                      hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                      prefixIcon: const Icon(Icons.fastfood_rounded, size: 18, color: AppColors.primary),
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary, width: 1.8)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 2. Price Input & Quantity Counter Row
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Price (Takes available width)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Price (₹) *", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textPrimary)),
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: priceController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: InputDecoration(
+                                hintText: "e.g. 150",
+                                hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                                prefixText: "₹ ",
+                                prefixStyle: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                                filled: true,
+                                fillColor: const Color(0xFFF8FAFC),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary, width: 1.8)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // Quantity Stepper (Dedicated fixed width, zero squishing)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Quantity", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textPrimary)),
+                          const SizedBox(height: 6),
+                          Container(
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                  icon: const Icon(Icons.remove_rounded, size: 18, color: AppColors.primaryDark),
+                                  onPressed: () {
+                                    if (qty > 1) {
+                                      setDialogState(() => qty--);
+                                    }
+                                  },
+                                ),
+                                Container(
+                                  constraints: const BoxConstraints(minWidth: 24),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    "$qty",
+                                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary),
+                                  ),
+                                ),
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                  icon: const Icon(Icons.add_rounded, size: 18, color: AppColors.primaryDark),
+                                  onPressed: () {
+                                    setDialogState(() => qty++);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+
+                  if (dialogError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      dialogError!,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.danger),
+                    ),
+                  ],
+
+                  const SizedBox(height: 20),
+
+                  // Actions
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(color: AppColors.border),
+                          ),
+                          child: const Text("Cancel", style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            final name = nameController.text.trim();
+                            final price = double.tryParse(priceController.text.trim()) ?? 0.0;
+
+                            if (name.isEmpty) {
+                              setDialogState(() => dialogError = "Please enter food name");
+                              return;
+                            }
+                            if (price <= 0) {
+                              setDialogState(() => dialogError = "Please enter valid price");
+                              return;
+                            }
+
+                            setState(() {
+                              _items.add(BillItem(name: name, quantity: qty, price: price, isCollected: true));
+                            });
+                            _syncChecklistToBackend();
+                            Navigator.pop(ctx);
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Added '$name' (Qty: $qty) to bill ✓"),
+                                backgroundColor: const Color(0xFF16A34A),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 1,
+                          ),
+                          icon: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
+                          label: const Text("Add Food", style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1135,19 +1531,18 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       return;
     }
 
-    // Submit bill to backend API & MongoDB with base64 image if uploaded
-    String? base64BillImage;
-    if (_billImage != null && File(_billImage!.path).existsSync()) {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> base64Images = [];
+    for (var img in _billImages) {
       try {
-        final bytes = await File(_billImage!.path).readAsBytes();
-        base64BillImage = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+        final bytes = await File(img.path).readAsBytes();
+        base64Images.add('data:image/jpeg;base64,${base64Encode(bytes)}');
       } catch (e) {
         debugPrint("Error encoding bill image: $e");
       }
     }
 
     try {
-      final prefs = await SharedPreferences.getInstance();
       final currentPartnerId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
       await http.post(
         ApiConfig.billSubmit,
@@ -1166,7 +1561,8 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
           'item_total': _subtotal,
           'delivery_fee': 0.0,
           'grand_total': _grandTotal,
-          'bill_image_url': base64BillImage,
+          'bill_image_url': base64Images.isNotEmpty ? base64Images.first : '',
+          'bill_images': base64Images,
         }),
       );
     } catch (e) {
@@ -1174,7 +1570,6 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
     }
 
     // Save active order & bill state in SharedPreferences scoped to order ID
-    final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('active_order_bill_sent', true);
     await prefs.setBool('active_order_food_purchased', true);
     await prefs.setString('active_order_id', _order.orderId);
@@ -1183,17 +1578,18 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
     await prefs.setString('active_order_customer_address', _order.deliveryAddress);
     await prefs.setDouble('active_order_grand_total', _grandTotal);
     await prefs.setDouble('active_order_delivery_fee', 0.0);
-    // Remove stale global key so old images never leak
-    await prefs.remove('active_order_bill_image');
-    if (_billImage != null) {
-      await prefs.setString('order_${_order.orderId}_bill_image', _billImage!.path);
+    final billPaths = _billImages.map((e) => e.path).toList();
+    await prefs.setStringList('order_${_order.orderId}_bill_images', billPaths);
+    await prefs.setStringList('active_order_bill_images', billPaths);
+    if (_billImages.isNotEmpty) {
+      await prefs.setString('order_${_order.orderId}_bill_image', _billImages.first.path);
+      await prefs.setString('active_order_bill_image', _billImages.first.path);
     }
     final itemsJson = jsonEncode(_items.map((i) => i.toJson()).toList());
     await prefs.setString('active_order_items_json', itemsJson);
 
     if (!mounted) return;
 
-    // Show toast
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text("Bill sent to customer! Opening GPS Navigation Map..."),
@@ -1202,13 +1598,13 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       ),
     );
 
-    // AUTOMATICALLY open in-app GPS Navigation Map
-    Navigator.push(
+    Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => DeliveryNavigationMapPage(
           order: _order,
-          billImage: _billImage,
+          billImage: _billImages.isNotEmpty ? _billImages.first : null,
+          billImages: _billImages,
           items: List.from(_items),
           deliveryFee: _deliveryFee,
           totalAmount: _grandTotal,
@@ -1341,13 +1737,37 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  "Ordered Items Checklist",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Ordered Items Checklist",
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        "${_items.where((i) => i.isCollected).length}/${_items.length} Items Collected",
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark),
+                      ),
+                    ],
+                  ),
                 ),
-                Text(
-                  "${_items.where((i) => i.isCollected).length}/${_items.length} Collected",
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _showAddFoodDialog,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 2,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.add_circle_outline_rounded, size: 16, color: Colors.white),
+                  label: const Text(
+                    "Add Food",
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.white),
+                  ),
                 ),
               ],
             ),
@@ -1374,6 +1794,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
                       setState(() {
                         _items[index].isCollected = val ?? false;
                       });
+                      _syncChecklistToBackend();
                     },
                     secondary: Text(
                       "₹${item.total.toStringAsFixed(0)}",
@@ -1385,94 +1806,200 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
             ),
             const SizedBox(height: 20),
 
-            // Step 1: Upload Bill Photo
-            const Text(
-              "Post Restaurant Bill Receipt Photo",
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: _showImagePickerModal,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                height: 170,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: _billImage != null ? AppColors.primary : AppColors.border,
-                    width: _billImage != null ? 2 : 1.5,
+            // Step 1: Upload Bill Photo (Multi-bill support, camera only, no gallery)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    _billImages.isEmpty
+                        ? "Restaurant Bill Receipt Photo"
+                        : "Restaurant Bill Receipts (${_billImages.length} attached)",
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                child: _billImage != null
-                    ? ClipRRect(
+                const SizedBox(width: 8),
+                if (_billImages.isNotEmpty)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryLight,
+                      foregroundColor: AppColors.primaryDark,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () => _pickImage(ImageSource.camera),
+                    icon: const Icon(Icons.add_a_photo_rounded, size: 15, color: AppColors.primaryDark),
+                    label: const Text("+ Add Bill", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryDark)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            if (_billImages.isEmpty)
+              InkWell(
+                onTap: () => _pickImage(ImageSource.camera),
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  height: 160,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.border, width: 1.5),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: const BoxDecoration(
+                          color: AppColors.primaryLight,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.camera_alt_rounded, color: AppColors.primaryDark, size: 30),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        "Tap to Open Camera & Snap Bill Photo",
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        "Attach bill receipts for customer verification & transparency",
+                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 180,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _billImages.length + 1,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    if (index == _billImages.length) {
+                      return InkWell(
+                        onTap: () => _pickImage(ImageSource.camera),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          width: 130,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.primaryLight,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.add_a_photo_rounded, color: AppColors.primaryDark, size: 22),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                "+ Add More",
+                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: AppColors.primaryDark),
+                              ),
+                              const Text(
+                                "Snap Bill",
+                                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    final file = _billImages[index];
+                    return Container(
+                      width: 140,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.primary, width: 1.8),
+                      ),
+                      child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            Image.file(File(_billImage!.path), fit: BoxFit.cover),
+                            Image.file(File(file.path), fit: BoxFit.cover),
                             Positioned(
-                              bottom: 8,
-                              right: 8,
+                              top: 6,
+                              left: 6,
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.7),
-                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.edit_rounded, color: Colors.white, size: 14),
-                                    SizedBox(width: 4),
-                                    Text("Change Photo", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                                  ],
+                                child: Text(
+                                  "Bill #${index + 1}",
+                                  style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 6,
+                              right: 6,
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _billImages.removeAt(index);
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFDC2626),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.close_rounded, color: Colors.white, size: 14),
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: const BoxDecoration(
-                              color: AppColors.primaryLight,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.add_a_photo_rounded, color: AppColors.primaryDark, size: 30),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            "Tap to Take or Upload Bill Photo",
-                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            "Attach receipt for customer verification & transparency",
-                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                          ),
-                        ],
                       ),
+                    );
+                  },
+                ),
               ),
-            ),
             const SizedBox(height: 20),
 
             // Step 2: Bill Item Breakdown & Custom Edits
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  "Billing Summary",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                const Expanded(
+                  child: Text(
+                    "Billing Summary",
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                  ),
                 ),
-                TextButton.icon(
-                  onPressed: _showAddItemDialog,
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text("Add Item", style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _showAddFoodDialog,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 2,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.add_circle_outline_rounded, size: 16, color: Colors.white),
+                  label: const Text(
+                    "Add Food",
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.white),
+                  ),
                 ),
               ],
             ),
@@ -1582,6 +2109,7 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
 class DeliveryNavigationMapPage extends StatefulWidget {
   final DeliveryOrder order;
   final XFile? billImage;
+  final List<XFile>? billImages;
   final List<BillItem> items;
   final double deliveryFee;
   final double totalAmount;
@@ -1590,6 +2118,7 @@ class DeliveryNavigationMapPage extends StatefulWidget {
     super.key,
     required this.order,
     this.billImage,
+    this.billImages,
     required this.items,
     required this.deliveryFee,
     required this.totalAmount,
@@ -1612,7 +2141,6 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
   Timer? _trackingTimer;
   bool _isBroadcasting = false;
   bool _isCheckingCancel = false;
-  int _lastSeenMsgCount = 0;
   double _liveGrandTotal = 0.0;
   bool _hasShownOnlinePaidAlert = false;
   bool _isShowingCancelledDialog = false;
@@ -1625,6 +2153,13 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
     _initCustomerLocation();
     _initRealGpsNavigation();
 
+    // Save active order ID for background monitoring
+    SharedPreferences.getInstance().then((p) {
+      p.setString('partner_active_order_id', widget.order.orderId);
+      p.setString('active_order_id', widget.order.orderId);
+      p.setString('active_order_status', 'in_transit');
+    });
+
     // Update order status to in_transit
     http.post(
       ApiConfig.orderUpdateStatus,
@@ -1635,10 +2170,12 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
       }),
     ).catchError((_) => http.Response('', 500));
 
-    // Broadcast live location to backend every 3 seconds
+    // Broadcast live location to backend and check for customer cancellation every 2 seconds
     _broadcastLocation();
-    _trackingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _checkOrderCancelled();
+    _trackingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _broadcastLocation();
+      _checkOrderCancelled();
     });
   }
 
@@ -1677,10 +2214,10 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
     final lat = _destinationLocation.latitude;
     final lng = _destinationLocation.longitude;
 
-    // 1. Native Google Maps intent for driving voice navigation
-    final nativeUri = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
-    // 2. Fallback universal directions URL
-    final webUri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
+    // 1. Native Google Maps intent for two-wheeler / bike voice navigation (mode=l)
+    final nativeUri = Uri.parse('google.navigation:q=$lat,$lng&mode=l');
+    // 2. Fallback universal directions URL for two-wheeler
+    final webUri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=two_wheeler');
 
     try {
       if (await canLaunchUrl(nativeUri)) {
@@ -1737,15 +2274,19 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
     _gpsStreamSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
+        distanceFilter: 15,
       ),
     ).listen((Position pos) {
       if (mounted) {
-        setState(() {
-          _driverLocation = LatLng(pos.latitude, pos.longitude);
-        });
-        _fetchRoadRoute();
-        _broadcastLocation();
+        final newLoc = LatLng(pos.latitude, pos.longitude);
+        final dLat = (newLoc.latitude - _driverLocation.latitude).abs();
+        final dLng = (newLoc.longitude - _driverLocation.longitude).abs();
+        if (dLat > 0.0001 || dLng > 0.0001) {
+          setState(() {
+            _driverLocation = newLoc;
+          });
+          _broadcastLocation();
+        }
       }
     });
   }
@@ -1819,15 +2360,22 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
           final double paidAmt = bGrand != null && bGrand > 0 ? bGrand.toDouble() : widget.totalAmount;
           final String method = orderData['payment_method'] ?? 'Cashfree Gateway';
 
-          // 🔔 Play instant confirmation sound on delivery partner device
-          AlarmService.playPaymentSuccessSound();
+          final curOrdId = widget.order.orderId;
+          final prefs = await SharedPreferences.getInstance();
+          final bool alreadyNotified = prefs.getBool('has_notified_partner_payment_$curOrdId') ?? false;
+          if (!alreadyNotified) {
+            await prefs.setBool('has_notified_partner_payment_$curOrdId', true);
 
-          // Heads-up notification for delivery partner
-          AppNotificationService.showNotification(
-            id: 8877,
-            title: "💰 Payment Received: ₹${paidAmt.toStringAsFixed(0)}",
-            body: "Customer successfully paid via $method! Delivery OTP will be provided upon arrival.",
-          );
+            // 🔔 Play instant confirmation sound on delivery partner device
+            AlarmService.playPaymentSuccessSound();
+
+            // Heads-up notification for delivery partner (strictly single time)
+            await AppNotificationService.showNotification(
+              id: 8877,
+              title: "💰 Payment Received: ₹${paidAmt.toStringAsFixed(0)}",
+              body: "Customer successfully paid via $method! Delivery OTP will be provided upon arrival.",
+            );
+          }
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1858,6 +2406,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
           if (_isShowingCancelledDialog) return;
           _isShowingCancelledDialog = true;
           final reason = orderData['cancel_reason'] ?? 'Customer cancelled the order';
+          await clearDeliveryPartnerActiveOrder(orderId: widget.order.orderId);
           AppNotificationService.showOrderCancelledNotification(
             orderId: widget.order.orderId,
             reason: reason,
@@ -2063,6 +2612,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                           customerName: widget.order.customerName,
                           customerPhone: widget.order.customerPhone,
                           billImage: widget.billImage,
+                          billImages: widget.billImages,
                           items: widget.items,
                           deliveryFee: widget.deliveryFee,
                           totalAmount: widget.totalAmount,
@@ -2105,6 +2655,7 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
                     customerName: widget.order.customerName,
                     customerPhone: widget.order.customerPhone,
                     billImage: widget.billImage,
+                    billImages: widget.billImages,
                     items: widget.items,
                     deliveryFee: widget.deliveryFee,
                     totalAmount: widget.totalAmount,
@@ -2179,17 +2730,19 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
             top: 16,
             left: 16,
             right: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4)),
-                ],
-              ),
-              child: Row(
+            child: SafeArea(
+              bottom: false,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(10),
@@ -2266,123 +2819,152 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
               ),
             ),
           ),
+        ),
 
-          // Floating Button: Start Voice Navigation in Google Maps (Swiggy / Zomato style)
-          Positioned(
-            bottom: 215,
-            right: 16,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _openGoogleMapsNavigation,
-                borderRadius: BorderRadius.circular(30),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-                    ),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5), width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.near_me_rounded, color: Color(0xFF38BDF8), size: 18),
-                      SizedBox(width: 8),
-                      Text(
-                        "Google Navigation",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      SizedBox(width: 4),
-                      Icon(Icons.open_in_new_rounded, color: Color(0xFF94A3B8), size: 14),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Bottom Destination Card & Arrived Button
+        // Bottom Area: Floating Google Navigation Button directly docked above Destination Card
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 16, offset: const Offset(0, -4)),
-                ],
-              ),
+            child: SafeArea(
+              top: false,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(widget.order.customerName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary)),
-                          const SizedBox(height: 2),
-                          Text("Order ${widget.order.orderId} • ₹${widget.totalAmount.toStringAsFixed(0)}", style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                        ],
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryLight,
-                          borderRadius: BorderRadius.circular(8),
+                  // Floating Button: Start Voice Navigation in Google Maps (Swiggy / Zomato style)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 16, bottom: 12),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: _openGoogleMapsNavigation,
+                        borderRadius: BorderRadius.circular(30),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                            ),
+                            borderRadius: BorderRadius.circular(30),
+                            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.5), width: 1.5),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.two_wheeler_rounded, color: Color(0xFF38BDF8), size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                "Google Navigation",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              SizedBox(width: 4),
+                              Icon(Icons.open_in_new_rounded, color: Color(0xFF94A3B8), size: 14),
+                            ],
+                          ),
                         ),
-                        child: Row(
+                      ),
+                    ),
+                  ),
+
+                  // Bottom Destination Card & Arrived Button
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 16, offset: const Offset(0, -4)),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Icon(Icons.near_me_rounded, size: 14, color: AppColors.primaryDark),
-                            const SizedBox(width: 4),
-                            Text(
-                              _routeDetails?.formattedDistance ?? "Calculating...",
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.primaryDark),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.order.customerName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    "Order ${widget.order.orderId} • ₹${widget.totalAmount.toStringAsFixed(0)}",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryLight,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.near_me_rounded, size: 14, color: AppColors.primaryDark),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _routeDetails?.formattedDistance ?? "Calculating...",
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.primaryDark),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    widget.order.deliveryAddress,
-                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      icon: const Icon(Icons.check_circle_rounded),
-                      label: const Text("I have Arrived at Delivery Address", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                      onPressed: _showArrivedBottomSheet,
+                        const SizedBox(height: 8),
+                        Text(
+                          widget.order.deliveryAddress,
+                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            icon: const Icon(Icons.check_circle_rounded),
+                            label: const Text(
+                              "I have Arrived at Delivery Address",
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: _showArrivedBottomSheet,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -2433,7 +3015,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
     _liveFoodPrice = widget.order.itemTotal > 0 ? widget.order.itemTotal : (widget.totalAmount);
     _liveTotalAmount = widget.totalAmount;
     _loadSavedOtp();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) => _loadSavedOtp());
+    _refreshTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) => _loadSavedOtp());
   }
 
   @override
@@ -2460,6 +3042,54 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
         final data = jsonDecode(res.body);
         final order = data['order'];
         if (order != null) {
+          final ordStatus = (order['status'] ?? '').toString().toLowerCase();
+          if (ordStatus == 'cancelled') {
+            _refreshTimer?.cancel();
+            final reason = order['cancel_reason'] ?? 'Customer cancelled the order';
+            await clearDeliveryPartnerActiveOrder(orderId: widget.order.orderId);
+            AppNotificationService.showOrderCancelledNotification(
+              orderId: widget.order.orderId,
+              reason: reason,
+            );
+            if (mounted) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  title: const Row(
+                    children: [
+                      Icon(Icons.cancel_rounded, color: Color(0xFFDC2626)),
+                      SizedBox(width: 8),
+                      Text("Order Cancelled", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                    ],
+                  ),
+                  content: Text(
+                    "Customer has cancelled this order.\n\nReason: $reason",
+                    style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                  ),
+                  actions: [
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryDark,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () {
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+                          (route) => false,
+                        );
+                      },
+                      child: const Text("Return to Home", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return;
+          }
+
           final backendOtp = order['cod_otp']?.toString();
           final num? bFood = order['item_total'] ?? order['budget'];
           final num? bTip = order['tip_amount'];
@@ -2472,14 +3102,18 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
           double total = bGrand != null && bGrand > 0 ? bGrand.toDouble() : (food + tip);
 
           if (mounted) {
-            setState(() {
-              if (backendOtp != null && backendOtp.isNotEmpty) {
-                _effectiveOtp = backendOtp;
-              }
-              _liveFoodPrice = food;
-              _liveTipAmount = tip;
-              _liveTotalAmount = total;
-            });
+            final hasOtpChanged = (backendOtp != null && backendOtp.isNotEmpty && backendOtp != _effectiveOtp);
+            final hasPriceChanged = (_liveFoodPrice != food || _liveTipAmount != tip || _liveTotalAmount != total);
+            if (hasOtpChanged || hasPriceChanged) {
+              setState(() {
+                if (hasOtpChanged) {
+                  _effectiveOtp = backendOtp;
+                }
+                _liveFoodPrice = food;
+                _liveTipAmount = tip;
+                _liveTotalAmount = total;
+              });
+            }
           }
 
           final pStatus = (order['payment_status'] ?? '').toString().toLowerCase();
@@ -2598,6 +3232,17 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
           }),
         );
       } catch (_) {}
+
+      // Trigger delivery completed notification for partner
+      final bool alreadyNotifiedPartner =
+          prefs.getBool('partner_notified_delivered_${widget.order.orderId}') ?? false;
+      if (!alreadyNotifiedPartner) {
+        await prefs.setBool('partner_notified_delivered_${widget.order.orderId}', true);
+        await AppNotificationService.showOrderDeliveredPartnerNotification(
+          orderId: widget.order.orderId,
+          customerName: widget.order.customerName,
+        );
+      }
 
       setState(() => _isVerifying = false);
 
@@ -2978,6 +3623,7 @@ class CustomerBillViewPage extends StatefulWidget {
   final String? otherPartyName;
   final String? customerPhone;
   final XFile? billImage;
+  final List<XFile>? billImages;
   final List<BillItem> items;
   final double deliveryFee;
   final double totalAmount;
@@ -2990,6 +3636,7 @@ class CustomerBillViewPage extends StatefulWidget {
     this.otherPartyName,
     this.customerPhone,
     this.billImage,
+    this.billImages,
     required this.items,
     required this.deliveryFee,
     required this.totalAmount,
@@ -3005,7 +3652,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
   List<BillItem> _displayItems = [];
   double _displayDeliveryFee = 0.0;
   double _displayTotal = 0.0;
-  String? _billImagePath;
+  List<String> _billImagePaths = [];
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -3051,6 +3698,10 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
         final data = jsonDecode(res.body);
         final orderObj = data['order'];
         if (orderObj != null) {
+          final ordSt = (orderObj['status'] ?? '').toString().toLowerCase();
+          if (ordSt == 'cancelled') {
+            await clearDeliveryPartnerActiveOrder(orderId: activeOrderId);
+          }
           if (orderObj['customer_name'] != null &&
               orderObj['customer_name'].toString().trim().isNotEmpty) {
             cName = orderObj['customer_name'];
@@ -3092,7 +3743,22 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
       item.isCollected = true;
     }
 
-    String? imgPath = widget.billImage?.path ?? prefs.getString('order_${activeOrderId}_bill_image');
+    // 3. Load all bill image paths
+    List<String> imgPaths = [];
+    if (widget.billImages != null && widget.billImages!.isNotEmpty) {
+      imgPaths = widget.billImages!.map((f) => f.path).toList();
+    } else {
+      final savedList = prefs.getStringList('order_${activeOrderId}_bill_images');
+      if (savedList != null && savedList.isNotEmpty) {
+        imgPaths = List<String>.from(savedList);
+      } else if (widget.billImage?.path != null) {
+        imgPaths = [widget.billImage!.path];
+      } else {
+        final single = prefs.getString('order_${activeOrderId}_bill_image');
+        if (single != null && single.isNotEmpty) imgPaths = [single];
+      }
+    }
+
     double savedFee = 0.0;
     double subtotal = loadedItems.fold(0.0, (s, i) => s + i.total);
     double total = subtotal > 0 ? (subtotal + savedFee) : widget.totalAmount;
@@ -3104,7 +3770,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
         _displayItems = loadedItems;
         _displayDeliveryFee = 0.0;
         _displayTotal = total;
-        _billImagePath = imgPath;
+        _billImagePaths = imgPaths;
       });
     }
   }
@@ -3117,26 +3783,69 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
     }
   }
 
-  Future<void> _pickImage(ImageSource source) async {
+  Future<void> _pickImage([ImageSource source = ImageSource.camera]) async {
     try {
-      final XFile? image = await _picker.pickImage(source: source, imageQuality: 85);
+      final status = await Permission.camera.request();
+      if (status.isPermanentlyDenied && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Camera permission is required. Please enable it in Settings."),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+        return;
+      }
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 75,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        preferredCameraDevice: CameraDevice.rear,
+      );
       if (image != null) {
         final prefs = await SharedPreferences.getInstance();
         final activeOrderId = widget.orderId ??
             widget.order?.orderId ??
             prefs.getString('active_order_id') ??
             'ORD-8492';
-        await prefs.setString('order_${activeOrderId}_bill_image', image.path);
-        await prefs.remove('active_order_bill_image');
+
         setState(() {
-          _billImagePath = image.path;
+          _billImagePaths.add(image.path);
         });
+
+        await prefs.setStringList('order_${activeOrderId}_bill_images', _billImagePaths);
+        await prefs.setStringList('active_order_bill_images', _billImagePaths);
+        await prefs.setString('order_${activeOrderId}_bill_image', image.path);
+        await prefs.setString('active_order_bill_image', image.path);
+
+        // Sync immediately to backend MongoDB so customer sees the new receipts in real time
+        try {
+          List<String> base64Imgs = [];
+          for (var p in _billImagePaths) {
+            if (File(p).existsSync()) {
+              final bytes = await File(p).readAsBytes();
+              base64Imgs.add('data:image/jpeg;base64,${base64Encode(bytes)}');
+            }
+          }
+          await http.post(
+            ApiConfig.billUploadImage,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'order_id': activeOrderId,
+              'bill_image_url': base64Imgs.isNotEmpty ? base64Imgs.first : '',
+              'bill_images': base64Imgs,
+            }),
+          ).timeout(const Duration(seconds: 5));
+        } catch (syncErr) {
+          debugPrint("Error syncing bill image to backend: $syncErr");
+        }
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Bill receipt photo updated successfully!"),
-              backgroundColor: AppColors.primary,
-              duration: Duration(seconds: 2),
+            SnackBar(
+              content: Text("Bill receipt #${_billImagePaths.length} photo attached and synced to customer ✓"),
+              backgroundColor: const Color(0xFF047857),
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -3146,9 +3855,88 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
     }
   }
 
-  void _showImagePickerModal() {
-    // Only open camera directly - Gallery upload removed
-    _pickImage(ImageSource.camera);
+  void _showFullReceiptDialog(String path) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, 8)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Dedicated Header Bar - Zero Overlap
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.receipt_long_rounded, color: AppColors.primaryDark, size: 20),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Restaurant Bill Receipt",
+                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary),
+                          ),
+                          Text(
+                            "Pinch or double-tap to zoom in",
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Image Area with Zoom
+              Container(
+                height: MediaQuery.of(context).size.height * 0.55,
+                width: double.infinity,
+                color: const Color(0xFF0F172A),
+                child: InteractiveViewer(
+                  panEnabled: true,
+                  minScale: 0.8,
+                  maxScale: 4.5,
+                  child: Center(
+                    child: File(path).existsSync()
+                        ? Image.file(File(path), fit: BoxFit.contain)
+                        : path.startsWith('data:image')
+                            ? Image.memory(base64Decode(path.split(',').last), fit: BoxFit.contain)
+                            : Image.network(path, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -3172,7 +3960,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Customer Name, Mobile Number & Call Customer Button
+            // 1. Customer Name, Mobile Number & Action Buttons (Zero-overlap responsive layout)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -3183,68 +3971,88 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
                   BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 3)),
                 ],
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFEFF6FF),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.person_rounded, color: Color(0xFF2563EB), size: 26),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _customerName,
-                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _customerPhone,
-                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                  ),
                   Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xFFEFF6FF),
-                          foregroundColor: AppColors.primaryDark,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEFF6FF),
+                          shape: BoxShape.circle,
                         ),
-                        icon: const Icon(Icons.chat_bubble_outline_rounded, size: 20),
-                        tooltip: "Chat with Customer",
-                        onPressed: () {
-                          final oId = widget.orderId ?? widget.order?.orderId ?? 'ORD-8492';
-                          OrderChatSheet.show(
-                            context,
-                            orderId: oId,
-                            senderRole: 'partner',
-                            otherPartyName: _customerName,
-                          );
-                        },
+                        child: const Icon(Icons.person_rounded, color: Color(0xFF2563EB), size: 24),
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF16A34A),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _customerName,
+                              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.textPrimary),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _customerPhone,
+                              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                            ),
+                          ],
                         ),
-                        onPressed: _callCustomer,
-                        icon: const Icon(Icons.phone_rounded, size: 16),
-                        label: const Text(
-                          "Call Customer",
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryLight,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          widget.orderId ?? widget.order?.orderId ?? 'ORD-8492',
+                          style: const TextStyle(color: AppColors.primaryDark, fontWeight: FontWeight.w800, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryDark,
+                            side: const BorderSide(color: Color(0xFFBFDBFE)),
+                            backgroundColor: const Color(0xFFEFF6FF),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                          label: const Text("Chat", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          onPressed: () {
+                            final oId = widget.orderId ?? widget.order?.orderId ?? 'ORD-8492';
+                            OrderChatSheet.show(
+                              context,
+                              orderId: oId,
+                              senderRole: 'partner',
+                              otherPartyName: _customerName,
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF16A34A),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          icon: const Icon(Icons.phone_rounded, size: 18),
+                          label: const Text("Call Customer", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          onPressed: _callCustomer,
                         ),
                       ),
                     ],
@@ -3317,63 +4125,166 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
             ),
             const SizedBox(height: 18),
 
-            // 3. Uploaded Hotel Food Bill Receipt
+            // 3. Uploaded Hotel Food Bill Receipts (Multi-receipt support, camera only)
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  "Uploaded Hotel Food Bill Receipt",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                Expanded(
+                  child: Text(
+                    _billImagePaths.isEmpty
+                        ? "Uploaded Hotel Food Bill Receipt"
+                        : "Uploaded Hotel Food Bill Receipts (${_billImagePaths.length})",
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
+                const SizedBox(width: 8),
                 TextButton.icon(
-                  onPressed: _showImagePickerModal,
+                  onPressed: () => _pickImage(ImageSource.camera),
                   icon: const Icon(Icons.camera_alt_rounded, size: 16, color: AppColors.primaryDark),
                   label: Text(
-                    (_billImagePath != null && File(_billImagePath!).existsSync()) ? "Change Photo" : "Upload Photo",
+                    _billImagePaths.isEmpty ? "Take Photo" : "+ Add Bill",
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primaryDark),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            Container(
-              height: 220,
-              width: double.infinity,
-              decoration: BoxDecoration(
+
+            if (_billImagePaths.isEmpty)
+              InkWell(
+                onTap: () => _pickImage(ImageSource.camera),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-                color: Colors.white,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: (_billImagePath != null && File(_billImagePath!).existsSync())
-                    ? Image.file(File(_billImagePath!), fit: BoxFit.cover)
-                    : (widget.billImage != null && File(widget.billImage!.path).existsSync())
-                        ? Image.file(File(widget.billImage!.path), fit: BoxFit.cover)
-                        : InkWell(
-                            onTap: _showImagePickerModal,
-                            child: Container(
-                              color: const Color(0xFFF8FAFC),
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.add_a_photo_rounded, size: 48, color: Color(0xFF94A3B8)),
-                                  SizedBox(height: 10),
-                                  Text(
-                                    "Upload Hotel Food Bill Photo",
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-                                  ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    "Tap here to capture food bill with camera",
-                                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                                  ),
-                                ],
-                              ),
-                            ),
+                child: Container(
+                  height: 170,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.border, width: 1.5),
+                    color: Colors.white,
+                  ),
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.camera_alt_rounded, size: 44, color: Color(0xFF94A3B8)),
+                      SizedBox(height: 10),
+                      Text(
+                        "Capture Hotel Food Bill Photo",
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        "Tap to open camera & snap bill photo for customer",
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 185,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _billImagePaths.length + 1,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    if (index == _billImagePaths.length) {
+                      return InkWell(
+                        onTap: () => _pickImage(ImageSource.camera),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          width: 130,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
                           ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.primaryLight,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.add_a_photo_rounded, color: AppColors.primaryDark, size: 22),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                "+ Add More",
+                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: AppColors.primaryDark),
+                              ),
+                              const Text(
+                                "Snap Bill",
+                                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    final path = _billImagePaths[index];
+                    return GestureDetector(
+                      onTap: () => _showFullReceiptDialog(path),
+                      child: Container(
+                        width: 140,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.primary, width: 1.8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              File(path).existsSync()
+                                  ? Image.file(File(path), fit: BoxFit.cover)
+                                  : (path.startsWith('data:image')
+                                      ? Image.memory(base64Decode(path.split(',').last), fit: BoxFit.cover)
+                                      : Image.network(path, fit: BoxFit.cover)),
+                              Positioned(
+                                top: 6,
+                                left: 6,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.75),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    "Bill #${index + 1}",
+                                    style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.zoom_in_rounded, color: Colors.white, size: 12),
+                                      SizedBox(width: 4),
+                                      Text("Tap to zoom", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
             const SizedBox(height: 30),
           ],
         ),
@@ -3570,17 +4481,7 @@ class _FullScreenPaymentSuccessScreenState extends State<FullScreenPaymentSucces
   @override
   void initState() {
     super.initState();
-    // 🔔 Trigger instant payment confirmation sound & vibration for both customer and delivery partner!
-    AlarmService.playPaymentSuccessSound();
-    AppNotificationService.showNotification(
-      id: 9988,
-      title: widget.isDeliveryPartner
-          ? "💰 Payment Received: ₹${widget.totalAmount.toStringAsFixed(0)}"
-          : "✅ Payment Successful: ₹${widget.totalAmount.toStringAsFixed(0)}",
-      body: widget.isDeliveryPartner
-          ? "Payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} verified and completed successfully!"
-          : "Your payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} was successful! Order complete 🎉",
-    );
+    _triggerPaymentAlertOnce();
 
     _animController = AnimationController(
       vsync: this,
@@ -3601,6 +4502,29 @@ class _FullScreenPaymentSuccessScreenState extends State<FullScreenPaymentSucces
   void dispose() {
     _animController.dispose();
     super.dispose();
+  }
+
+  Future<void> _triggerPaymentAlertOnce() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String dedupKey = widget.isDeliveryPartner
+          ? 'has_notified_partner_payment_${widget.orderId}'
+          : 'has_notified_payment_success_${widget.orderId}';
+      final bool alreadyNotified = prefs.getBool(dedupKey) ?? false;
+      if (!alreadyNotified) {
+        await prefs.setBool(dedupKey, true);
+        AlarmService.playPaymentSuccessSound();
+        await AppNotificationService.showNotification(
+          id: 8877,
+          title: widget.isDeliveryPartner
+              ? "💰 Payment Received: ₹${widget.totalAmount.toStringAsFixed(0)}"
+              : "✅ Payment Successful: ₹${widget.totalAmount.toStringAsFixed(0)}",
+          body: widget.isDeliveryPartner
+              ? "Payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} verified and completed successfully!"
+              : "Your payment of ₹${widget.totalAmount.toStringAsFixed(0)} for order ${widget.orderId} was successful! Order complete 🎉",
+        );
+      }
+    } catch (_) {}
   }
 
   @override
