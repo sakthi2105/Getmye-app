@@ -64,8 +64,8 @@ router.post('/create', async (req, res) => {
       assignment_history: []
     });
 
-    // 2. Proximity-Based Delivery Partner Assignment: Route first to closest available partner
-    const assignedPartner = await assignNextClosestPartner(newOrder);
+    // 2. Proximity-Based Delivery Partner Assignment: Route first to closest available partner relative to customer coordinates
+    const assignedPartner = await assignNextClosestPartner(newOrder, newOrder.customer_latitude, newOrder.customer_longitude);
 
     await newOrder.save();
     res.status(201).json({
@@ -83,8 +83,15 @@ router.post('/create', async (req, res) => {
 // GET /api/order/pending - Delivery partners view available pending orders & active orders
 router.get('/pending', async (req, res) => {
   try {
+    // 1. Process any expired 2-minute offers on the fly so orders transition immediately
+    try {
+      await checkAndReassignExpiredOrders();
+    } catch (tickerErr) {
+      console.error('Error ticking expired orders in /pending:', tickerErr);
+    }
+
     const partnerId = req.query.partner_id ? req.query.partner_id.toString().trim() : null;
-    const recentThreshold = new Date(Date.now() - 20 * 60 * 1000);
+    const pendingThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours for pending orders in loop
     const cancelledThreshold = new Date(Date.now() - 30 * 60 * 1000);
 
     let query;
@@ -98,7 +105,7 @@ router.get('/pending', async (req, res) => {
           // Strictly single partner routing: Pending order must ONLY match the currently assigned partner!
           {
             status: 'pending',
-            created_at: { $gte: recentThreshold },
+            created_at: { $gte: pendingThreshold },
             current_assigned_partner_id: { $in: [partnerId, pRegex] },
             declined_partners: { $nin: [partnerId, pRegex] },
             timed_out_partners: { $nin: [partnerId, pRegex] }
@@ -122,7 +129,7 @@ router.get('/pending', async (req, res) => {
     } else {
       query = {
         $or: [
-          { status: 'pending', created_at: { $gte: recentThreshold } },
+          { status: 'pending', created_at: { $gte: pendingThreshold } },
           { status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } }
         ]
       };

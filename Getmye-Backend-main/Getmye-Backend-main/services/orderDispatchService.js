@@ -133,12 +133,18 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
 
       // Determine partner coordinates (from LiveLocation or default to Kumbakonam center)
       const loc = liveLocMap.get(dpIdLower) || (numPart ? liveLocMap.get(numPart) : null);
-      if (loc && loc.is_online === false) {
+      if (loc && loc.is_online === false && dp.dp_status !== 'online') {
         continue;
       }
 
-      const partnerLat = (loc && loc.latitude != null) ? loc.latitude : KUMBAKONAM_GEOFENCE.center.latitude;
-      const partnerLng = (loc && loc.longitude != null) ? loc.longitude : KUMBAKONAM_GEOFENCE.center.longitude;
+      let partnerLat = (loc && loc.latitude != null && !isNaN(Number(loc.latitude))) ? Number(loc.latitude) : KUMBAKONAM_GEOFENCE.center.latitude;
+      let partnerLng = (loc && loc.longitude != null && !isNaN(Number(loc.longitude))) ? Number(loc.longitude) : KUMBAKONAM_GEOFENCE.center.longitude;
+
+      // If stored partner coordinates are outside Kumbakonam (> 30km, e.g. Chennai fallback), use Kumbakonam center
+      if (calculateDistanceKm(KUMBAKONAM_GEOFENCE.center.latitude, KUMBAKONAM_GEOFENCE.center.longitude, partnerLat, partnerLng) > 30) {
+        partnerLat = KUMBAKONAM_GEOFENCE.center.latitude;
+        partnerLng = KUMBAKONAM_GEOFENCE.center.longitude;
+      }
 
       const distance = calculateDistanceKm(custLat, custLng, partnerLat, partnerLng);
 
@@ -244,11 +250,15 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
   }
 }
 
+let isReassigningExpired = false;
+
 /**
  * Check all pending orders and automatically reassign any order where the
  * currently assigned partner failed to accept within 2 minutes.
  */
 async function checkAndReassignExpiredOrders() {
+  if (isReassigningExpired) return 0;
+  isReassigningExpired = true;
   try {
     const now = new Date();
     const expiredOrders = await Order.find({
@@ -263,39 +273,45 @@ async function checkAndReassignExpiredOrders() {
 
     let reassignedCount = 0;
     for (const order of expiredOrders) {
-      const timedOutPartnerId = order.current_assigned_partner_id;
-      if (timedOutPartnerId) {
-        console.log(`⏰ [Order Dispatch] Order ${order.order_id} offer to partner ${timedOutPartnerId} timed out (> 2 minutes without accept). Reassigning to next closest partner...`);
+      try {
+        const timedOutPartnerId = order.current_assigned_partner_id;
+        if (timedOutPartnerId) {
+          console.log(`⏰ [Order Dispatch] Order ${order.order_id} offer to partner ${timedOutPartnerId} timed out (> 2 minutes without accept). Reassigning to next closest partner...`);
 
-        // Record timeout in timed_out_partners and assignment_history
-        if (!order.timed_out_partners) order.timed_out_partners = [];
-        if (!isPartnerInList(timedOutPartnerId, order.timed_out_partners)) {
-          order.timed_out_partners.push(timedOutPartnerId);
-        }
+          // Record timeout in timed_out_partners and assignment_history
+          if (!order.timed_out_partners) order.timed_out_partners = [];
+          if (!isPartnerInList(timedOutPartnerId, order.timed_out_partners)) {
+            order.timed_out_partners.push(timedOutPartnerId);
+          }
 
-        if (order.assignment_history && order.assignment_history.length > 0) {
-          for (let i = order.assignment_history.length - 1; i >= 0; i--) {
-            if (partnerIdsMatch(order.assignment_history[i].partner_id, timedOutPartnerId) && order.assignment_history[i].status === 'offered') {
-              order.assignment_history[i].status = 'timeout';
-              order.assignment_history[i].responded_at = now;
-              break;
+          if (order.assignment_history && order.assignment_history.length > 0) {
+            for (let i = order.assignment_history.length - 1; i >= 0; i--) {
+              if (partnerIdsMatch(order.assignment_history[i].partner_id, timedOutPartnerId) && order.assignment_history[i].status === 'offered') {
+                order.assignment_history[i].status = 'timeout';
+                order.assignment_history[i].responded_at = now;
+                break;
+              }
             }
           }
+        } else {
+          console.log(`⏳ [Order Dispatch] Order ${order.order_id} has no assigned partner. Attempting to route to nearest available partner...`);
         }
-      } else {
-        console.log(`⏳ [Order Dispatch] Order ${order.order_id} has no assigned partner. Attempting to route to nearest available partner...`);
-      }
 
-      // Reassign to next closest partner
-      await assignNextClosestPartner(order);
-      await order.save();
-      reassignedCount++;
+        // Reassign to next closest partner relative to CUSTOMER LOCATION
+        await assignNextClosestPartner(order, order.customer_latitude, order.customer_longitude);
+        await order.save();
+        reassignedCount++;
+      } catch (orderSaveErr) {
+        console.warn(`Safe handling for order ${order.order_id}:`, orderSaveErr.message);
+      }
     }
 
     return reassignedCount;
   } catch (err) {
     console.error('Error during checkAndReassignExpiredOrders:', err);
     return 0;
+  } finally {
+    isReassigningExpired = false;
   }
 }
 

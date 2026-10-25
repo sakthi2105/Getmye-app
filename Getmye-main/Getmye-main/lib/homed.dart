@@ -214,8 +214,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
       final pos = await Geolocator.getLastKnownPosition();
       if (pos != null) _lastKnownPosition = pos;
-      final lat = _lastKnownPosition?.latitude ?? 13.0827;
-      final lng = _lastKnownPosition?.longitude ?? 80.2707;
+      final lat = _lastKnownPosition?.latitude ?? 10.9601;
+      final lng = _lastKnownPosition?.longitude ?? 79.3845;
       await http.post(
         ApiConfig.trackingUpdate,
         headers: {'Content-Type': 'application/json'},
