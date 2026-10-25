@@ -55,6 +55,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int pendingOrderCount = 0;
   Timer? _pendingOrdersTimer;
   StreamSubscription<Map<String, dynamic>>? _orderAlertSubscription;
+  StreamSubscription<ServiceStatus>? _locationServiceStatusSubscription;
   final Set<String> _notifiedCancelledOrderIds = {};
   bool _isFirstOrdersCheckDone = false;
   final DateTime _screenStartTime = DateTime.now();
@@ -78,6 +79,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         _showIncomingOrderModal(order);
       }
     });
+
+    // 🛰️ Real-time OS Location / GPS toggles listener:
+    // If delivery partner turns off device GPS at any time, immediately auto-switch to OFFLINE!
+    _locationServiceStatusSubscription = Geolocator.getServiceStatusStream().listen((ServiceStatus status) {
+      if (status == ServiceStatus.disabled && isOnline) {
+        _handleDeviceLocationTurnedOff();
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
     });
@@ -85,10 +95,107 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
   @override
   void dispose() {
+    _locationServiceStatusSubscription?.cancel();
     _orderAlertSubscription?.cancel();
     _pendingOrdersTimer?.cancel();
     AlarmService.stopAlarm();
     super.dispose();
+  }
+
+  /// 🛰️ Check if device GPS location is enabled and permission is granted
+  Future<bool> _isDeviceLocationAvailable() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return false;
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 🛑 Automatically transitions delivery person to OFFLINE when device location is turned off
+  Future<void> _handleDeviceLocationTurnedOff({bool showToast = true}) async {
+    if (!isOnline && !mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('d_is_online', false);
+    final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';
+
+    if (mounted) {
+      setState(() {
+        isOnline = false;
+      });
+    }
+
+    // 🛑 Stop alarms and listening service immediately
+    AlarmService.silenceAll();
+    AlarmService.stopAlarm();
+    AlarmService.stopOrderListeningService();
+    AppNotificationService.cancelNotification(999);
+
+    // Dismiss incoming order modal if open on screen
+    if (_isShowingIncomingModal && mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+      _isShowingIncomingModal = false;
+      _currentIncomingModalOrderId = null;
+    }
+
+    // 📡 Sync offline status with backend MongoDB
+    try {
+      http.post(
+        ApiConfig.partnerStatus,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'partner_id': pId,
+          'status': 'offline',
+        }),
+      ).catchError((_) => http.Response('', 500));
+
+      http.post(
+        ApiConfig.trackingUpdate,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'partner_id': pId,
+          'latitude': 10.9601,
+          'longitude': 79.3845,
+          'is_online': false,
+          'status': 'offline',
+        }),
+      ).catchError((_) => http.Response('', 500));
+    } catch (_) {}
+
+    if (showToast && mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.location_off_rounded, color: Colors.white, size: 22),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  "Device location is turned OFF! You are now OFFLINE. Turn on GPS to receive orders.",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: "Turn On GPS",
+            textColor: Colors.white,
+            onPressed: () async {
+              await Geolocator.openLocationSettings();
+            },
+          ),
+        ),
+      );
+    }
   }
 
   // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum"
@@ -96,9 +203,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && mounted) {
+        if (isOnline) {
+          await _handleDeviceLocationTurnedOff(showToast: false);
+        }
         await _showTurnOnGPSDialog(
           title: "Turn On GPS Location",
-          message: "Please turn ON device GPS location to receive incoming orders within 10 km and enable live tracking.",
+          message: "Please turn ON device GPS location to receive incoming orders and enable live tracking. Delivery partner status can only be ONLINE when location is turned ON.",
         );
       }
 
@@ -108,15 +218,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       }
 
       if (permission == LocationPermission.deniedForever && mounted) {
+        if (isOnline) {
+          await _handleDeviceLocationTurnedOff(showToast: false);
+        }
         await _showTurnOnGPSDialog(
           title: "Location Permission Required",
-          message: "Location permission is disabled for Getmye Delivery. Please enable it in device settings to receive delivery orders.",
+          message: "Location permission is disabled for Getmye Delivery. You cannot go ONLINE without location permission. Please enable it in device settings.",
           isPermissionSettings: true,
         );
       }
 
       if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-        _updateLiveLocationToBackend();
+        if (serviceEnabled) {
+          _updateLiveLocationToBackend();
+        }
       }
     } catch (e) {
       debugPrint("Partner location service check error: $e");
@@ -194,7 +309,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     _checkPendingOrders();
     _updateLiveLocationToBackend();
     // ⚡ Optimized polling: 2500ms ensures sub-3-second order arrival alerts without battery/network strain!
-    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) async {
+      // 🛰️ REQUIREMENT: If delivery person's location is turned OFF, automatically switch status to OFFLINE!
+      if (isOnline) {
+        final hasLocation = await _isDeviceLocationAvailable();
+        if (!hasLocation) {
+          await _handleDeviceLocationTurnedOff();
+          return;
+        }
+      }
       _pollCount++;
       if (_pollCount % 4 == 0) {
         _updateLiveLocationToBackend();
@@ -1243,11 +1366,19 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       todayDeliveries = prefs.getInt('today_deliveries') ?? 8;
       touchpoints = currentTouchpoints;
       milestoneResetCountdown = resetCountdown;
-      isOnline = prefs.getBool('d_is_online') ?? true;
+      isOnline = prefs.getBool('d_is_online') ?? false;
       profileImagePath = localPath;
       profileImageBase64 = localBase64;
       profileImageUrl = prefs.getString('d_photo_url') ?? prefs.getString('partner_photo_url');
     });
+
+    // 🛰️ REQUIREMENT: Partner can only be ONLINE if location is ON. Check upon app load:
+    if (isOnline) {
+      final hasLocation = await _isDeviceLocationAvailable();
+      if (!hasLocation) {
+        await _handleDeviceLocationTurnedOff(showToast: false);
+      }
+    }
 
     final identifier = dId.isNotEmpty ? dId : dPhone;
     if (identifier.isNotEmpty && !_isProfileFetched && (profileImagePath == null || !File(profileImagePath!).existsSync())) {
@@ -1763,6 +1894,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                       activeThumbColor: const Color(0xFF059669),
                       activeTrackColor: const Color(0xFFA7F3D0),
                       onChanged: (val) async {
+                        // 🛰️ REQUIREMENT: Partner can ONLY go online if device location (GPS & permission) is enabled!
+                        if (val == true) {
+                          final hasLocation = await _isDeviceLocationAvailable();
+                          if (!hasLocation) {
+                            if (mounted) {
+                              await _showTurnOnGPSDialog(
+                                title: "GPS Location Required",
+                                message: "You can only be ONLINE when device location is turned ON. Please enable GPS location to go online and receive delivery orders.",
+                              );
+                            }
+                            return; // Do NOT set online if location is turned off!
+                          }
+                        }
+
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setBool('d_is_online', val);
                         final pId = prefs.getString('d_id') ?? prefs.getString('active_order_partner_id') ?? 'DP001';

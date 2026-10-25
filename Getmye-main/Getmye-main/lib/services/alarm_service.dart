@@ -79,6 +79,10 @@ class AlarmService {
     }
   }
 
+  static void silenceAll() {
+    stopAlarm();
+  }
+
   static void silenceOrder(String? orderId) {
     if (orderId != null && orderId.isNotEmpty) {
       _silencedOrderIds.add(orderId);

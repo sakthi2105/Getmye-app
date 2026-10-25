@@ -10,6 +10,8 @@ router.post('/update', async (req, res) => {
       return res.status(400).json({ error: 'partner_id, latitude, and longitude are required' });
     }
 
+    const isOnlineVal = req.body.is_online !== undefined ? Boolean(req.body.is_online) : true;
+
     const loc = await LiveLocation.findOneAndUpdate(
       { partner_id },
       {
@@ -18,12 +20,28 @@ router.post('/update', async (req, res) => {
         longitude: Number(longitude),
         heading: Number(heading) || 0,
         speed: Number(speed) || 0,
-        status: status || 'in_transit',
-        is_online: req.body.is_online !== undefined ? Boolean(req.body.is_online) : true,
+        status: status || (isOnlineVal ? 'in_transit' : 'offline'),
+        is_online: isOnlineVal,
         last_updated: new Date()
       },
       { upsert: true, returnDocument: 'after' }
     );
+
+    // If partner went offline, sync DeliveryPerson model immediately
+    if (!isOnlineVal) {
+      try {
+        const DeliveryPerson = require('../models/DeliveryPerson');
+        await DeliveryPerson.findOneAndUpdate(
+          {
+            $or: [
+              { DP_id: partner_id },
+              { DP_id: new RegExp(`^${partner_id}$`, 'i') }
+            ]
+          },
+          { dp_status: 'offline' }
+        );
+      } catch (_) {}
+    }
 
     res.json({ success: true, location: loc });
   } catch (err) {
