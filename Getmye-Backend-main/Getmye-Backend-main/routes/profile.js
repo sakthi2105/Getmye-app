@@ -4,9 +4,14 @@ const Profile = require('../models/Profile');
 const DeliveryPerson = require('../models/DeliveryPerson');
 const { getNextSequence } = require('../models/Counter');
 
+const dns = require('dns');
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 const nodemailer = require('nodemailer');
 
-// Persistent high-performance pooled SMTP transporter
+// Persistent high-performance pooled SMTP transporter (Forced IPv4 to prevent ENETUNREACH)
 const emailUser = process.env.EMAIL_USER || 'getmye.official@gmail.com';
 const emailPass = process.env.EMAIL_PASS || 'wyabgjacrprbdtgu';
 
@@ -15,8 +20,9 @@ if (emailUser && emailPass) {
   mailTransporter = nodemailer.createTransport({
     pool: true,
     host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
+    port: 465,
+    secure: true,
+    family: 4, // Force IPv4 to prevent ENETUNREACH on systems without IPv6 route
     auth: { user: emailUser, pass: emailPass },
     tls: { rejectUnauthorized: false },
     maxConnections: 5,
@@ -26,46 +32,63 @@ if (emailUser && emailPass) {
   });
 }
 
-// Fast email sending helper with pooled connection
+// Fast email sending helper with pooled connection & automated fallback
 async function sendEmailOtp(email, otp) {
   if (!mailTransporter) {
     console.log(`🔑 [EMAIL OTP GATEWAY] Target email: ${email} -> OTP: ${otp} (Set EMAIL_USER and EMAIL_PASS in .env for live SMTP delivery)`);
     return false;
   }
 
-  try {
-    const info = await mailTransporter.sendMail({
-      from: `"Getmye" <${emailUser}>`,
-      to: email,
-      subject: `Your Getmye Password Reset OTP: ${otp}`,
-      text: `Your Getmye verification OTP is: ${otp}. This code is valid for 10 minutes. If you did not request this, please ignore this email.`,
-      html: `
-        <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px;">
-          <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="color: #10b981; font-size: 28px; margin: 0; font-weight: 800; letter-spacing: -0.5px;">GET<span style="color: #0f172a;">MYE</span></h1>
-            <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Password Reset Verification</p>
-          </div>
-          <div style="padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; text-align: center;">
-            <p style="color: #334155; font-size: 14px; margin: 0 0 16px 0;">Use the 6-digit verification code below to reset your Getmye account password:</p>
-            <div style="background: #ecfdf5; border: 2px dashed #10b981; border-radius: 10px; padding: 14px 28px; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #047857; display: inline-block; margin: 8px 0 14px 0;">
-              ${otp}
-            </div>
-            <p style="color: #64748b; font-size: 12px; margin: 0;">⏱️ This OTP is valid for <strong>10 minutes</strong>.</p>
-          </div>
-          <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid #f1f5f9; text-align: center;">
-            <p style="color: #94a3b8; font-size: 12px; margin: 0; line-height: 1.5;">
-              If you did not request a password reset, please disregard this email. Your password will remain unchanged.<br/>
-              &copy; ${new Date().getFullYear()} Getmye. All rights reserved.
-            </p>
-          </div>
+  const mailOptions = {
+    from: `"Getmye" <${emailUser}>`,
+    to: email,
+    subject: `Your Getmye Password Reset OTP: ${otp}`,
+    text: `Your Getmye verification OTP is: ${otp}. This code is valid for 10 minutes. If you did not request this, please ignore this email.`,
+    html: `
+      <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #10b981; font-size: 28px; margin: 0; font-weight: 800; letter-spacing: -0.5px;">GET<span style="color: #0f172a;">MYE</span></h1>
+          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Password Reset Verification</p>
         </div>
-      `
-    });
+        <div style="padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; text-align: center;">
+          <p style="color: #334155; font-size: 14px; margin: 0 0 16px 0;">Use the 6-digit verification code below to reset your Getmye account password:</p>
+          <div style="background: #ecfdf5; border: 2px dashed #10b981; border-radius: 10px; padding: 14px 28px; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #047857; display: inline-block; margin: 8px 0 14px 0;">
+            ${otp}
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin: 0;">⏱️ This OTP is valid for <strong>10 minutes</strong>.</p>
+        </div>
+        <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid #f1f5f9; text-align: center;">
+          <p style="color: #94a3b8; font-size: 12px; margin: 0; line-height: 1.5;">
+            If you did not request a password reset, please disregard this email. Your password will remain unchanged.<br/>
+            &copy; ${new Date().getFullYear()} Getmye. All rights reserved.
+          </p>
+        </div>
+      </div>
+    `
+  };
+
+  try {
+    const info = await mailTransporter.sendMail(mailOptions);
     console.log(`✅ [EMAIL OTP SENT] Fast dispatch to ${email} (Message ID: ${info.messageId})`);
     return true;
   } catch (err) {
-    console.error(`⚠️ [EMAIL OTP ERROR] Nodemailer error:`, err.message);
-    return false;
+    console.warn(`⚠️ [EMAIL OTP RETRY] Port 465 dispatch warning (${err.message}). Retrying on Port 587 IPv4...`);
+    try {
+      const fallbackTransporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        family: 4,
+        auth: { user: emailUser, pass: emailPass },
+        tls: { rejectUnauthorized: false }
+      });
+      const info = await fallbackTransporter.sendMail(mailOptions);
+      console.log(`✅ [EMAIL OTP SENT] Fallback dispatch to ${email} (Message ID: ${info.messageId})`);
+      return true;
+    } catch (fallbackErr) {
+      console.error(`⚠️ [EMAIL OTP ERROR] Nodemailer error:`, fallbackErr.message);
+      return false;
+    }
   }
 }
 
@@ -407,10 +430,11 @@ router.post('/forgot-password/send-otp', async (req, res) => {
     account.reset_otp_expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
     await account.save();
 
-    // Dispatch email asynchronously in background with pooled transporter for instant UI response
-    sendEmailOtp(targetEmail, otp).catch(err => {
-      console.error('⚠️ [EMAIL OTP BACKGROUND DISPATCH ERROR]:', err.message);
-    });
+    // Dispatch email to the user's registered email address
+    const emailSent = await sendEmailOtp(targetEmail, otp);
+    if (!emailSent) {
+      console.warn(`⚠️ [EMAIL OTP WARNING] Email delivery could not complete for ${targetEmail}`);
+    }
 
     res.json({
       success: true,
