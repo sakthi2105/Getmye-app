@@ -38,7 +38,7 @@ class ApiConfig {
         }
       }
     } catch (_) {}
-    return 'http://192.168.29.196:5000';
+    return 'https://getmye-app.onrender.com';
   }
 
   // Order Endpoints
