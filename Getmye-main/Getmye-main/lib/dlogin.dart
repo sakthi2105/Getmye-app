@@ -374,7 +374,7 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                                     ApiConfig.profileForgotPasswordSendOtp,
                                     headers: {'Content-Type': 'application/json'},
                                     body: jsonEncode(bodyPayload),
-                                  );
+                                  ).timeout(const Duration(seconds: 45));
 
                                   Map<String, dynamic> data = {};
                                   try {

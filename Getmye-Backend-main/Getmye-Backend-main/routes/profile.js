@@ -19,12 +19,14 @@ const emailPass = process.env.EMAIL_PASS || 'wyabgjacrprbdtgu';
 function createTransporter() {
   if (!emailUser || !emailPass) return null;
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: { user: emailUser, pass: emailPass },
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000
   });
 }
 
@@ -454,11 +456,10 @@ router.post('/forgot-password/send-otp', async (req, res) => {
     account.reset_otp_expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
     await account.save();
 
-    // Dispatch email to the user's registered email address
-    const emailSent = await sendEmailOtp(targetEmail, otp);
-    if (!emailSent) {
-      console.warn(`⚠️ [EMAIL OTP WARNING] Email delivery could not complete for ${targetEmail}`);
-    }
+    // Dispatch email in background so the mobile app gets an instant response (< 500ms)
+    sendEmailOtp(targetEmail, otp).catch(err => {
+      console.error(`⚠️ [EMAIL OTP DISPATCH ERROR] to ${targetEmail}:`, err.message);
+    });
 
     res.json({
       success: true,

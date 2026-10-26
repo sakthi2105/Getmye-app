@@ -543,7 +543,7 @@ class _LoginPageState extends State<LoginPage> {
                                     ApiConfig.profileForgotPasswordSendOtp,
                                     headers: {'Content-Type': 'application/json'},
                                     body: jsonEncode(reqBody),
-                                  );
+                                  ).timeout(const Duration(seconds: 45));
 
                                   Map<String, dynamic> data = {};
                                   try {
