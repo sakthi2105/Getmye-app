@@ -192,6 +192,7 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                 borderRadius: BorderRadius.circular(20),
                 child: Image.network(
                   "https://st.depositphotos.com/20582790/53398/v/450/depositphotos_533983672-stock-illustration-fast-delivery-motorcycle-pop-art.jpg",
+                  cacheWidth: 600,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => const Center(
                     child: Icon(Icons.delivery_dining_rounded, size: 80, color: AppColors.primary),

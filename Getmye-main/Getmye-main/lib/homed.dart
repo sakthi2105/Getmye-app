@@ -1509,7 +1509,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         return _cachedAvatarProvider!;
       }
       _lastProfileUrl = profileImageUrl;
-      _cachedAvatarProvider = NetworkImage(profileImageUrl!);
+      _cachedAvatarProvider = ResizeImage(NetworkImage(profileImageUrl!), width: 160);
       return _cachedAvatarProvider!;
     }
 

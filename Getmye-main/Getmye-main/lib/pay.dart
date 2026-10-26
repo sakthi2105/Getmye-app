@@ -2470,50 +2470,52 @@ class _PaymentPageState extends State<PaymentPage> {
             width: double.infinity,
             child: Stack(
               children: [
-                GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: _partnerLocation,
-                    zoom: 14.5,
+                RepaintBoundary(
+                  child: GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: _partnerLocation,
+                      zoom: 14.5,
+                    ),
+                    markers: {
+                      Marker(
+                        markerId: const MarkerId('rider'),
+                        position: _partnerLocation,
+                        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+                        infoWindow: InfoWindow(
+                          title: '$partnerName (Rider)',
+                          snippet: orderStatus == 'in_transit' ? 'On the way to you' : 'Live Partner Location',
+                        ),
+                      ),
+                      Marker(
+                        markerId: const MarkerId('destination'),
+                        position: _customerLocation,
+                        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                        infoWindow: InfoWindow(
+                          title: 'Your Delivery Location',
+                          snippet: customerAddress,
+                        ),
+                      ),
+                    },
+                    polylines: {
+                      Polyline(
+                        polylineId: const PolylineId('route'),
+                        points: _routePoints.isNotEmpty
+                            ? _routePoints
+                            : [
+                                _partnerLocation,
+                                _customerLocation,
+                              ],
+                        color: AppColors.primary,
+                        width: 5,
+                      ),
+                    },
+                    zoomControlsEnabled: false,
+                    myLocationButtonEnabled: false,
+                    onMapCreated: (ctrl) {
+                      _mapController = ctrl;
+                      _fitMapBounds();
+                    },
                   ),
-                  markers: {
-                    Marker(
-                      markerId: const MarkerId('rider'),
-                      position: _partnerLocation,
-                      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-                      infoWindow: InfoWindow(
-                        title: '$partnerName (Rider)',
-                        snippet: orderStatus == 'in_transit' ? 'On the way to you' : 'Live Partner Location',
-                      ),
-                    ),
-                    Marker(
-                      markerId: const MarkerId('destination'),
-                      position: _customerLocation,
-                      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-                      infoWindow: InfoWindow(
-                        title: 'Your Delivery Location',
-                        snippet: customerAddress,
-                      ),
-                    ),
-                  },
-                  polylines: {
-                    Polyline(
-                      polylineId: const PolylineId('route'),
-                      points: _routePoints.isNotEmpty
-                          ? _routePoints
-                          : [
-                              _partnerLocation,
-                              _customerLocation,
-                            ],
-                      color: AppColors.primary,
-                      width: 5,
-                    ),
-                  },
-                  zoomControlsEnabled: false,
-                  myLocationButtonEnabled: false,
-                  onMapCreated: (ctrl) {
-                    _mapController = ctrl;
-                    _fitMapBounds();
-                  },
                 ),
 
                 // Floating Live ETA Badge
@@ -2611,6 +2613,7 @@ class _PaymentPageState extends State<PaymentPage> {
       if (img.startsWith('http://') || img.startsWith('https://')) {
         return Image.network(
           img,
+          cacheWidth: 200,
           fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => _buildFallbackPartnerAvatar(),
         );
@@ -3553,6 +3556,7 @@ class _PaymentPageState extends State<PaymentPage> {
     } else if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
       return Image.network(
         pathOrUrl,
+        cacheWidth: 800,
         fit: fit,
         errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textMuted)),
       );

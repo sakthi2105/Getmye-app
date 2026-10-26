@@ -109,6 +109,7 @@ class FoodComboPage extends StatelessWidget {
                     aspectRatio: 1.35,
                     child: Image.network(
                       food["image"]!,
+                      cacheWidth: 400,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Container(color: Colors.grey[200]),
                     ),

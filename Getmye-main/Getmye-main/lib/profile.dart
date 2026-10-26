@@ -191,7 +191,7 @@ class _ProfilePageState extends State<ProfilePage> {
         } catch (_) {}
       }
       if (val.startsWith('http://') || val.startsWith('https://')) {
-        return NetworkImage(val);
+        return ResizeImage(NetworkImage(val), width: 160);
       }
     }
     return null;

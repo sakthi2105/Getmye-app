@@ -74,6 +74,7 @@ class AdminDashboardPage extends StatelessWidget {
                         ),
                         Image.network(
                           person['aadhaarPic']!,
+                          cacheWidth: 300,
                           width: 100,
                           height: 100,
                           fit: BoxFit.cover,
@@ -88,6 +89,7 @@ class AdminDashboardPage extends StatelessWidget {
                         ),
                         Image.network(
                           person['panPic']!,
+                          cacheWidth: 300,
                           width: 100,
                           height: 100,
                           fit: BoxFit.cover,

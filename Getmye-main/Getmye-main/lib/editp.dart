@@ -238,7 +238,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         } catch (_) {}
       }
       if (val.startsWith('http://') || val.startsWith('https://')) {
-        return NetworkImage(val);
+        return ResizeImage(NetworkImage(val), width: 160);
       }
     }
     return null;

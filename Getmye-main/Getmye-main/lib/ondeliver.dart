@@ -136,6 +136,7 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
                   height: 380,
                   child: Image.network(
                     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTPTm3kVakwk3BN3YVYofc44AgGvlf-SQ_n0uT2FhAjPfYiR3otuamVB7cwNnNwyE9iITI&usqp=CAU",
+                    cacheWidth: 600,
                     fit: BoxFit.cover,
                   ),
                 ),

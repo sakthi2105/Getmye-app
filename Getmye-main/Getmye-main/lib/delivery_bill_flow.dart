@@ -2689,40 +2689,42 @@ class _DeliveryNavigationMapPageState extends State<DeliveryNavigationMapPage> {
       body: Stack(
         children: [
           // Google Map Navigation
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _driverLocation,
-              zoom: 16.0,
+          RepaintBoundary(
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: _driverLocation,
+                zoom: 16.0,
+              ),
+              onMapCreated: (ctrl) => _navMapController = ctrl,
+              zoomControlsEnabled: false,
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+              markers: {
+                Marker(
+                  markerId: const MarkerId('driver'),
+                  position: _driverLocation,
+                  icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+                  infoWindow: const InfoWindow(title: 'Your Location (Rider)'),
+                ),
+                Marker(
+                  markerId: const MarkerId('customer'),
+                  position: _destinationLocation,
+                  icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                  infoWindow: InfoWindow(title: widget.order.customerName, snippet: widget.order.deliveryAddress),
+                ),
+              },
+              polylines: {
+                Polyline(
+                  polylineId: const PolylineId('nav_route'),
+                  points: _routePoints.isNotEmpty ? _routePoints : [
+                    _driverLocation,
+                    _destinationLocation,
+                  ],
+                  color: const Color(0xFF15803D),
+                  width: 5,
+                ),
+              },
             ),
-            onMapCreated: (ctrl) => _navMapController = ctrl,
-            zoomControlsEnabled: false,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            markers: {
-              Marker(
-                markerId: const MarkerId('driver'),
-                position: _driverLocation,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-                infoWindow: const InfoWindow(title: 'Your Location (Rider)'),
-              ),
-              Marker(
-                markerId: const MarkerId('customer'),
-                position: _destinationLocation,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-                infoWindow: InfoWindow(title: widget.order.customerName, snippet: widget.order.deliveryAddress),
-              ),
-            },
-            polylines: {
-              Polyline(
-                polylineId: const PolylineId('nav_route'),
-                points: _routePoints.isNotEmpty ? _routePoints : [
-                  _driverLocation,
-                  _destinationLocation,
-                ],
-                color: const Color(0xFF15803D),
-                width: 5,
-              ),
-            },
           ),
 
           // Top Turn Instruction Card (Powered by OSRM real turn steps)
@@ -3932,7 +3934,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
                         ? Image.file(File(path), fit: BoxFit.contain)
                         : path.startsWith('data:image')
                             ? Image.memory(base64Decode(path.split(',').last), fit: BoxFit.contain)
-                            : Image.network(path, fit: BoxFit.contain),
+                            : Image.network(path, cacheWidth: 800, fit: BoxFit.contain),
                   ),
                 ),
               ),
@@ -4248,7 +4250,7 @@ class _CustomerBillViewPageState extends State<CustomerBillViewPage> {
                                   ? Image.file(File(path), fit: BoxFit.cover)
                                   : (path.startsWith('data:image')
                                       ? Image.memory(base64Decode(path.split(',').last), fit: BoxFit.cover)
-                                      : Image.network(path, fit: BoxFit.cover)),
+                                      : Image.network(path, cacheWidth: 800, fit: BoxFit.cover)),
                               Positioned(
                                 top: 6,
                                 left: 6,

@@ -115,8 +115,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
                       const SizedBox(height: 10),
                       ListTile(
                         leading: const CircleAvatar(
-                          backgroundImage: NetworkImage(
-                            'https://randomuser.me/api/portraits/men/45.jpg',
+                          backgroundImage: ResizeImage(
+                            NetworkImage('https://randomuser.me/api/portraits/men/45.jpg'),
+                            width: 120,
                           ),
                           radius: 26,
                         ),

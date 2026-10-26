@@ -1225,7 +1225,7 @@ class _CustomerPriceRangeDialogState extends State<CustomerPriceRangeDialog> {
                     radius: 20,
                     backgroundColor: const Color(0xFF16A34A).withValues(alpha: 0.15),
                     backgroundImage: (widget.partnerPhoto != null && widget.partnerPhoto!.isNotEmpty)
-                        ? NetworkImage(widget.partnerPhoto!)
+                        ? ResizeImage(NetworkImage(widget.partnerPhoto!), width: 120)
                         : null,
                     child: (widget.partnerPhoto == null || widget.partnerPhoto!.isEmpty)
                         ? const Icon(Icons.two_wheeler_rounded, color: Color(0xFF16A34A), size: 22)

@@ -2911,6 +2911,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (img.startsWith('http://') || img.startsWith('https://')) {
         return Image.network(
           img,
+          cacheWidth: 200,
           fit: BoxFit.cover,
           width: 56,
           height: 56,
@@ -3146,42 +3147,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               borderRadius: BorderRadius.circular(16),
               child: Stack(
                 children: [
-                  GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: _customerLocation,
-                      zoom: 15.0,
+                  RepaintBoundary(
+                    child: GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: _customerLocation,
+                        zoom: 15.0,
+                      ),
+                      onMapCreated: (ctrl) {
+                        _trackingMapController = ctrl;
+                        _fitTrackingMapBounds();
+                      },
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: false,
+                      markers: {
+                        Marker(
+                          markerId: const MarkerId('rider'),
+                          position: _riderLocation,
+                          infoWindow: InfoWindow(title: '$assignedPartnerName (Rider)'),
+                          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+                        ),
+                        Marker(
+                          markerId: const MarkerId('destination'),
+                          position: _customerLocation,
+                          infoWindow: const InfoWindow(title: 'Delivery Address (You)'),
+                          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                        ),
+                      },
+                      polylines: {
+                        Polyline(
+                          polylineId: const PolylineId('route'),
+                          points: _trackingRoutePoints.isNotEmpty ? _trackingRoutePoints : [
+                            _riderLocation,
+                            _customerLocation,
+                          ],
+                          color: AppColors.primaryDark,
+                          width: 4,
+                        ),
+                      },
                     ),
-                    onMapCreated: (ctrl) {
-                      _trackingMapController = ctrl;
-                      _fitTrackingMapBounds();
-                    },
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    markers: {
-                      Marker(
-                        markerId: const MarkerId('rider'),
-                        position: _riderLocation,
-                        infoWindow: InfoWindow(title: '$assignedPartnerName (Rider)'),
-                        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-                      ),
-                      Marker(
-                        markerId: const MarkerId('destination'),
-                        position: _customerLocation,
-                        infoWindow: const InfoWindow(title: 'Delivery Address (You)'),
-                        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-                      ),
-                    },
-                    polylines: {
-                      Polyline(
-                        polylineId: const PolylineId('route'),
-                        points: _trackingRoutePoints.isNotEmpty ? _trackingRoutePoints : [
-                          _riderLocation,
-                          _customerLocation,
-                        ],
-                        color: AppColors.primaryDark,
-                        width: 4,
-                      ),
-                    },
                   ),
                   Positioned(
                     top: 10,
@@ -3651,6 +3654,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     return Image.network(
       path,
+      cacheWidth: 800,
       fit: fit,
       errorBuilder: (_, __, ___) => const Center(
         child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 40),

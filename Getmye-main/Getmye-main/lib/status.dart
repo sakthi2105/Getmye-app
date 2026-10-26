@@ -108,17 +108,19 @@ class OrderStatusPageState extends State<OrderStatusPage> {
         children: [
           // Google Map Background
           Positioned.fill(
-            child: GoogleMap(
-              onMapCreated: _onMapCreated,
-              initialCameraPosition: CameraPosition(
-                target: _initialPosition,
-                zoom: 14.5,
+            child: RepaintBoundary(
+              child: GoogleMap(
+                onMapCreated: _onMapCreated,
+                initialCameraPosition: CameraPosition(
+                  target: _initialPosition,
+                  zoom: 14.5,
+                ),
+                markers: _markers,
+                myLocationEnabled: _isLocationServiceEnabled,
+                myLocationButtonEnabled: false,
+                zoomControlsEnabled: false,
+                mapType: MapType.normal,
               ),
-              markers: _markers,
-              myLocationEnabled: _isLocationServiceEnabled,
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: false,
-              mapType: MapType.normal,
             ),
           ),
 
@@ -292,7 +294,10 @@ class OrderStatusPageState extends State<OrderStatusPage> {
                     children: [
                       const CircleAvatar(
                         radius: 22,
-                        backgroundImage: NetworkImage('https://randomuser.me/api/portraits/men/32.jpg'),
+                        backgroundImage: ResizeImage(
+                          NetworkImage('https://randomuser.me/api/portraits/men/32.jpg'),
+                          width: 120,
+                        ),
                         backgroundColor: Color(0xFFE2E8F0),
                       ),
                       const SizedBox(width: 12),
