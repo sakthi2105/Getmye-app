@@ -411,6 +411,21 @@ router.post('/forgot-password/send-otp', async (req, res) => {
 
     let targetEmail = (account.email || '').toString().trim().toLowerCase();
     if (!targetEmail || !targetEmail.includes('@')) {
+      // Check if the user has an email in the other collection for the same mobile number
+      if (account.mobile_number) {
+        const altAccount = foundRole === 'partner'
+          ? await Profile.findOne({ mobile_number: account.mobile_number })
+          : await DeliveryPerson.findOne({ mobile_number: account.mobile_number });
+
+        if (altAccount && altAccount.email && altAccount.email.includes('@')) {
+          targetEmail = altAccount.email.toString().trim().toLowerCase();
+          account.email = targetEmail;
+          await account.save();
+        }
+      }
+    }
+
+    if (!targetEmail || !targetEmail.includes('@')) {
       if (email && email.toString().trim().includes('@')) {
         targetEmail = email.toString().trim().toLowerCase();
         account.email = targetEmail;
