@@ -130,6 +130,78 @@ async function sendSmsOtp(mobileNumber, otp) {
   return false;
 }
 
+// Diagnostic endpoint to check SMTP connectivity on Render
+router.get('/test-smtp', async (req, res) => {
+  const net = require('net');
+  const results = {
+    dns4: null,
+    port465_tcp: null,
+    port587_tcp: null,
+    nodemailer_465: null,
+    nodemailer_587: null,
+  };
+
+  try {
+    results.dns4 = await dns.promises.resolve4('smtp.gmail.com');
+  } catch (e) {
+    results.dns4 = 'Error: ' + e.message;
+  }
+
+  // Test raw TCP connect to 465
+  results.port465_tcp = await new Promise(resolve => {
+    const s = net.connect({ host: (results.dns4?.[0] || 'smtp.gmail.com'), port: 465, timeout: 5000 }, () => {
+      s.destroy();
+      resolve('CONNECTED');
+    });
+    s.on('error', e => resolve('ERROR: ' + e.message));
+    s.on('timeout', () => { s.destroy(); resolve('TIMEOUT'); });
+  });
+
+  // Test raw TCP connect to 587
+  results.port587_tcp = await new Promise(resolve => {
+    const s = net.connect({ host: (results.dns4?.[0] || 'smtp.gmail.com'), port: 587, timeout: 5000 }, () => {
+      s.destroy();
+      resolve('CONNECTED');
+    });
+    s.on('error', e => resolve('ERROR: ' + e.message));
+    s.on('timeout', () => { s.destroy(); resolve('TIMEOUT'); });
+  });
+
+  // Test nodemailer on port 465
+  try {
+    const t465 = nodemailer.createTransport({
+      host: (results.dns4?.[0] || 'smtp.gmail.com'),
+      port: 465,
+      secure: true,
+      auth: { user: emailUser, pass: emailPass },
+      tls: { servername: 'smtp.gmail.com', rejectUnauthorized: false },
+      connectionTimeout: 5000
+    });
+    await t465.verify();
+    results.nodemailer_465 = 'VERIFIED_SUCCESS';
+  } catch (e) {
+    results.nodemailer_465 = 'ERROR: ' + e.message;
+  }
+
+  // Test nodemailer on port 587
+  try {
+    const t587 = nodemailer.createTransport({
+      host: (results.dns4?.[0] || 'smtp.gmail.com'),
+      port: 587,
+      secure: false,
+      auth: { user: emailUser, pass: emailPass },
+      tls: { servername: 'smtp.gmail.com', rejectUnauthorized: false },
+      connectionTimeout: 5000
+    });
+    await t587.verify();
+    results.nodemailer_587 = 'VERIFIED_SUCCESS';
+  } catch (e) {
+    results.nodemailer_587 = 'ERROR: ' + e.message;
+  }
+
+  res.json(results);
+});
+
 // ✅ POST /api/profile — login or create user & send OTP to target mobile number
 router.post('/', async (req, res) => {
   console.log('POST /api/profile body:', req.body);
