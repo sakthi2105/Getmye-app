@@ -430,7 +430,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 8),
                   Text(
                     step == 1
-                        ? "Enter your registered mobile number. We will automatically fetch the email ID linked to this account from the database and send the verification OTP."
+                        ? "Enter the email ID you used when creating your account. We will send the password reset verification OTP immediately."
                         : step == 2
                             ? "Enter the 6-digit OTP sent to your registered email to verify your identity."
                             : "Create and confirm your new password.",
@@ -461,19 +461,15 @@ class _LoginPageState extends State<LoginPage> {
                   ],
                   const SizedBox(height: 16),
 
-                  // STEP 1: Enter Mobile Number & Send OTP
+                  // STEP 1: Enter Email ID or Mobile Number & Send OTP
                   if (step == 1) ...[
                     TextField(
                       controller: resetMobileController,
-                      keyboardType: TextInputType.phone,
-                      maxLength: 10,
+                      keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
-                        labelText: "Registered Mobile Number",
-                        hintText: "10-digit mobile number",
-                        counterText: "",
-                        prefixIcon: const Icon(Icons.phone_android_rounded, size: 20, color: AppColors.primaryDark),
-                        prefixText: "+91  ",
-                        prefixStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        labelText: "Registered Email ID",
+                        hintText: "e.g. user@gmail.com or 10-digit mobile",
+                        prefixIcon: const Icon(Icons.email_outlined, size: 20, color: AppColors.primaryDark),
                         filled: true,
                         fillColor: AppColors.background,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
@@ -507,9 +503,15 @@ class _LoginPageState extends State<LoginPage> {
                         onPressed: isSubmitting
                             ? null
                             : () async {
-                                final mob = resetMobileController.text.trim();
-                                if (!isValidMobile(mob)) {
-                                  setModalState(() => dialogError = 'Please enter a valid 10-digit mobile number');
+                                final inputVal = resetMobileController.text.trim();
+                                if (inputVal.isEmpty) {
+                                  setModalState(() => dialogError = 'Please enter your registered email ID');
+                                  return;
+                                }
+                                final bool isEmail = inputVal.contains('@') && inputVal.contains('.');
+                                final String cleanDigits = inputVal.replaceAll(RegExp(r'[^0-9]'), '');
+                                if (!isEmail && cleanDigits.length != 10) {
+                                  setModalState(() => dialogError = 'Please enter a valid email address (e.g. name@gmail.com)');
                                   return;
                                 }
                                 if (needsEmail) {
@@ -525,11 +527,15 @@ class _LoginPageState extends State<LoginPage> {
                                 });
                                 try {
                                   final reqBody = <String, dynamic>{
-                                    'mobile_number': mob,
                                     'role': _selectedRole,
                                   };
+                                  if (isEmail) {
+                                    reqBody['email'] = inputVal.toLowerCase();
+                                  } else {
+                                    reqBody['mobile_number'] = cleanDigits;
+                                  }
                                   if (needsEmail && linkEmailController.text.trim().isNotEmpty) {
-                                    reqBody['email'] = linkEmailController.text.trim();
+                                    reqBody['email'] = linkEmailController.text.trim().toLowerCase();
                                   }
 
                                   final res = await http.post(

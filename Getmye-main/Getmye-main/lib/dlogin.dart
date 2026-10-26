@@ -296,11 +296,11 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                   if (step == 1) ...[
                     TextField(
                       controller: resetInputController,
-                      keyboardType: TextInputType.text,
+                      keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
-                        labelText: "Registered Mobile Number or Email",
-                        hintText: "10-digit mobile number or email",
-                        prefixIcon: const Icon(Icons.person_search_rounded, size: 20, color: AppColors.primaryDark),
+                        labelText: "Registered Email ID",
+                        hintText: "e.g. partner@gmail.com or 10-digit mobile",
+                        prefixIcon: const Icon(Icons.email_outlined, size: 20, color: AppColors.primaryDark),
                         filled: true,
                         fillColor: AppColors.background,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
@@ -336,7 +336,13 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                             : () async {
                                 final inputVal = resetInputController.text.trim();
                                 if (inputVal.isEmpty) {
-                                  setModalState(() => dialogError = 'Please enter your registered mobile number or email');
+                                  setModalState(() => dialogError = 'Please enter your registered email ID');
+                                  return;
+                                }
+                                final bool isEmail = inputVal.contains('@') && inputVal.contains('.');
+                                final String cleanDigits = inputVal.replaceAll(RegExp(r'[^0-9]'), '');
+                                if (!isEmail && cleanDigits.length != 10) {
+                                  setModalState(() => dialogError = 'Please enter a valid email address (e.g. name@gmail.com)');
                                   return;
                                 }
                                 if (needsEmail) {
@@ -351,17 +357,16 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                                   dialogError = null;
                                 });
                                 try {
-                                  final cleanDigits = inputVal.replaceAll(RegExp(r'[^0-9]'), '');
                                   final Map<String, dynamic> bodyPayload = {
                                     'role': 'partner',
                                   };
-                                  if (cleanDigits.length == 10) {
-                                    bodyPayload['mobile_number'] = cleanDigits;
+                                  if (isEmail) {
+                                    bodyPayload['email'] = inputVal.toLowerCase();
                                   } else {
-                                    bodyPayload['email'] = inputVal;
+                                    bodyPayload['mobile_number'] = cleanDigits;
                                   }
                                   if (needsEmail && linkEmailController.text.trim().isNotEmpty) {
-                                    bodyPayload['email'] = linkEmailController.text.trim();
+                                    bodyPayload['email'] = linkEmailController.text.trim().toLowerCase();
                                   }
 
                                   final res = await http.post(

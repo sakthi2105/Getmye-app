@@ -362,15 +362,50 @@ function maskEmail(email) {
 // ✅ POST /api/profile/forgot-password/send-otp — Look up user by mobile number or email, and dispatch OTP to registered email
 router.post('/forgot-password/send-otp', async (req, res) => {
   try {
-    const { mobile_number, email, role } = req.body;
+    const { mobile_number, email, identifier, role } = req.body;
     let account = null;
     let foundRole = role || 'customer';
 
-    if (mobile_number) {
-      const cleanMobile = mobile_number.toString().trim().replace(/[^0-9]/g, '').slice(-10);
-      if (!cleanMobile || cleanMobile.length !== 10) {
-        return res.status(400).json({ error: 'Please enter a valid 10-digit registered mobile number' });
+    const rawInput = (email || mobile_number || identifier || '').toString().trim();
+    if (!rawInput) {
+      return res.status(400).json({ error: 'Please enter your registered email ID or mobile number' });
+    }
+
+    if (rawInput.includes('@')) {
+      // User entered an Email ID
+      const cleanEmail = rawInput.toLowerCase();
+      const emailRegex = new RegExp('^' + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+
+      if (role === 'partner') {
+        account = await DeliveryPerson.findOne({ email: emailRegex });
+        if (!account) {
+          account = await Profile.findOne({ email: emailRegex });
+          if (account) foundRole = 'customer';
+        }
+      } else if (role === 'customer') {
+        account = await Profile.findOne({ email: emailRegex });
+        if (!account) {
+          account = await DeliveryPerson.findOne({ email: emailRegex });
+          if (account) foundRole = 'partner';
+        }
+      } else {
+        account = await Profile.findOne({ email: emailRegex });
+        if (!account) {
+          account = await DeliveryPerson.findOne({ email: emailRegex });
+          if (account) foundRole = 'partner';
+        }
       }
+
+      if (!account) {
+        return res.status(404).json({ error: `No registered account found with email: ${cleanEmail}` });
+      }
+    } else {
+      // User entered a Mobile number
+      const cleanMobile = rawInput.replace(/[^0-9]/g, '').slice(-10);
+      if (!cleanMobile || cleanMobile.length !== 10) {
+        return res.status(400).json({ error: 'Please enter a valid email ID or 10-digit mobile number' });
+      }
+
       if (role === 'partner') {
         account = await DeliveryPerson.findOne({ mobile_number: cleanMobile });
         foundRole = 'partner';
@@ -384,29 +419,10 @@ router.post('/forgot-password/send-otp', async (req, res) => {
           if (account) foundRole = 'partner';
         }
       }
+
       if (!account) {
-        return res.status(404).json({ error: `No registered account found with mobile number ${cleanMobile}.` });
+        return res.status(404).json({ error: `No registered account found with mobile number: ${cleanMobile}` });
       }
-    } else if (email) {
-      const cleanEmail = email.toString().trim().toLowerCase();
-      if (role === 'partner') {
-        account = await DeliveryPerson.findOne({ email: cleanEmail });
-        foundRole = 'partner';
-      } else if (role === 'customer') {
-        account = await Profile.findOne({ email: cleanEmail });
-        foundRole = 'customer';
-      } else {
-        account = await Profile.findOne({ email: cleanEmail });
-        if (!account) {
-          account = await DeliveryPerson.findOne({ email: cleanEmail });
-          if (account) foundRole = 'partner';
-        }
-      }
-      if (!account) {
-        return res.status(404).json({ error: `No registered account found with email ${cleanEmail}.` });
-      }
-    } else {
-      return res.status(400).json({ error: 'Please enter your registered mobile number' });
     }
 
     let targetEmail = (account.email || '').toString().trim().toLowerCase();
