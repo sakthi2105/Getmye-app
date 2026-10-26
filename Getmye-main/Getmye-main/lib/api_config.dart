@@ -21,8 +21,20 @@ class ApiConfig {
       if (dotenv.isInitialized) {
         final url = dotenv.env['BACKEND_API_URL'] ?? dotenv.env['API_BASE_URL'];
         if (url != null && url.trim().isNotEmpty) {
-          final trimmed = url.trim();
-          return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+          String trimmed = url.trim();
+          while (trimmed.endsWith('/')) {
+            trimmed = trimmed.substring(0, trimmed.length - 1);
+          }
+          // Fix if port was separated by slash e.g. 192.168.29.196/5000 -> 192.168.29.196:5000
+          trimmed = trimmed.replaceAllMapped(
+            RegExp(r'(\d+\.\d+\.\d+\.\d+)/(\d+)'),
+            (m) => '${m[1]}:${m[2]}',
+          );
+          // If scheme is missing, automatically prepend http://
+          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+            trimmed = 'http://$trimmed';
+          }
+          return trimmed;
         }
       }
     } catch (_) {}
