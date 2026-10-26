@@ -12,28 +12,25 @@ if (dns.setDefaultResultOrder) {
 const nodemailer = require('nodemailer');
 
 // Persistent high-performance pooled SMTP transporter (Forced IPv4 to prevent ENETUNREACH)
+// Reliable Gmail SMTP transporter creator (no connection pooling to avoid dead-socket timeouts)
 const emailUser = process.env.EMAIL_USER || 'getmye.official@gmail.com';
 const emailPass = process.env.EMAIL_PASS || 'wyabgjacrprbdtgu';
 
-let mailTransporter = null;
-if (emailUser && emailPass) {
-  mailTransporter = nodemailer.createTransport({
-    pool: true,
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    family: 4, // Force IPv4 to prevent ENETUNREACH on systems without IPv6 route
+function createTransporter() {
+  if (!emailUser || !emailPass) return null;
+  return nodemailer.createTransport({
+    service: 'gmail',
     auth: { user: emailUser, pass: emailPass },
     tls: { rejectUnauthorized: false },
-    maxConnections: 5,
-    maxMessages: 100,
-    rateDelta: 1000,
-    rateLimit: 10
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
   });
 }
 
-// Fast email sending helper with pooled connection & automated fallback
+// Fast email sending helper with automated fallback
 async function sendEmailOtp(email, otp) {
+  const mailTransporter = createTransporter();
   if (!mailTransporter) {
     console.log(`🔑 [EMAIL OTP GATEWAY] Target email: ${email} -> OTP: ${otp} (Set EMAIL_USER and EMAIL_PASS in .env for live SMTP delivery)`);
     return false;
@@ -72,15 +69,17 @@ async function sendEmailOtp(email, otp) {
     console.log(`✅ [EMAIL OTP SENT] Fast dispatch to ${email} (Message ID: ${info.messageId})`);
     return true;
   } catch (err) {
-    console.warn(`⚠️ [EMAIL OTP RETRY] Port 465 dispatch warning (${err.message}). Retrying on Port 587 IPv4...`);
+    console.warn(`⚠️ [EMAIL OTP RETRY] Service dispatch notice (${err.message}). Retrying on Port 465 SSL...`);
     try {
       const fallbackTransporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-        family: 4,
+        port: 465,
+        secure: true,
         auth: { user: emailUser, pass: emailPass },
-        tls: { rejectUnauthorized: false }
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
       });
       const info = await fallbackTransporter.sendMail(mailOptions);
       console.log(`✅ [EMAIL OTP SENT] Fallback dispatch to ${email} (Message ID: ${info.messageId})`);
