@@ -551,7 +551,7 @@ class _AddressScreenState extends State<AddressScreen> {
             else
               ...addresses.map((addr) => _buildAddressItemCard(Map<String, dynamic>.from(addr))),
 
-            const SizedBox(height: 40),
+            SizedBox(height: 40 + MediaQuery.paddingOf(context).bottom),
           ],
         ),
       ),
@@ -1336,7 +1336,7 @@ class _EditAddressPageState extends State<EditAddressPage> {
               ),
             ),
           ),
-          const SizedBox(height: 30),
+          SizedBox(height: 30 + MediaQuery.paddingOf(context).bottom),
         ],
       ),
     );

@@ -175,7 +175,7 @@ class DeliveryPersonJoinPage extends StatelessWidget {
           centerTitle: true,
         ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
+        padding: EdgeInsets.fromLTRB(20.0, 20.0, 20.0, 20.0 + MediaQuery.paddingOf(context).bottom),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,

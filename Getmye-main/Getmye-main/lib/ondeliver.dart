@@ -266,6 +266,9 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
                     ),
                   ),
               ),
+              SliverToBoxAdapter(
+                child: SizedBox(height: 24.0 + MediaQuery.paddingOf(context).bottom),
+              ),
           ],
         ),
         if (showGreenOverlay)

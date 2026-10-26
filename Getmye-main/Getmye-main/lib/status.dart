@@ -190,7 +190,6 @@ class OrderStatusPageState extends State<OrderStatusPage> {
             right: 0,
             bottom: 0,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
@@ -202,10 +201,19 @@ class OrderStatusPageState extends State<OrderStatusPage> {
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.60,
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                   Center(
                     child: Container(
                       width: 44,
@@ -337,7 +345,11 @@ class OrderStatusPageState extends State<OrderStatusPage> {
                       ),
                     ],
                   ),
-                ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),

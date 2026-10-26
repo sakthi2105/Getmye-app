@@ -317,7 +317,7 @@ class _ReportBugPageState extends State<ReportBugPage> {
           ),
         ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -521,7 +521,7 @@ class _RaiseComplaintPageState extends State<RaiseComplaintPage> {
           ),
         ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -723,7 +723,7 @@ class _SubmitFeedbackPageState extends State<SubmitFeedbackPage> {
           ),
         ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [

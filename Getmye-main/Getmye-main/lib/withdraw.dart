@@ -430,7 +430,7 @@ class _WithdrawalPageState extends State<WithdrawalPage> {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: 20 + MediaQuery.paddingOf(context).bottom),
           ],
         ),
       ),

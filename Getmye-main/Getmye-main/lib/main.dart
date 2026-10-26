@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
@@ -25,6 +26,16 @@ Future<void> initNotifications() async {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: Colors.transparent,
+    ),
+  );
   // Launch Flutter UI immediately so SplashScreen displays without delay
   runApp(const MyApp());
   _initServicesAsync();
@@ -384,7 +395,7 @@ class _LoginPageState extends State<LoginPage> {
         builder: (context, setModalState) {
           return Container(
             padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + MediaQuery.paddingOf(context).bottom + 20,
               top: 20,
               left: 20,
               right: 20,

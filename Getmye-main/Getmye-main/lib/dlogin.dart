@@ -227,7 +227,7 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
               left: 24,
               right: 24,
               top: 20,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              bottom: MediaQuery.of(context).viewInsets.bottom + MediaQuery.paddingOf(context).bottom + 24,
             ),
             decoration: const BoxDecoration(
               color: Colors.white,

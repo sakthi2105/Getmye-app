@@ -356,44 +356,42 @@ class _EditProfilePageState extends State<EditProfilePage> {
           scrolledUnderElevation: 0,
           iconTheme: const IconThemeData(color: AppColors.textPrimary),
         ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              _buildAvatar(),
-              const SizedBox(height: 24),
-              _buildInput('Name', _nameController),
-              _buildInput('Mobile Number', _mobileController, readOnly: true),
-              _buildInput('Email', _emailController),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _saveProfile,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 1,
-                  ),
-                  icon: const Icon(Icons.check_rounded, color: Colors.white),
-                  label: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text(
-                          'Save Changes',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-                        ),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            _buildAvatar(),
+            const SizedBox(height: 24),
+            _buildInput('Name', _nameController),
+            _buildInput('Mobile Number', _mobileController, readOnly: true),
+            _buildInput('Email', _emailController),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: _isLoading ? null : _saveProfile,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 1,
                 ),
+                icon: const Icon(Icons.check_rounded, color: Colors.white),
+                label: _isLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text(
+                        'Save Changes',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                      ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     ),

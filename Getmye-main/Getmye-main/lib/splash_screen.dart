@@ -238,7 +238,7 @@ class _SplashScreenState extends State<SplashScreen>
 
             // Bottom Footer: "Proud product of" + Coderead Logo (Instagram style)
             Positioned(
-              bottom: 26,
+              bottom: 26 + MediaQuery.paddingOf(context).bottom,
               left: 0,
               right: 0,
               child: AnimatedBuilder(

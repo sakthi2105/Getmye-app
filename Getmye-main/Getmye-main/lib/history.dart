@@ -151,7 +151,7 @@ class _OrderHistoryPageState extends State<OrderHistoryPage> {
                     )
                   : ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
                       itemCount: _orders.length,
                       itemBuilder: (context, index) {
                         final order = _orders[index];

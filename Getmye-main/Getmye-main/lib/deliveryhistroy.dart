@@ -204,7 +204,7 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
                     )
                   : ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.paddingOf(context).bottom),
                       itemCount: _orders.length,
                       itemBuilder: (context, index) {
                         final order = _orders[index];

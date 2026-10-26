@@ -77,7 +77,7 @@ class FoodComboPage extends StatelessWidget {
           ),
         ),
       body: GridView.builder(
-        padding: const EdgeInsets.all(16.0),
+        padding: EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 16.0 + MediaQuery.paddingOf(context).bottom),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 14,
@@ -198,8 +198,8 @@ class OrderDetailsPage extends StatelessWidget {
           ),
         ),
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(32, 24, 32, 24 + MediaQuery.paddingOf(context).bottom),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

@@ -171,7 +171,7 @@ class _WalletPinSetupScreenState extends State<WalletPinSetupScreen> {
         centerTitle: true,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+        padding: EdgeInsets.fromLTRB(20.0, 16.0, 20.0, 16.0 + MediaQuery.paddingOf(context).bottom),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 440),

@@ -144,21 +144,24 @@ class _CodPageState extends State<CodPage> {
               children: orders.map((order) => _buildOrderItem(order)).toList(),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14),
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16.0),
-                minimumSize: const Size(double.infinity, 52),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                elevation: 1,
-              ),
-              onPressed: totalAmount > 0 ? _showPaymentOptions : null,
-              child: Text(
-                'Pay ₹${totalAmount.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 16.0, fontWeight: FontWeight.bold, color: Colors.white),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14),
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 1,
+                ),
+                onPressed: totalAmount > 0 ? _showPaymentOptions : null,
+                child: Text(
+                  'Pay ₹${totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 16.0, fontWeight: FontWeight.bold, color: Colors.white),
+                ),
               ),
             ),
           ),
