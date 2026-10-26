@@ -900,7 +900,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
     const skip = (page - 1) * limit;
 
-    // Build resilient query
+    // Build resilient query strictly for this partner
     let query;
     if (!partnerId || partnerId === 'all') {
       query = { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted'] } };
@@ -908,10 +908,7 @@ router.get('/partner/:partner_id', async (req, res) => {
       query = {
         $or: [
           { partner_id: partnerId },
-          { partner_id: new RegExp(`^${partnerId}$`, 'i') },
-          { partner_id: 'DP001' },
-          { partner_id: 'dp_005' },
-          { status: { $in: ['delivered', 'cancelled'] } }
+          { partner_id: new RegExp(`^${partnerId}$`, 'i') }
         ]
       };
     }
@@ -926,16 +923,6 @@ router.get('/partner/:partner_id', async (req, res) => {
       .limit(limit)
       .allowDiskUse(true)
       .lean();
-
-    // Fallback: If no orders found for specific partner query, return recent delivered/cancelled orders
-    if (orders.length === 0 && partnerId !== 'all') {
-      orders = await Order.find({ status: { $in: ['delivered', 'cancelled'] } })
-        .select(projection)
-        .sort({ _id: -1 })
-        .limit(limit)
-        .allowDiskUse(true)
-        .lean();
-    }
 
     const total = await Order.countDocuments(query);
     res.json({

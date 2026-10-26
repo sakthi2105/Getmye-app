@@ -37,11 +37,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int touchpoints = 0;
   String milestoneResetCountdown = "24h left";
   bool isOnline = true;
-  double currentBalance = 2500.00;
-  double totalEarnings = 10000.00;
-  double todayEarnings = 350.00;
-  int totalDeliveries = 120;
-  int todayDeliveries = 8;
+  double currentBalance = 0.00;
+  double totalEarnings = 0.00;
+  double todayEarnings = 0.00;
+  int totalDeliveries = 0;
+  int todayDeliveries = 0;
   String partnerName = "Delivery Partner";
   String? profileImagePath;
   String? profileImageBase64;
@@ -1333,21 +1333,24 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final localPath = prefs.getString('d_profile_image');
     final localBase64 = prefs.getString('d_profile_picture_base64');
 
+    final milestoneKey = dId.isNotEmpty ? '${dId}_partner_milestone_touchpoints' : 'partner_milestone_touchpoints';
+    final lastResetKey = dId.isNotEmpty ? '${dId}_partner_milestone_last_reset_time' : 'partner_milestone_last_reset_time';
+
     // 24-hour milestone cycle check & reset
     final now = DateTime.now();
-    final lastResetStr = prefs.getString('partner_milestone_last_reset_time');
-    int currentTouchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 0;
+    final lastResetStr = prefs.getString(lastResetKey);
+    int currentTouchpoints = prefs.getInt(milestoneKey) ?? 0;
     String resetCountdown = "24h left";
 
     if (lastResetStr == null || lastResetStr.isEmpty) {
-      await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+      await prefs.setString(lastResetKey, now.toIso8601String());
     } else {
       final lastReset = DateTime.tryParse(lastResetStr) ?? now;
       final diff = now.difference(lastReset);
       if (diff.inHours >= 24) {
         currentTouchpoints = 0;
-        await prefs.setInt('partner_milestone_touchpoints', 0);
-        await prefs.setString('partner_milestone_last_reset_time', now.toIso8601String());
+        await prefs.setInt(milestoneKey, 0);
+        await prefs.setString(lastResetKey, now.toIso8601String());
         resetCountdown = "24h left";
       } else {
         final remaining = const Duration(hours: 24) - diff;
@@ -1357,13 +1360,19 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       }
     }
 
+    final balanceKey = dId.isNotEmpty ? '${dId}_wallet_balance' : 'wallet_balance';
+    final totalEarnKey = dId.isNotEmpty ? '${dId}_total_earnings' : 'total_earnings';
+    final todayEarnKey = dId.isNotEmpty ? '${dId}_today_earnings' : 'today_earnings';
+    final totalDelivKey = dId.isNotEmpty ? '${dId}_total_deliveries' : 'total_deliveries';
+    final todayDelivKey = dId.isNotEmpty ? '${dId}_today_deliveries' : 'today_deliveries';
+
     setState(() {
       partnerName = prefs.getString('d_name') ?? "Delivery Partner";
-      totalEarnings = prefs.getDouble('total_earnings') ?? 10000.00;
-      todayEarnings = prefs.getDouble('today_earnings') ?? 350.00;
-      currentBalance = prefs.getDouble('wallet_balance') ?? 2500.00;
-      totalDeliveries = prefs.getInt('total_deliveries') ?? 120;
-      todayDeliveries = prefs.getInt('today_deliveries') ?? 8;
+      totalEarnings = prefs.getDouble(totalEarnKey) ?? 0.00;
+      todayEarnings = prefs.getDouble(todayEarnKey) ?? 0.00;
+      currentBalance = prefs.getDouble(balanceKey) ?? 0.00;
+      totalDeliveries = prefs.getInt(totalDelivKey) ?? 0;
+      todayDeliveries = prefs.getInt(todayDelivKey) ?? 0;
       touchpoints = currentTouchpoints;
       milestoneResetCountdown = resetCountdown;
       isOnline = prefs.getBool('d_is_online') ?? false;
@@ -1371,6 +1380,10 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       profileImageBase64 = localBase64;
       profileImageUrl = prefs.getString('d_photo_url') ?? prefs.getString('partner_photo_url');
     });
+
+    if (dId.isNotEmpty) {
+      _fetchRealPartnerMetrics(dId, balanceKey, totalEarnKey, todayEarnKey, totalDelivKey, todayDelivKey);
+    }
 
     // 🛰️ REQUIREMENT: Partner can only be ONLINE if location is ON. Check upon app load:
     if (isOnline) {
@@ -1474,6 +1487,67 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               if (nameChanged) partnerName = newName;
             });
           }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchRealPartnerMetrics(
+    String partnerId,
+    String balanceKey,
+    String totalEarnKey,
+    String todayEarnKey,
+    String totalDelivKey,
+    String todayDelivKey,
+  ) async {
+    try {
+      final res = await http.get(ApiConfig.orderPartner(partnerId)).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final List orders = data['orders'] ?? [];
+        final now = DateTime.now();
+        final todayStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+        int deliveredCount = 0;
+        int todayDeliveredCount = 0;
+        double earnings = 0.0;
+        double todayEarn = 0.0;
+
+        for (final o in orders) {
+          final st = (o['status'] ?? '').toString().toLowerCase();
+          if (st == 'delivered') {
+            deliveredCount++;
+            final fee = (o['delivery_fee'] != null)
+                ? (double.tryParse(o['delivery_fee'].toString()) ?? 75.0)
+                : 75.0;
+            earnings += fee;
+
+            final deliveredAt = o['delivered_at']?.toString() ?? '';
+            if (deliveredAt.startsWith(todayStr)) {
+              todayDeliveredCount++;
+              todayEarn += fee;
+            }
+          }
+        }
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(totalDelivKey, deliveredCount);
+        await prefs.setInt(todayDelivKey, todayDeliveredCount);
+        await prefs.setDouble(totalEarnKey, earnings);
+        await prefs.setDouble(todayEarnKey, todayEarn);
+        final existingBal = prefs.getDouble(balanceKey);
+        if (existingBal == null) {
+          await prefs.setDouble(balanceKey, earnings);
+        }
+
+        if (mounted) {
+          setState(() {
+            totalDeliveries = deliveredCount;
+            todayDeliveries = todayDeliveredCount;
+            totalEarnings = earnings;
+            todayEarnings = todayEarn;
+            if (existingBal == null) currentBalance = earnings;
+          });
         }
       }
     } catch (_) {}

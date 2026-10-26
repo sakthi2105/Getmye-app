@@ -16,8 +16,8 @@ class WalletPage extends StatefulWidget {
 }
 
 class _WalletPageState extends State<WalletPage> {
-  double totalAmount = 2500.00;
-  final double minimumBalance = 500.00;
+  double totalAmount = 0.00;
+  final double minimumBalance = 0.00;
 
   @override
   void initState() {
@@ -27,8 +27,10 @@ class _WalletPageState extends State<WalletPage> {
 
   Future<void> _loadBalance() async {
     final prefs = await SharedPreferences.getInstance();
+    final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? '';
+    final balanceKey = pId.isNotEmpty ? '${pId}_wallet_balance' : 'wallet_balance';
     setState(() {
-      totalAmount = prefs.getDouble('wallet_balance') ?? 2500.00;
+      totalAmount = prefs.getDouble(balanceKey) ?? 0.00;
     });
   }
 

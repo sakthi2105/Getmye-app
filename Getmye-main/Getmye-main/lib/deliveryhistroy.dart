@@ -31,36 +31,26 @@ class _DeliveryListPageState extends State<DeliveryListPage> {
         prefs.getString('partner_id') ??
         prefs.getString('active_order_partner_id') ??
         prefs.getString('d_phone') ??
-        'dp_005';
+        '';
 
     List<dynamic> combined = [];
 
-    // Load locally saved completed orders (today deliveries)
-    final localJson = prefs.getString('today_completed_deliveries');
-    if (localJson != null && localJson.isNotEmpty) {
-      try {
-        final List localList = jsonDecode(localJson);
-        combined.addAll(localList);
-      } catch (_) {}
+    // Load locally saved completed orders for this specific partner
+    if (_partnerId.isNotEmpty) {
+      final localJson = prefs.getString('${_partnerId}_today_completed_deliveries');
+      if (localJson != null && localJson.isNotEmpty) {
+        try {
+          final List localList = jsonDecode(localJson);
+          combined.addAll(localList);
+        } catch (_) {}
+      }
     }
 
     try {
-      final res = await http.get(ApiConfig.orderPartner(_partnerId)).timeout(const Duration(seconds: 6));
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        final List orders = data['orders'] ?? [];
-        for (var o in orders) {
-          if (!combined.any((c) => c['order_id'] == o['order_id'])) {
-            combined.add(o);
-          }
-        }
-      }
-
-      // If partner-specific query returned 0 orders, fetch all partner delivery records
-      if (combined.isEmpty) {
-        final fallbackRes = await http.get(ApiConfig.orderPartner('all')).timeout(const Duration(seconds: 6));
-        if (fallbackRes.statusCode == 200) {
-          final data = jsonDecode(fallbackRes.body);
+      if (_partnerId.isNotEmpty) {
+        final res = await http.get(ApiConfig.orderPartner(_partnerId)).timeout(const Duration(seconds: 6));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
           final List orders = data['orders'] ?? [];
           for (var o in orders) {
             if (!combined.any((c) => c['order_id'] == o['order_id'])) {

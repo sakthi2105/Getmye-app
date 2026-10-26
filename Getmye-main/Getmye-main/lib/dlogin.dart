@@ -135,6 +135,12 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
         await prefs.remove('active_order_partner_accepted');
         await prefs.remove('active_order_restaurant');
         await prefs.remove('active_order_grand_total');
+        await prefs.remove('today_completed_deliveries');
+        await prefs.remove('partner_declined_order_ids');
+        await prefs.remove('d_profile_image');
+        await prefs.remove('d_profile_picture_base64');
+        await prefs.remove('d_photo_url');
+        await prefs.remove('partner_photo_url');
 
         final dpId = (data['dp_id'] ?? data['DP_id'] ?? 'dp_001').toString();
         final partnerPhone = (data['mobile_number'] != null && data['mobile_number'].toString().isNotEmpty)

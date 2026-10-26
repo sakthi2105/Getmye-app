@@ -3162,40 +3162,50 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
 
     if (isValid) {
       _refreshTimer?.cancel();
-      // Update Total Earnings, Today Earnings, Deliveries counts & Wallet Balance
+      // Update Total Earnings, Today Earnings, Deliveries counts & Wallet Balance per partner
       final prefs = await SharedPreferences.getInstance();
-      double currentBalance = prefs.getDouble('wallet_balance') ?? 2500.0;
-      double totalEarnings = prefs.getDouble('total_earnings') ?? 10000.0;
-      double todayEarnings = prefs.getDouble('today_earnings') ?? 350.0;
-      int totalDeliveries = prefs.getInt('total_deliveries') ?? 120;
-      int todayDeliveries = prefs.getInt('today_deliveries') ?? 8;
+      final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? '';
+      final balanceKey = pId.isNotEmpty ? '${pId}_wallet_balance' : 'wallet_balance';
+      final totalEarnKey = pId.isNotEmpty ? '${pId}_total_earnings' : 'total_earnings';
+      final todayEarnKey = pId.isNotEmpty ? '${pId}_today_earnings' : 'today_earnings';
+      final totalDelivKey = pId.isNotEmpty ? '${pId}_total_deliveries' : 'total_deliveries';
+      final todayDelivKey = pId.isNotEmpty ? '${pId}_today_deliveries' : 'today_deliveries';
+      final completedKey = pId.isNotEmpty ? '${pId}_today_completed_deliveries' : 'today_completed_deliveries';
+      final milestoneKey = pId.isNotEmpty ? '${pId}_partner_milestone_touchpoints' : 'partner_milestone_touchpoints';
+      final lastResetKey = pId.isNotEmpty ? '${pId}_partner_milestone_last_reset_time' : 'partner_milestone_last_reset_time';
+
+      double currentBalance = prefs.getDouble(balanceKey) ?? 0.0;
+      double totalEarnings = prefs.getDouble(totalEarnKey) ?? 0.0;
+      double todayEarnings = prefs.getDouble(todayEarnKey) ?? 0.0;
+      int totalDeliveries = prefs.getInt(totalDelivKey) ?? 0;
+      int todayDeliveries = prefs.getInt(todayDelivKey) ?? 0;
 
       const double partnerEarnings = 75.0; // Payout for this completed delivery
-      await prefs.setDouble('wallet_balance', currentBalance + partnerEarnings);
-      await prefs.setDouble('total_earnings', totalEarnings + partnerEarnings);
-      await prefs.setDouble('today_earnings', todayEarnings + partnerEarnings);
-      await prefs.setInt('total_deliveries', totalDeliveries + 1);
-      await prefs.setInt('today_deliveries', todayDeliveries + 1);
+      await prefs.setDouble(balanceKey, currentBalance + partnerEarnings);
+      await prefs.setDouble(totalEarnKey, totalEarnings + partnerEarnings);
+      await prefs.setDouble(todayEarnKey, todayEarnings + partnerEarnings);
+      await prefs.setInt(totalDelivKey, totalDeliveries + 1);
+      await prefs.setInt(todayDelivKey, todayDeliveries + 1);
       await prefs.setBool('active_order_bill_sent', false);
       await prefs.setString('active_order_status', 'Delivered & Paid');
 
       // Milestone increment upon order completion with 24-hour cycle check
-      final lastResetStr = prefs.getString('partner_milestone_last_reset_time');
-      int touchpoints = prefs.getInt('partner_milestone_touchpoints') ?? 0;
+      final lastResetStr = prefs.getString(lastResetKey);
+      int touchpoints = prefs.getInt(milestoneKey) ?? 0;
       final nowTime = DateTime.now();
       if (lastResetStr != null && lastResetStr.isNotEmpty) {
         final lastReset = DateTime.tryParse(lastResetStr) ?? nowTime;
         if (nowTime.difference(lastReset).inHours >= 24) {
           touchpoints = 0;
-          await prefs.setString('partner_milestone_last_reset_time', nowTime.toIso8601String());
+          await prefs.setString(lastResetKey, nowTime.toIso8601String());
         }
       } else {
-        await prefs.setString('partner_milestone_last_reset_time', nowTime.toIso8601String());
+        await prefs.setString(lastResetKey, nowTime.toIso8601String());
       }
-      await prefs.setInt('partner_milestone_touchpoints', (touchpoints + 4).clamp(0, 40));
+      await prefs.setInt(milestoneKey, (touchpoints + 4).clamp(0, 40));
 
       // Save to today_completed_deliveries for Today Deliveries / Delivery History
-      final localJson = prefs.getString('today_completed_deliveries');
+      final localJson = prefs.getString(completedKey);
       List<dynamic> localList = [];
       if (localJson != null && localJson.isNotEmpty) {
         try {
@@ -3217,7 +3227,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
         'status': 'delivered',
         'delivered_at': now.toIso8601String(),
       });
-      await prefs.setString('today_completed_deliveries', jsonEncode(localList));
+      await prefs.setString(completedKey, jsonEncode(localList));
       await prefs.setString('order_${widget.order.orderId}_status', 'delivered');
       await prefs.setBool('order_${widget.order.orderId}_completed', true);
 
