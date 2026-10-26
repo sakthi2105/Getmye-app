@@ -2237,6 +2237,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         children: [
                           Text(
                             "Order Anything You Crave",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w800,
@@ -2247,6 +2249,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           SizedBox(height: 2),
                           Text(
                             "Enter food item & budget to order instantly",
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                           ),
                         ],
@@ -2571,13 +2575,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 2,
                       children: [
                         const Text(
                           'Delivery Location',
                           style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                         ),
-                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
@@ -2610,10 +2616,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ),
               IconButton(
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(),
                 icon: const Icon(Icons.my_location_rounded, color: AppColors.primary, size: 20),
                 tooltip: "Re-detect exact live location",
                 onPressed: () => _requestLiveLocation(forceOverrideAddress: true),
               ),
+              const SizedBox(width: 4),
               const Icon(Icons.keyboard_arrow_right_rounded, color: AppColors.textMuted, size: 20),
             ],
           ),
