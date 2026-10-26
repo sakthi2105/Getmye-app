@@ -22,11 +22,12 @@ function createTransporter() {
     host: 'smtp.gmail.com',
     port: 465,
     secure: true,
+    family: 4,
     auth: { user: emailUser, pass: emailPass },
     tls: { rejectUnauthorized: false },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 10000
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
   });
 }
 
@@ -65,12 +66,13 @@ async function sendEmailOtp(email, otp) {
     console.log(`✅ [EMAIL OTP SENT] Fast dispatch to ${email} (Message ID: ${info.messageId})`);
     return true;
   } catch (err) {
-    console.warn(`⚠️ [EMAIL OTP RETRY] Service dispatch notice (${err.message}). Retrying on Port 465 SSL...`);
+    console.warn(`⚠️ [EMAIL OTP RETRY] Service dispatch notice (${err.message}). Retrying on Port 465 SSL IPv4...`);
     try {
       const fallbackTransporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 465,
         secure: true,
+        family: 4,
         auth: { user: emailUser, pass: emailPass },
         tls: { rejectUnauthorized: false },
         connectionTimeout: 10000,
@@ -464,7 +466,6 @@ router.post('/forgot-password/send-otp', async (req, res) => {
     res.json({
       success: true,
       message: `Password reset OTP has been sent to your registered email (${maskEmail(targetEmail)})`,
-      otp, // included for testing convenience
       email: targetEmail,
       masked_email: maskEmail(targetEmail),
       mobile_number: account.mobile_number,

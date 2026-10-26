@@ -212,7 +212,6 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
     String? dialogError;
     String retrievedEmail = '';
     String maskedEmail = '';
-    String sentOtp = '';
     bool needsEmail = false;
     bool obscureNew = true;
     bool obscureConfirm = true;
@@ -299,8 +298,8 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                       controller: resetInputController,
                       keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
-                        labelText: "Registered Email ID",
-                        hintText: "e.g. partner@gmail.com or 10-digit mobile",
+                        labelText: "Registered Mobile Number or Email",
+                        hintText: "e.g. 9876543210 or partner@gmail.com",
                         prefixIcon: const Icon(Icons.email_outlined, size: 20, color: AppColors.primaryDark),
                         filled: true,
                         fillColor: AppColors.background,
@@ -391,7 +390,6 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                                     setModalState(() {
                                       retrievedEmail = (data['email'] ?? '').toString();
                                       maskedEmail = (data['masked_email'] ?? data['email'] ?? '').toString();
-                                      sentOtp = (data['otp'] ?? '').toString();
                                       step = 2;
                                       isSubmitting = false;
                                       dialogError = null;
@@ -470,36 +468,7 @@ class _DeliveryPersonLoginPageState extends State<DeliveryPersonLoginPage> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
                       ),
                     ),
-                    if (sentOtp.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      InkWell(
-                        onTap: () {
-                          setModalState(() {
-                            otpController.text = sentOtp;
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEFF6FF),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFBFDBFE)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.touch_app_rounded, size: 16, color: Color(0xFF2563EB)),
-                              const SizedBox(width: 6),
-                              Text(
-                                "Auto-fill OTP ($sentOtp)",
-                                style: const TextStyle(fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+
                     const SizedBox(height: 18),
                     Row(
                       children: [
