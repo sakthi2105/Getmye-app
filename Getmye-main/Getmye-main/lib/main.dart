@@ -613,6 +613,11 @@ class _LoginPageState extends State<LoginPage> {
                                   maskedEmail.isNotEmpty ? maskedEmail : retrievedEmail,
                                   style: const TextStyle(fontSize: 14, color: AppColors.primary, fontWeight: FontWeight.bold),
                                 ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  "💡 Tip: If not in your inbox, check Spam / Promotions folder.",
+                                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
+                                ),
                               ],
                             ),
                           ),

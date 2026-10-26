@@ -39,27 +39,21 @@ async function sendEmailOtp(email, otp) {
   const mailOptions = {
     from: `"Getmye" <${emailUser}>`,
     to: email,
-    subject: `Your Getmye Password Reset OTP: ${otp}`,
-    text: `Your Getmye verification OTP is: ${otp}. This code is valid for 10 minutes. If you did not request this, please ignore this email.`,
+    replyTo: emailUser,
+    subject: `${otp} is your Getmye verification code`,
+    text: `Your Getmye password verification code is: ${otp}\n\nThis code is valid for 10 minutes. If you did not request this, please ignore this email.\n\nGetmye Security Team`,
     html: `
-      <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px;">
-        <div style="text-align: center; margin-bottom: 24px;">
-          <h1 style="color: #10b981; font-size: 28px; margin: 0; font-weight: 800; letter-spacing: -0.5px;">GET<span style="color: #0f172a;">MYE</span></h1>
-          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Password Reset Verification</p>
-        </div>
-        <div style="padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; text-align: center;">
-          <p style="color: #334155; font-size: 14px; margin: 0 0 16px 0;">Use the 6-digit verification code below to reset your Getmye account password:</p>
-          <div style="background: #ecfdf5; border: 2px dashed #10b981; border-radius: 10px; padding: 14px 28px; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #047857; display: inline-block; margin: 8px 0 14px 0;">
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #0f172a; margin-top: 0;">Getmye Verification</h2>
+        <p style="color: #475569; font-size: 15px; line-height: 1.5;">Here is your password reset verification code:</p>
+        <div style="text-align: center; margin: 24px 0;">
+          <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #059669; background: #f0fdf4; padding: 12px 24px; border-radius: 6px; border: 1px solid #bbf7d0;">
             ${otp}
-          </div>
-          <p style="color: #64748b; font-size: 12px; margin: 0;">⏱️ This OTP is valid for <strong>10 minutes</strong>.</p>
+          </span>
         </div>
-        <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid #f1f5f9; text-align: center;">
-          <p style="color: #94a3b8; font-size: 12px; margin: 0; line-height: 1.5;">
-            If you did not request a password reset, please disregard this email. Your password will remain unchanged.<br/>
-            &copy; ${new Date().getFullYear()} Getmye. All rights reserved.
-          </p>
-        </div>
+        <p style="color: #64748b; font-size: 13px;">This code will expire in 10 minutes. Do not share this code with anyone.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+        <p style="color: #94a3b8; font-size: 11px; margin-bottom: 0;">If you didn't request this code, you can safely ignore this email.</p>
       </div>
     `
   };
