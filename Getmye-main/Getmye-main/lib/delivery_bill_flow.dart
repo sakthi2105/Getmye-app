@@ -3010,6 +3010,12 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
   double _liveTotalAmount = 0.0;
   bool _hasPlayedOnlineSound = false;
 
+  // 15-minute customer wait timer before cancellation is permitted
+  int _cancelTimerSeconds = 15 * 60; // 900 seconds
+  Timer? _fifteenMinuteTimer;
+  bool _canCancel = false;
+  bool _isCancelling = false;
+
   @override
   void initState() {
     super.initState();
@@ -3017,12 +3023,14 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
     _liveFoodPrice = widget.order.itemTotal > 0 ? widget.order.itemTotal : (widget.totalAmount);
     _liveTotalAmount = widget.totalAmount;
     _loadSavedOtp();
+    _initArrivalWaitTimer();
     _refreshTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) => _loadSavedOtp());
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _fifteenMinuteTimer?.cancel();
     _otpController.dispose();
     super.dispose();
   }
@@ -3288,6 +3296,154 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
     }
   }
 
+  Future<void> _initArrivalWaitTimer() async {
+    final prefs = await SharedPreferences.getInstance();
+    final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? '';
+    final orderId = widget.order.orderId;
+
+    if (orderId.isNotEmpty) {
+      try {
+        final res = await http.post(
+          ApiConfig.orderArrivedAtLocation,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'order_id': orderId,
+            'partner_id': partnerId,
+          }),
+        ).timeout(const Duration(seconds: 5));
+
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (15 * 60);
+          final canCancel = data['can_cancel'] as bool? ?? (remaining <= 0);
+          if (mounted) {
+            setState(() {
+              _cancelTimerSeconds = remaining;
+              _canCancel = canCancel;
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    _fifteenMinuteTimer?.cancel();
+    _fifteenMinuteTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_cancelTimerSeconds > 0) {
+        if (mounted) {
+          setState(() {
+            _cancelTimerSeconds--;
+            if (_cancelTimerSeconds <= 0) {
+              _canCancel = true;
+              timer.cancel();
+            }
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _canCancel = true;
+          });
+        }
+        timer.cancel();
+      }
+    });
+  }
+
+  String _formatWaitTimer(int totalSecs) {
+    final m = (totalSecs ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSecs % 60).toString().padLeft(2, '0');
+    return "$m:$s";
+  }
+
+  void _showCancelConfirmationDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 26),
+            SizedBox(width: 8),
+            Text("Cancel Order", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          "Customer unavailable. Do you want to cancel this order?",
+          style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Go Back", style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _executeCancelOrder();
+            },
+            child: const Text("Confirm Cancellation", style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _executeCancelOrder() async {
+    setState(() => _isCancelling = true);
+    final prefs = await SharedPreferences.getInstance();
+    final orderId = widget.order.orderId;
+    final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? '';
+
+    try {
+      final res = await http.post(
+        ApiConfig.orderCancel,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'order_id': orderId,
+          'cancelled_by': 'partner',
+          'cancel_reason': 'Customer unavailable',
+          'partner_id': partnerId,
+        }),
+      ).timeout(const Duration(seconds: 8));
+
+      final data = jsonDecode(res.body);
+      if (res.statusCode == 200 && data['success'] == true) {
+        await clearDeliveryPartnerActiveOrder(orderId: orderId);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Order cancelled: Customer unavailable. You are now available for new orders."),
+            backgroundColor: Color(0xFF15803D),
+          ),
+        );
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+          (route) => false,
+        );
+      } else {
+        final errorMsg = data['error'] ?? "Failed to cancel order";
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Network error: $e"), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isCancelling = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isOnline = widget.isOnlinePayment;
@@ -3523,6 +3679,62 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
                       child: _isVerifying
                           ? const CircularProgressIndicator(color: Colors.white)
                           : Text(isOnline ? "Verify OTP & Complete Delivery" : "Verify OTP & Confirm Delivery", style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (!_canCancel) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amber.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.timer_outlined, color: Colors.amber.shade800, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "Customer unavailable? Cancellation unlocks in ${_formatWaitTimer(_cancelTimerSeconds)} (15-min wait rule)",
+                              style: TextStyle(fontSize: 12, color: Colors.amber.shade900, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: _canCancel && !_isCancelling ? _showCancelConfirmationDialog : null,
+                      icon: _isCancelling
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFDC2626)))
+                          : Icon(
+                              Icons.cancel_outlined,
+                              color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                              size: 20,
+                            ),
+                      label: Text(
+                        _canCancel
+                            ? "Cancel Order (Customer Unavailable)"
+                            : "Cancel Order (Available in ${_formatWaitTimer(_cancelTimerSeconds)})",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                        side: BorderSide(
+                          color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade300,
+                          width: 1.5,
+                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
                     ),
                   ),
                 ],

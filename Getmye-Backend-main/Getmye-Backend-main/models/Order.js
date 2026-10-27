@@ -189,6 +189,10 @@ const OrderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  arrived_at_customer_at: {
+    type: Date,
+    default: null
+  },
   messages: [
     {
       sender: { type: String, enum: ['customer', 'partner'], required: true },

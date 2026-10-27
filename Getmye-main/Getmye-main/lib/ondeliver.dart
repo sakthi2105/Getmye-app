@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'api_config.dart';
+import 'delivery_bill_flow.dart' show clearDeliveryPartnerActiveOrder;
+import 'homed.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -19,7 +25,8 @@ class MyApp extends StatelessWidget {
 }
 
 class OrderStatusPage extends StatefulWidget {
-  const OrderStatusPage({super.key});
+  final String? orderId;
+  const OrderStatusPage({super.key, this.orderId});
 
   @override
   // ignore: library_private_types_in_public_api
@@ -35,10 +42,27 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
   List<TextEditingController> otpControllers =
       List.generate(4, (index) => TextEditingController());
 
+  // 15-Minute Wait Timer & Customer Unavailable Cancellation
+  int _cancelTimerSeconds = 15 * 60; // 900 seconds
+  Timer? _fifteenMinuteTimer;
+  bool _canCancel = false;
+  bool _isCancelling = false;
+  String? _currentOrderId;
+
   @override
   void initState() {
     super.initState();
+    _currentOrderId = widget.orderId;
     startAutoDecrement();
+  }
+
+  @override
+  void dispose() {
+    _fifteenMinuteTimer?.cancel();
+    for (final c in otpControllers) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
   void startAutoDecrement() {
@@ -69,6 +93,7 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
                 setState(() {
                   showOtpSection = true;
                 });
+                _initArrivalWaitTimer();
               },
               child: const Text("OK"),
             ),
@@ -105,6 +130,163 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
     setState(() {
       otpFilled = isFilled;
     });
+  }
+
+  Future<void> _initArrivalWaitTimer() async {
+    final prefs = await SharedPreferences.getInstance();
+    _currentOrderId = widget.orderId ?? prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id') ?? '';
+    final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? '';
+
+    if (_currentOrderId != null && _currentOrderId!.isNotEmpty) {
+      try {
+        final res = await http.post(
+          ApiConfig.orderArrivedAtLocation,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'order_id': _currentOrderId,
+            'partner_id': partnerId,
+          }),
+        ).timeout(const Duration(seconds: 5));
+
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (15 * 60);
+          final canCancel = data['can_cancel'] as bool? ?? (remaining <= 0);
+          if (mounted) {
+            setState(() {
+              _cancelTimerSeconds = remaining;
+              _canCancel = canCancel;
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    _fifteenMinuteTimer?.cancel();
+    _fifteenMinuteTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_cancelTimerSeconds > 0) {
+        if (mounted) {
+          setState(() {
+            _cancelTimerSeconds--;
+            if (_cancelTimerSeconds <= 0) {
+              _canCancel = true;
+              timer.cancel();
+            }
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _canCancel = true;
+          });
+        }
+        timer.cancel();
+      }
+    });
+  }
+
+  String _formatWaitTimer(int totalSecs) {
+    final m = (totalSecs ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSecs % 60).toString().padLeft(2, '0');
+    return "$m:$s";
+  }
+
+  void _showCancelConfirmationDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 26),
+            SizedBox(width: 8),
+            Text("Cancel Order", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          "Customer unavailable. Do you want to cancel this order?",
+          style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Go Back", style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _executeCancelOrder();
+            },
+            child: const Text("Confirm Cancellation", style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _executeCancelOrder() async {
+    setState(() => _isCancelling = true);
+    final prefs = await SharedPreferences.getInstance();
+    final orderId = _currentOrderId ?? prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id') ?? '';
+    final partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? '';
+
+    if (orderId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No active order found to cancel.")),
+      );
+      setState(() => _isCancelling = false);
+      return;
+    }
+
+    try {
+      final res = await http.post(
+        ApiConfig.orderCancel,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'order_id': orderId,
+          'cancelled_by': 'partner',
+          'cancel_reason': 'Customer unavailable',
+          'partner_id': partnerId,
+        }),
+      ).timeout(const Duration(seconds: 8));
+
+      final data = jsonDecode(res.body);
+      if (res.statusCode == 200 && data['success'] == true) {
+        await clearDeliveryPartnerActiveOrder(orderId: orderId);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Order cancelled: Customer unavailable. You are now available for new orders."),
+            backgroundColor: Color(0xFF15803D),
+          ),
+        );
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+          (route) => false,
+        );
+      } else {
+        final errorMsg = data['error'] ?? "Failed to cancel order";
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Network error: $e"), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isCancelling = false);
+    }
   }
 
   @override
@@ -260,6 +442,68 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
                             child: const Text(
                               "Finish Delivery",
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Divider(height: 1, thickness: 1),
+                        const SizedBox(height: 14),
+
+                        // 15-minute Customer Wait Timer Banner
+                        if (!_canCancel) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFDE68A)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.timer_outlined, size: 18, color: Color(0xFFB45309)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    "Customer wait time: ${_formatWaitTimer(_cancelTimerSeconds)} remaining before cancellation is allowed.",
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+
+                        // Cancel Order Button (Dim & disabled for 15 minutes, active red afterwards)
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: OutlinedButton.icon(
+                            onPressed: _canCancel && !_isCancelling ? _showCancelConfirmationDialog : null,
+                            icon: _isCancelling
+                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFDC2626)))
+                                : Icon(
+                                    Icons.cancel_outlined,
+                                    color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                                    size: 20,
+                                  ),
+                            label: Text(
+                              _canCancel
+                                  ? "Cancel Order (Customer Unavailable)"
+                                  : "Cancel Order (Available in ${_formatWaitTimer(_cancelTimerSeconds)})",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                              side: BorderSide(
+                                color: _canCancel ? const Color(0xFFDC2626) : Colors.grey.shade300,
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
                           ),
                         ),

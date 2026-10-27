@@ -807,6 +807,50 @@ router.get('/user/:user_id', async (req, res) => {
   }
 });
 
+// POST /api/order/arrived-at-location - Delivery partner arrives at customer location (starts 15-minute wait timer)
+router.post('/arrived-at-location', async (req, res) => {
+  try {
+    const { order_id, partner_id } = req.body;
+    if (!order_id) {
+      return res.status(400).json({ error: 'order_id is required' });
+    }
+
+    const orderIdStr = order_id.toString().trim();
+    let order = await Order.findOne({
+      $or: [
+        { order_id: orderIdStr },
+        { order_id: new RegExp(`^${orderIdStr}$`, 'i') }
+      ]
+    });
+
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    // Record arrival timestamp if not already recorded
+    if (!order.arrived_at_customer_at) {
+      order.arrived_at_customer_at = new Date();
+      await order.save();
+      console.log(`📍 Delivery partner ${partner_id || order.partner_id} arrived at customer location for order #${order.order_id} at ${order.arrived_at_customer_at}`);
+    }
+
+    const elapsedMs = Date.now() - new Date(order.arrived_at_customer_at).getTime();
+    const requiredMs = 15 * 60 * 1000; // 15 minutes in milliseconds
+    const remainingSec = Math.max(0, Math.ceil((requiredMs - elapsedMs) / 1000));
+    const canCancel = remainingSec === 0;
+
+    res.json({
+      success: true,
+      order_id: order.order_id,
+      arrived_at: order.arrived_at_customer_at,
+      can_cancel: canCancel,
+      seconds_remaining: remainingSec,
+      elapsed_seconds: Math.floor(elapsedMs / 1000)
+    });
+  } catch (err) {
+    console.error('Error marking arrival at customer location:', err);
+    res.status(500).json({ error: 'Failed to record arrival time: ' + err.message });
+  }
+});
+
 // POST /api/order/cancel - Customer or delivery partner cancels an active order
 router.post('/cancel', async (req, res) => {
   try {
@@ -816,75 +860,113 @@ router.post('/cancel', async (req, res) => {
     }
 
     const defaultReason = cancelled_by === 'partner'
-      ? 'Cancelled by delivery partner'
+      ? 'Customer unavailable'
       : 'Cancelled by customer';
 
-    // Disallow delivery partner cancellation if order has already been accepted
+    const orderIdStr = order_id.toString().trim();
+    const existing = await Order.findOne({
+      $or: [
+        { order_id: orderIdStr },
+        { order_id: new RegExp(`^${orderIdStr}$`, 'i') }
+      ]
+    });
+
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    if (existing.status === 'delivered' || existing.status === 'completed') {
+      return res.status(400).json({ error: 'Order is already delivered and cannot be cancelled.' });
+    }
+    if (existing.status === 'cancelled') {
+      return res.status(400).json({ error: 'Order is already cancelled.' });
+    }
+
+    // Backend validation: Delivery partner can ONLY cancel after waiting 15 minutes at customer location
     if (cancelled_by === 'partner') {
-      const existing = await Order.findOne({ order_id });
-      if (existing) {
-        const acceptedStatuses = ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'delivered', 'completed'];
-        if (acceptedStatuses.includes(existing.status)) {
-          console.log(`⚠️ Cancellation rejected: Delivery partner cannot cancel accepted order ${order_id} (status: ${existing.status})`);
-          return res.status(400).json({
-            error: 'Delivery partner cannot cancel order after accepting it.',
-            status: existing.status
-          });
-        }
+      if (!existing.arrived_at_customer_at) {
+        return res.status(400).json({
+          error: 'Delivery partner must wait at customer location for 15 minutes before cancelling.',
+          can_cancel: false,
+          seconds_remaining: 15 * 60
+        });
+      }
+
+      const elapsedMs = Date.now() - new Date(existing.arrived_at_customer_at).getTime();
+      const requiredMs = 15 * 60 * 1000; // 15 minutes in ms
+      if (elapsedMs < requiredMs) {
+        const remainingSec = Math.ceil((requiredMs - elapsedMs) / 1000);
+        const remainingMins = Math.ceil(remainingSec / 60);
+        console.log(`⚠️ Partner cancel rejected: ${remainingSec}s remaining of 15m timer for order ${order_id}`);
+        return res.status(400).json({
+          error: `Cannot cancel yet. Customer waiting time remaining: ${remainingMins} minute(s).`,
+          can_cancel: false,
+          seconds_remaining: remainingSec
+        });
       }
     }
 
-    const orderIdStr = order_id.toString().trim();
-    const order = await Order.findOneAndUpdate(
-      {
-        $or: [
-          { order_id: orderIdStr },
-          { order_id: new RegExp(`^${orderIdStr}$`, 'i') }
-        ]
-      },
-      {
-        status: 'cancelled',
-        cancel_reason: cancel_reason || defaultReason,
-        cancelled_by: cancelled_by || 'customer',
-        cancelled_at: new Date()
-      },
-      { returnDocument: 'after' }
-    );
+    existing.status = 'cancelled';
+    existing.cancel_reason = cancel_reason || defaultReason;
+    existing.cancelled_by = cancelled_by || 'customer';
+    existing.cancelled_at = new Date();
+    await existing.save();
 
-    if (!order) return res.status(404).json({ error: 'Order not found' });
     console.log(`❌ Order ${order_id} cancelled by ${cancelled_by || 'customer'}: ${cancel_reason || defaultReason}`);
 
-    // Free the partner's LiveLocation if partner was assigned
+    // Free the delivery partner so they immediately become available to accept new incoming orders
     try {
-      if (order.partner_id) {
+      const partnerIdToFree = existing.partner_id || existing.current_assigned_partner_id;
+      if (partnerIdToFree) {
         const LiveLocation = require('../models/LiveLocation');
         await LiveLocation.updateMany(
-          { partner_id: order.partner_id },
-          { status: 'idle', order_id: null }
+          { partner_id: partnerIdToFree },
+          { status: 'idle', order_id: null, is_online: true }
+        );
+        const DeliveryPerson = require('../models/DeliveryPerson');
+        await DeliveryPerson.findOneAndUpdate(
+          { DP_id: partnerIdToFree },
+          { dp_status: 'online' }
         );
       }
-    } catch (_) {}
+    } catch (freeErr) {
+      console.warn('Error releasing partner on cancel:', freeErr.message);
+    }
 
-    // Create notification in DB for delivery partner if assigned or offered
-    const targetPartner = order.partner_id || order.current_assigned_partner_id;
-    if (targetPartner) {
-      try {
-        const Notification = require('../models/Notification');
+    // Create notification in DB for customer if cancelled by partner
+    try {
+      const Notification = require('../models/Notification');
+      if (cancelled_by === 'partner' && existing.user_id) {
         const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
         await Notification.create({
           notification_id: notifId,
-          recipient_id: targetPartner,
-          recipient_type: 'partner',
-          order_id: order.order_id,
-          title: '🚨 Order Cancelled by Customer',
-          message: `Order #${order.order_id} was cancelled by customer. Reason: ${cancel_reason || defaultReason}`
+          recipient_id: existing.user_id,
+          recipient_type: 'customer',
+          order_id: existing.order_id,
+          title: '🚨 Order Cancelled: Customer Unavailable',
+          message: `Delivery partner waited 15 minutes at delivery location. Order #${existing.order_id} was cancelled because customer was unavailable.`
         });
-      } catch (notifErr) {
-        console.error('Error saving cancel notification in DB:', notifErr.message);
+      } else {
+        const targetPartner = existing.partner_id || existing.current_assigned_partner_id;
+        if (targetPartner) {
+          const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+          await Notification.create({
+            notification_id: notifId,
+            recipient_id: targetPartner,
+            recipient_type: 'partner',
+            order_id: existing.order_id,
+            title: '🚨 Order Cancelled by Customer',
+            message: `Order #${existing.order_id} was cancelled by customer. Reason: ${cancel_reason || defaultReason}`
+          });
+        }
       }
+    } catch (notifErr) {
+      console.error('Error saving cancel notification in DB:', notifErr.message);
     }
 
-    res.json({ success: true, message: 'Order cancelled successfully', order });
+    res.json({
+      success: true,
+      message: 'Order cancelled successfully',
+      order: existing
+    });
   } catch (err) {
     console.error('Error cancelling order:', err);
     res.status(500).json({ error: 'Failed to cancel order' });

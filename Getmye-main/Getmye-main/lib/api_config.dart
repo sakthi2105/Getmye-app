@@ -53,6 +53,7 @@ class ApiConfig {
   static Uri orderUser(String userId) => Uri.parse('$baseUrl/api/order/user/$userId');
   static Uri orderPartner(String partnerId) => Uri.parse('$baseUrl/api/order/partner/$partnerId');
   static Uri get orderCancel => Uri.parse('$baseUrl/api/order/cancel');
+  static Uri get orderArrivedAtLocation => Uri.parse('$baseUrl/api/order/arrived-at-location');
   static Uri orderMessages(String orderId) => Uri.parse('$baseUrl/api/order/$orderId/messages');
   static Uri orderSendMessage(String orderId) => Uri.parse('$baseUrl/api/order/$orderId/message');
   static Uri get orderSendPriceRange => Uri.parse('$baseUrl/api/order/price-range/send');
