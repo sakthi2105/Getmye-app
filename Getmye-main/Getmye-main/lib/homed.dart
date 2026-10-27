@@ -879,20 +879,27 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                children: [
-                                  const Icon(Icons.timer_rounded, size: 16, color: Color(0xFFB45309)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    "Auto-forwards in: ${secondsLeft ~/ 60}:${(secondsLeft % 60).toString().padLeft(2, '0')}",
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                      color: Color(0xFF92400E),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.timer_rounded, size: 16, color: Color(0xFFB45309)),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        "Auto-forwards in: ${secondsLeft ~/ 60}:${(secondsLeft % 60).toString().padLeft(2, '0')}",
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w800,
+                                          color: Color(0xFF92400E),
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
+                              const SizedBox(width: 8),
                               Text(
                                 "${secondsLeft}s",
                                 style: const TextStyle(
@@ -1818,6 +1825,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           children: [
                             Text(
                               partnerName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.w800,
@@ -1860,13 +1869,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              Text(
-                                "₹${totalEarnings.toStringAsFixed(0)}",
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                  letterSpacing: -0.5,
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  "₹${totalEarnings.toStringAsFixed(0)}",
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                    letterSpacing: -0.5,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1891,13 +1904,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              Text(
-                                "₹${todayEarnings.toStringAsFixed(0)}",
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                  color: Color(0xFFE8F2FF),
-                                  letterSpacing: -0.5,
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  "₹${todayEarnings.toStringAsFixed(0)}",
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFE8F2FF),
+                                    letterSpacing: -0.5,
+                                  ),
                                 ),
                               ),
                             ],
@@ -2072,6 +2089,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                     children: [
                                       Text(
                                         "Ongoing Delivery: #${activeDeliveryOrder?['order_id'] ?? ''}",
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                           fontSize: 15,
@@ -2081,6 +2100,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                       const SizedBox(height: 2),
                                       const Text(
                                         "Finish this delivery to receive new orders",
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Color(0xFF1D4ED8),
@@ -2161,12 +2182,16 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 children: [
                                   Row(
                                     children: [
-                                      const Text(
-                                        "New Orders Ready",
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 16,
-                                          color: Color(0xFF78350F),
+                                      const Flexible(
+                                        child: Text(
+                                          "New Orders Ready",
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 16,
+                                            color: Color(0xFF78350F),
+                                          ),
                                         ),
                                       ),
                                       const SizedBox(width: 6),
@@ -2377,55 +2402,62 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Text(
-                                  "Daily Milestone",
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFE0F2FE),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.timer_outlined, size: 12, color: Color(0xFF0369A1)),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        milestoneResetCountdown,
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xFF0369A1),
-                                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Flexible(
+                                    child: Text(
+                                      "Daily Milestone",
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.textPrimary,
                                       ),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            const Text(
-                              "Refreshes every 24 hours",
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                                color: AppColors.textMuted,
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE0F2FE),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.timer_outlined, size: 12, color: Color(0xFF0369A1)),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          milestoneResetCountdown,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF0369A1),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 2),
+                              const Text(
+                                "Refreshes every 24 hours",
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
@@ -2444,44 +2476,51 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: List.generate(10, (index) {
-                        int pointValue = (index + 1) * 4;
-                        bool reached = touchpoints >= pointValue;
-                        return Column(
-                          children: [
-                            Container(
-                              height: 14,
-                              width: 14,
-                              decoration: BoxDecoration(
-                                color: reached ? AppColors.primary : const Color(0xFFE2E8F0),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: reached ? AppColors.primaryDark : const Color(0xFFCBD5E1),
-                                  width: reached ? 1.5 : 1,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: 320,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: List.generate(10, (index) {
+                            int pointValue = (index + 1) * 4;
+                            bool reached = touchpoints >= pointValue;
+                            return Column(
+                              children: [
+                                Container(
+                                  height: 14,
+                                  width: 14,
+                                  decoration: BoxDecoration(
+                                    color: reached ? AppColors.primary : const Color(0xFFE2E8F0),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: reached ? AppColors.primaryDark : const Color(0xFFCBD5E1),
+                                      width: reached ? 1.5 : 1,
+                                    ),
+                                  ),
+                                  child: reached
+                                      ? const Icon(
+                                          Icons.check,
+                                          size: 9,
+                                          color: Colors.white,
+                                        )
+                                      : null,
                                 ),
-                              ),
-                              child: reached
-                                  ? const Icon(
-                                      Icons.check,
-                                      size: 9,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "$pointValue",
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: reached ? FontWeight.w700 : FontWeight.w500,
-                                color: reached ? AppColors.primaryDark : AppColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        );
-                      }),
+                                const SizedBox(height: 4),
+                                Text(
+                                  "$pointValue",
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: reached ? FontWeight.w700 : FontWeight.w500,
+                                    color: reached ? AppColors.primaryDark : AppColors.textMuted,
+                                  ),
+                                ),
+                              ],
+                            );
+                          }),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 14),
                     ClipRRect(
@@ -2556,7 +2595,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
   Widget _buildStatCard(String title, String value, IconData icon) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
@@ -2574,25 +2613,31 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         children: [
           Icon(icon, size: 20, color: AppColors.primaryDark),
           const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.3,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textPrimary,
+                letterSpacing: -0.3,
+              ),
             ),
           ),
           const SizedBox(height: 2),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textSecondary,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
         ],
