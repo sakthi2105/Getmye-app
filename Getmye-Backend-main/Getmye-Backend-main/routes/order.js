@@ -833,7 +833,8 @@ router.post('/arrived-at-location', async (req, res) => {
     }
 
     const elapsedMs = Date.now() - new Date(order.arrived_at_customer_at).getTime();
-    const requiredMs = 15 * 60 * 1000; // 15 minutes in milliseconds
+    const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '3', 10);
+    const requiredMs = CUSTOMER_WAIT_MINUTES * 60 * 1000; // configurable wait duration (default 3 minutes for testing)
     const remainingSec = Math.max(0, Math.ceil((requiredMs - elapsedMs) / 1000));
     const canCancel = remainingSec === 0;
 
@@ -880,22 +881,24 @@ router.post('/cancel', async (req, res) => {
       return res.status(400).json({ error: 'Order is already cancelled.' });
     }
 
-    // Backend validation: Delivery partner can ONLY cancel after waiting 15 minutes at customer location
+    // Backend validation: Delivery partner can ONLY cancel after waiting required minutes at customer location
     if (cancelled_by === 'partner') {
+      const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '3', 10);
+      const requiredMs = CUSTOMER_WAIT_MINUTES * 60 * 1000;
+
       if (!existing.arrived_at_customer_at) {
         return res.status(400).json({
-          error: 'Delivery partner must wait at customer location for 15 minutes before cancelling.',
+          error: `Delivery partner must wait at customer location for ${CUSTOMER_WAIT_MINUTES} minutes before cancelling.`,
           can_cancel: false,
-          seconds_remaining: 15 * 60
+          seconds_remaining: CUSTOMER_WAIT_MINUTES * 60
         });
       }
 
       const elapsedMs = Date.now() - new Date(existing.arrived_at_customer_at).getTime();
-      const requiredMs = 15 * 60 * 1000; // 15 minutes in ms
       if (elapsedMs < requiredMs) {
         const remainingSec = Math.ceil((requiredMs - elapsedMs) / 1000);
         const remainingMins = Math.ceil(remainingSec / 60);
-        console.log(`⚠️ Partner cancel rejected: ${remainingSec}s remaining of 15m timer for order ${order_id}`);
+        console.log(`⚠️ Partner cancel rejected: ${remainingSec}s remaining of ${CUSTOMER_WAIT_MINUTES}m timer for order ${order_id}`);
         return res.status(400).json({
           error: `Cannot cancel yet. Customer waiting time remaining: ${remainingMins} minute(s).`,
           can_cancel: false,

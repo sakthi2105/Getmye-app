@@ -42,8 +42,8 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
   List<TextEditingController> otpControllers =
       List.generate(4, (index) => TextEditingController());
 
-  // 15-Minute Wait Timer & Customer Unavailable Cancellation
-  int _cancelTimerSeconds = 15 * 60; // 900 seconds
+  // 3-Minute Wait Timer & Customer Unavailable Cancellation (Testing mode)
+  int _cancelTimerSeconds = 3 * 60; // 180 seconds for testing
   Timer? _fifteenMinuteTimer;
   bool _canCancel = false;
   bool _isCancelling = false;
@@ -150,7 +150,7 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
 
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
-          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (15 * 60);
+          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (3 * 60);
           final canCancel = data['can_cancel'] as bool? ?? (remaining <= 0);
           if (mounted) {
             setState(() {
