@@ -674,6 +674,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           return !isDeclined &&
               !AlarmService.isOrderSilenced(id) &&
               (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
+              activeDeliveryOrder == null &&
               status == 'pending';
         }).toList();
 

@@ -2565,25 +2565,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         borderRadius: BorderRadius.circular(14),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: Row(
             children: [
-              const Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 24),
-              const SizedBox(width: 12),
+              const Icon(Icons.location_on_rounded, color: Color(0xFFEA580C), size: 22),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 6,
-                      runSpacing: 2,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'Delivery Location',
-                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                        const Flexible(
+                          child: Text(
+                            'Delivery Location',
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
@@ -2615,15 +2618,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+              const SizedBox(width: 4),
               IconButton(
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(),
-                icon: const Icon(Icons.my_location_rounded, color: AppColors.primary, size: 20),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.my_location_rounded, color: AppColors.primary, size: 19),
                 tooltip: "Re-detect exact live location",
                 onPressed: () => _requestLiveLocation(forceOverrideAddress: true),
               ),
-              const SizedBox(width: 4),
-              const Icon(Icons.keyboard_arrow_right_rounded, color: AppColors.textMuted, size: 20),
+              const Icon(Icons.keyboard_arrow_right_rounded, color: AppColors.textMuted, size: 18),
             ],
           ),
         ),

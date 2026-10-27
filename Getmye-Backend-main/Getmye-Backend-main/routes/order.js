@@ -100,32 +100,39 @@ router.get('/pending', async (req, res) => {
       const numClean = numPart.replace(/^0+/, '');
       const pRegex = new RegExp(`^(dp_?0*)?${numClean || numPart}$`, 'i');
 
-      query = {
-        $or: [
-          // Strictly single partner routing: Pending order must ONLY match the currently assigned partner!
-          {
-            status: 'pending',
-            created_at: { $gte: pendingThreshold },
-            current_assigned_partner_id: { $in: [partnerId, pRegex] },
-            declined_partners: { $nin: [partnerId, pRegex] },
-            timed_out_partners: { $nin: [partnerId, pRegex] }
-          },
-          // Ongoing accepted active orders for this partner
-          {
-            partner_id: { $in: [partnerId, pRegex] },
-            status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-          },
-          {
-            partner_id: { $in: [partnerId, pRegex] },
-            status: 'cancelled',
-            cancelled_at: { $gte: cancelledThreshold }
-          },
-          {
-            status: 'cancelled',
-            cancelled_at: { $gte: cancelledThreshold }
-          }
-        ]
-      };
+      // Check if this delivery partner currently has an active ongoing delivery
+      const hasActiveOngoing = await Order.exists({
+        partner_id: { $in: [partnerId, pRegex] },
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      });
+
+      const orConditions = [
+        // Ongoing accepted active orders for this partner
+        {
+          partner_id: { $in: [partnerId, pRegex] },
+          status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+        },
+        {
+          partner_id: { $in: [partnerId, pRegex] },
+          status: 'cancelled',
+          cancelled_at: { $gte: cancelledThreshold }
+        },
+        {
+          status: 'cancelled',
+          cancelled_at: { $gte: cancelledThreshold }
+        }
+      ];
+
+      // If the partner is free (not engaged in an ongoing delivery), broadcast all unaccepted pending orders to them!
+      if (!hasActiveOngoing) {
+        orConditions.unshift({
+          status: 'pending',
+          created_at: { $gte: pendingThreshold },
+          declined_partners: { $nin: [partnerId, pRegex] }
+        });
+      }
+
+      query = { $or: orConditions };
     } else {
       query = {
         $or: [
