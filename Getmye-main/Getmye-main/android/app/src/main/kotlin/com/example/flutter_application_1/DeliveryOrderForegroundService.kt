@@ -487,6 +487,19 @@ class DeliveryOrderForegroundService : Service() {
             return
         }
 
+        // 🛰️ Strict check: If device location (GPS) is turned OFF, DO NOT poll or alarm!
+        try {
+            val locationManager = getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+            val isGpsEnabled = locationManager?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true ||
+                               locationManager?.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER) == true
+            if (!isGpsEnabled) {
+                if (isAlarmActive) {
+                    stopAlarmInternal()
+                }
+                return
+            }
+        } catch (_: Exception) {}
+
         val prefs = getSharedPreferences("getmye_service_prefs", Context.MODE_PRIVATE)
         val bUrl = baseUrl ?: prefs.getString("base_url", null) ?: "http://192.168.29.196:5000"
         val pId = partnerId ?: prefs.getString("partner_id", null) ?: "DP001"

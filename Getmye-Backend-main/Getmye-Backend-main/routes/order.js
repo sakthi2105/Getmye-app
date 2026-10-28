@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Profile = require('../models/Profile');
 const DeliveryPerson = require('../models/DeliveryPerson');
+const LiveLocation = require('../models/LiveLocation');
 const { getNextSequence } = require('../models/Counter');
 const {
   KUMBAKONAM_GEOFENCE,
@@ -106,8 +107,27 @@ router.get('/pending', async (req, res) => {
         status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
       });
 
+      // 🛑 STRICT REQUIREMENT: Delivery partner must be registered and ONLINE
+      const partnerDoc = await DeliveryPerson.findOne({
+        $or: [
+          { DP_id: partnerId },
+          { DP_id: pRegex },
+          { mobile_number: partnerId }
+        ]
+      }).select('dp_status').lean();
+      const isPartnerOnline = partnerDoc && partnerDoc.dp_status === 'online';
+
+      // 🛑 STRICT REQUIREMENT: Delivery partner's LiveLocation must be active and ONLINE
+      const liveLoc = await LiveLocation.findOne({
+        $or: [
+          { partner_id: partnerId },
+          { partner_id: pRegex }
+        ]
+      }).lean();
+      const isLocationOnline = liveLoc && liveLoc.is_online === true;
+
       const orConditions = [
-        // Ongoing accepted active orders for this partner
+        // Ongoing accepted active orders for this partner (always allow them to view and complete their ongoing order)
         {
           partner_id: { $in: [partnerId, pRegex] },
           status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
@@ -123,8 +143,11 @@ router.get('/pending', async (req, res) => {
         }
       ];
 
-      // If the partner is free (not engaged in an ongoing delivery), broadcast all unaccepted pending orders to them!
-      if (!hasActiveOngoing) {
+      // 🛑 ONLY broadcast unaccepted pending orders IF:
+      // 1. Partner is not busy with another delivery (!hasActiveOngoing)
+      // 2. Partner status is explicitly ONLINE (isPartnerOnline)
+      // 3. Partner Location status is explicitly ONLINE (isLocationOnline)
+      if (!hasActiveOngoing && isPartnerOnline && isLocationOnline) {
         orConditions.unshift({
           status: 'pending',
           created_at: { $gte: pendingThreshold },
@@ -134,11 +157,10 @@ router.get('/pending', async (req, res) => {
 
       query = { $or: orConditions };
     } else {
+      // If no partner_id is provided, DO NOT return pending orders
       query = {
-        $or: [
-          { status: 'pending', created_at: { $gte: pendingThreshold } },
-          { status: 'cancelled', cancelled_at: { $gte: cancelledThreshold } }
-        ]
+        status: 'cancelled',
+        cancelled_at: { $gte: cancelledThreshold }
       };
     }
 

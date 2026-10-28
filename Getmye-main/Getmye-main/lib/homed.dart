@@ -36,7 +36,7 @@ class DeliveryHomePage extends StatefulWidget {
 class _DeliveryHomePageState extends State<DeliveryHomePage> {
   int touchpoints = 0;
   String milestoneResetCountdown = "24h left";
-  bool isOnline = true;
+  bool isOnline = false;
   double currentBalance = 0.00;
   double totalEarnings = 0.00;
   double todayEarnings = 0.00;
@@ -72,10 +72,14 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   @override
   void initState() {
     super.initState();
-    _loadPartnerData();
-    _startOrdersPolling();
-    _orderAlertSubscription = AppNotificationService.onNewOrderReceived.listen((order) {
-      if (mounted && isOnline && !_isShowingIncomingModal) {
+    _loadPartnerData().then((_) {
+      if (mounted) {
+        _startOrdersPolling();
+      }
+    });
+    _orderAlertSubscription = AppNotificationService.onNewOrderReceived.listen((order) async {
+      final hasLoc = await _isDeviceLocationAvailable();
+      if (mounted && isOnline && hasLoc && !_isShowingIncomingModal) {
         _showIncomingOrderModal(order);
       }
     });
@@ -398,6 +402,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       AlarmService.stopAlarm();
       return;
     }
+
+    // 🛰️ Strict requirement: Device location MUST be ON to receive or check pending orders
+    final hasLocation = await _isDeviceLocationAvailable();
+    if (!hasLocation) {
+      if (isOnline) {
+        await _handleDeviceLocationTurnedOff(showToast: false);
+      }
+      AlarmService.stopAlarm();
+      return;
+    }
+
     if (_isCheckingPendingOrders) return;
     _isCheckingPendingOrders = true;
 
@@ -690,7 +705,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
 
         // 🚨 PENDING ORDERS FROM CUSTOMER TRIGGER ALARM SOUND & POPUP MODAL!
-        if (unhandledOrders.isNotEmpty && isOnline) {
+        // Strictly only if partner is online AND device location is enabled!
+        final bool hasLiveLoc = await _isDeviceLocationAvailable();
+        if (unhandledOrders.isNotEmpty && isOnline && hasLiveLoc) {
           final firstOrder = unhandledOrders.first;
           final newId = firstOrder['order_id']?.toString() ?? '';
           final itemName = firstOrder['item_name']?.toString() ?? 'Food Order';
@@ -715,7 +732,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               _showIncomingOrderModal(safeMap);
             }
           }
-        } else if (unhandledOrders.isEmpty) {
+        } else {
           AlarmService.stopAlarm();
         }
       }

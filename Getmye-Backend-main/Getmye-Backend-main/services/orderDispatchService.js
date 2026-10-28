@@ -75,15 +75,10 @@ function isPartnerInList(partnerId, list = []) {
  */
 async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = []) {
   try {
-    // 1. Get all delivery persons who are registered and not offline
-    let deliveryPersons = await DeliveryPerson.find({
-      dp_status: { $ne: 'offline' }
+    // 1. Get all delivery persons who are registered and strictly ONLINE
+    const deliveryPersons = await DeliveryPerson.find({
+      dp_status: 'online'
     }).select('DP_id name mobile_number dp_status').lean();
-
-    if (!deliveryPersons || deliveryPersons.length === 0) {
-      // Fallback: If no delivery partners explicitly marked != 'offline', check all registered partners
-      deliveryPersons = await DeliveryPerson.find({}).select('DP_id name mobile_number dp_status').lean();
-    }
 
     if (!deliveryPersons || deliveryPersons.length === 0) {
       return [];
@@ -133,7 +128,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
 
       // Determine partner coordinates (from LiveLocation or default to Kumbakonam center)
       const loc = liveLocMap.get(dpIdLower) || (numPart ? liveLocMap.get(numPart) : null);
-      if (loc && loc.is_online === false && dp.dp_status !== 'online') {
+      if (!loc || loc.is_online !== true) {
         continue;
       }
 
