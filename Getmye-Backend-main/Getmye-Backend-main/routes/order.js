@@ -919,8 +919,8 @@ router.post('/arrived-at-location', async (req, res) => {
     }
 
     const elapsedMs = Date.now() - new Date(order.arrived_at_customer_at).getTime();
-    const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '3', 10);
-    const requiredMs = CUSTOMER_WAIT_MINUTES * 60 * 1000; // configurable wait duration (default 3 minutes for testing)
+    const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '15', 10);
+    const requiredMs = CUSTOMER_WAIT_MINUTES * 60 * 1000; // wait duration (15 minutes)
     const remainingSec = Math.max(0, Math.ceil((requiredMs - elapsedMs) / 1000));
     const canCancel = remainingSec === 0;
 
@@ -969,7 +969,7 @@ router.post('/cancel', async (req, res) => {
 
     // Backend validation: Delivery partner can ONLY cancel after waiting required minutes at customer location
     if (cancelled_by === 'partner') {
-      const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '3', 10);
+      const CUSTOMER_WAIT_MINUTES = parseInt(process.env.CUSTOMER_WAIT_MINUTES || '15', 10);
       const requiredMs = CUSTOMER_WAIT_MINUTES * 60 * 1000;
 
       if (!existing.arrived_at_customer_at) {

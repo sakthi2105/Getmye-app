@@ -3033,8 +3033,8 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
   double _liveTotalAmount = 0.0;
   bool _hasPlayedOnlineSound = false;
 
-  // 3-minute customer wait timer before cancellation is permitted (Testing mode)
-  int _cancelTimerSeconds = 3 * 60; // 180 seconds for testing
+  // 15-minute customer wait timer before cancellation is permitted
+  int _cancelTimerSeconds = 15 * 60; // 900 seconds (15 minutes)
   Timer? _fifteenMinuteTimer;
   bool _canCancel = false;
   bool _isCancelling = false;
@@ -3337,7 +3337,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
 
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
-          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (3 * 60);
+          final remaining = (data['seconds_remaining'] as num?)?.toInt() ?? (15 * 60);
           final canCancel = data['can_cancel'] as bool? ?? (remaining <= 0);
           if (mounted) {
             setState(() {
@@ -3719,7 +3719,7 @@ class _DeliveryCodVerificationPageState extends State<DeliveryCodVerificationPag
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              "Customer unavailable? Cancellation unlocks in ${_formatWaitTimer(_cancelTimerSeconds)} (3-min wait rule)",
+                              "Customer unavailable? Cancellation unlocks in ${_formatWaitTimer(_cancelTimerSeconds)} (15-min wait rule)",
                               style: TextStyle(fontSize: 12, color: Colors.amber.shade900, fontWeight: FontWeight.w600),
                             ),
                           ),
