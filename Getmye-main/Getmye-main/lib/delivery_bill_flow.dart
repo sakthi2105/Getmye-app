@@ -64,6 +64,7 @@ class DeliveryOrder {
   final String? cancelReason;
   final double? customerLatitude;
   final double? customerLongitude;
+  final String? currentAssignedPartnerId;
 
   DeliveryOrder({
     required this.orderId,
@@ -78,6 +79,7 @@ class DeliveryOrder {
     this.cancelReason,
     this.customerLatitude,
     this.customerLongitude,
+    this.currentAssignedPartnerId,
   });
 
   double get subtotal => items.fold(0.0, (sum, item) => sum + item.total);
@@ -320,6 +322,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               status: isAccepted ? "Accepted" : (isDeclined ? "declined" : "New Customer Order"),
               customerLatitude: (o['customer_latitude'] as num?)?.toDouble(),
               customerLongitude: (o['customer_longitude'] as num?)?.toDouble(),
+              currentAssignedPartnerId: o['current_assigned_partner_id']?.toString(),
             ),
           );
         }
@@ -353,23 +356,43 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
         }
 
         // Ring alarm continuously only for unhandled pending orders (stop immediately for accepted, declined, cancelled, silenced)
-        final hasPending = _orders.any((o) =>
-            !_declinedOrderIds.contains(o.orderId) &&
-            !_acceptedOrderIds.contains(o.orderId) &&
-            !AlarmService.isOrderSilenced(o.orderId) &&
-            o.status != "Accepted" &&
-            o.status != "declined" &&
-            o.status != "rejected" &&
-            o.status != "cancelled");
-        if (hasPending && isOnline) {
-          final pendingOrder = _orders.firstWhere((o) =>
+        final myPId = pId.trim().toLowerCase();
+        final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+        final hasPending = _orders.any((o) {
+          final assignedPartner = (o.currentAssignedPartnerId ?? '').trim().toLowerCase();
+          final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+              assignedPartner == myPId ||
+              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
+          );
+
+          return isAssignedToMe &&
               !_declinedOrderIds.contains(o.orderId) &&
               !_acceptedOrderIds.contains(o.orderId) &&
               !AlarmService.isOrderSilenced(o.orderId) &&
               o.status != "Accepted" &&
               o.status != "declined" &&
               o.status != "rejected" &&
-              o.status != "cancelled");
+              o.status != "cancelled";
+        });
+        if (hasPending && isOnline) {
+          final pendingOrder = _orders.firstWhere((o) {
+            final assignedPartner = (o.currentAssignedPartnerId ?? '').trim().toLowerCase();
+            final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+            final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+                assignedPartner == myPId ||
+                (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
+            );
+
+            return isAssignedToMe &&
+                !_declinedOrderIds.contains(o.orderId) &&
+                !_acceptedOrderIds.contains(o.orderId) &&
+                !AlarmService.isOrderSilenced(o.orderId) &&
+                o.status != "Accepted" &&
+                o.status != "declined" &&
+                o.status != "rejected" &&
+                o.status != "cancelled";
+          });
           AlarmService.startAlarm(
             orderId: pendingOrder.orderId,
             item: pendingOrder.items.isNotEmpty ? pendingOrder.items.first.name : 'Food Order',

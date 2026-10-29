@@ -600,31 +600,44 @@ class AppNotificationService {
             }
           }
 
-          // Also check: is it no longer pending in orders? (Cancelled before acceptance)
+          // Also check: is it no longer pending in orders? (Timed out, reassigned, or cancelled)
+          bool disappearedFromPending = false;
           if (!isOrderCancelled) {
             final stillPending = orders.any((o) =>
                 o is Map &&
                 o['order_id']?.toString() == ringingId &&
                 (o['status']?.toString() ?? '').toLowerCase() == 'pending');
             if (!stillPending) {
-              isOrderCancelled = true;
+              disappearedFromPending = true;
             }
           }
 
-          if (isOrderCancelled) {
+          if (isOrderCancelled || disappearedFromPending) {
             AlarmService.stopAlarm();
             AlarmService.silenceOrder(ringingId);
-            await showOrderCancelledNotification(
-              orderId: ringingId,
-              reason: cancelReason,
-            );
+            if (isOrderCancelled) {
+              await showOrderCancelledNotification(
+                orderId: ringingId,
+                reason: cancelReason,
+              );
+            }
           }
         }
 
         final unhandledOrders = orders.where((o) {
           final id = o['order_id']?.toString() ?? '';
           final status = (o['status']?.toString() ?? '').toLowerCase();
-          return !declinedIds.contains(id) &&
+          final assignedPartner = (o['current_assigned_partner_id'] ?? '').toString().trim().toLowerCase();
+          final myPId = pId.trim().toLowerCase();
+          final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+              assignedPartner == myPId ||
+              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
+          );
+
+          return isAssignedToMe &&
+              !declinedIds.contains(id) &&
               !AlarmService.isOrderSilenced(id) &&
               (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
               status == 'pending';

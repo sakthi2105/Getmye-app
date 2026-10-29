@@ -589,16 +589,19 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 _currentIncomingModalOrderId = null;
               }
 
+              bool wasExplicitlyCancelled = false;
               String cancelReason = 'Order was cancelled by customer';
               for (final co in allOrdersForCancel) {
-                if (co['order_id']?.toString() == currentRingingOrModalId) {
+                if (co['order_id']?.toString() == currentRingingOrModalId &&
+                    (co['status']?.toString() ?? '').toLowerCase() == 'cancelled') {
+                  wasExplicitlyCancelled = true;
                   final r = co['cancel_reason']?.toString();
                   if (r != null && r.isNotEmpty) cancelReason = r;
                   break;
                 }
               }
 
-              if (!_notifiedCancelledOrderIds.contains(currentRingingOrModalId)) {
+              if (wasExplicitlyCancelled && !_notifiedCancelledOrderIds.contains(currentRingingOrModalId)) {
                 _notifiedCancelledOrderIds.add(currentRingingOrModalId);
                 AppNotificationService.showOrderCancelledNotification(
                   orderId: currentRingingOrModalId,
@@ -681,12 +684,20 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               ?.map((e) => e.toString().toLowerCase().trim())
               .toList() ?? [];
           final myPId = pId.trim().toLowerCase();
-          final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+          final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
           final bool isDeclined = declinedIds.contains(id) ||
               declinedList.contains(myPId) ||
-              (numPart.isNotEmpty && declinedList.any((d) => d.contains(numPart)));
+              (myDigits.isNotEmpty && declinedList.any((d) => d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == myDigits));
 
-          return !isDeclined &&
+          final assignedPartner = (o['current_assigned_partner_id'] ?? '').toString().trim().toLowerCase();
+          final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+              assignedPartner == myPId ||
+              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
+          );
+
+          return isAssignedToMe &&
+              !isDeclined &&
               !AlarmService.isOrderSilenced(id) &&
               (partnerActiveId == null || partnerActiveId.isEmpty || id != partnerActiveId) &&
               activeDeliveryOrder == null &&

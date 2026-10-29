@@ -562,7 +562,8 @@ class DeliveryOrderForegroundService : Service() {
                         }
                     }
 
-                    // Check if ringing order disappeared from pending list (cancelled by customer before acceptance)
+                    // Check if ringing order disappeared from pending list (timed out, reassigned, or cancelled)
+                    var disappearedFromPending = false
                     if (!isCancelled && orders != null) {
                         var foundStillPending = false
                         for (i in 0 until orders.length()) {
@@ -573,24 +574,35 @@ class DeliveryOrderForegroundService : Service() {
                             }
                         }
                         if (!foundStillPending) {
-                            isCancelled = true
+                            disappearedFromPending = true
                         }
                     }
 
-                    if (isCancelled) {
+                    if (isCancelled || disappearedFromPending) {
                         silencedOrderIds.add(ringingId)
                         stopAlarmInternal()
-                        showCancelledNotification(ringingId, cancelReason)
+                        if (isCancelled) {
+                            showCancelledNotification(ringingId, cancelReason)
+                        }
                     }
                 }
 
                 if (orders != null) {
+                    val myPId = pId.lowercase().trim()
+                    val myDigits = myPId.replace(Regex("[^0-9]"), "").replace(Regex("^0+"), "")
                     // Check for pending unhandled orders and ring loud alarm
                     for (i in 0 until orders.length()) {
                         val o = orders.optJSONObject(i) ?: continue
                         val oid = o.optString("order_id", "")
                         val status = o.optString("status", "").lowercase()
-                        if (oid.isNotEmpty() && status == "pending" && !silencedOrderIds.contains(oid)) {
+                        val assignedPartner = o.optString("current_assigned_partner_id", "").lowercase().trim()
+                        val assignedDigits = assignedPartner.replace(Regex("[^0-9]"), "").replace(Regex("^0+"), "")
+                        val isAssignedToMe = assignedPartner.isNotEmpty() && (
+                                assignedPartner == myPId ||
+                                (myDigits.isNotEmpty() && assignedDigits.isNotEmpty() && myDigits == assignedDigits)
+                        )
+
+                        if (oid.isNotEmpty() && status == "pending" && isAssignedToMe && !silencedOrderIds.contains(oid)) {
                             if (!isAlarmActive) {
                                 val item = o.optString("item_name", "Food Order")
                                 val cName = o.optString("customer_name", "Customer")

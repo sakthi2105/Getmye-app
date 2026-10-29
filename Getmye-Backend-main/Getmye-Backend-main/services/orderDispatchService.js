@@ -69,11 +69,13 @@ function isPartnerInList(partnerId, list = []) {
 /**
  * Find all available delivery partners sorted by proximity to customer coordinates.
  * Excludes partners who:
- * 1. Are offline (dp_status === 'offline' or LiveLocation is_online === false)
- * 2. Already have an active ongoing order (status in ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'])
- * 3. Are in the excludedPartnerIds list (already declined or timed out for this specific order)
+ * 1. Are offline (dp_status !== 'online' or LiveLocation is_online !== true)
+ * 2. Do not have active/valid GPS coordinates
+ * 3. Already have an active ongoing order (status in ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'])
+ * 4. Already have an active pending order offered to them
+ * 5. Are in the excludedPartnerIds list (already declined or timed out for this specific order)
  */
-async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = []) {
+async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = [], excludeOrderId = null) {
   try {
     // 1. Get all delivery persons who are registered and strictly ONLINE
     const deliveryPersons = await DeliveryPerson.find({
@@ -89,35 +91,59 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
     }).select('partner_id').lean();
 
-    const busyPartnerIds = new Set(
-      activeOrders
-        .filter(o => o.partner_id)
-        .map(o => o.partner_id.toString().trim().toLowerCase())
-    );
+    // Also exclude partners who currently have an unexpired pending assignment for another order
+    const pendingQuery = {
+      status: 'pending',
+      current_assigned_partner_id: { $ne: null },
+      assignment_expires_at: { $gt: new Date() }
+    };
+    if (excludeOrderId) {
+      pendingQuery.order_id = { $ne: excludeOrderId };
+    }
+    const pendingOrders = await Order.find(pendingQuery).select('current_assigned_partner_id').lean();
 
-    // 3. Fetch live locations for partners
-    const liveLocations = await LiveLocation.find({}).lean();
+    const busyPartnerIds = new Set();
+    for (const o of activeOrders) {
+      if (o.partner_id) {
+        const idLower = o.partner_id.toString().trim().toLowerCase();
+        busyPartnerIds.add(idLower);
+        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
+        if (numClean) busyPartnerIds.add(numClean);
+      }
+    }
+    for (const o of pendingOrders) {
+      if (o.current_assigned_partner_id) {
+        const idLower = o.current_assigned_partner_id.toString().trim().toLowerCase();
+        busyPartnerIds.add(idLower);
+        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
+        if (numClean) busyPartnerIds.add(numClean);
+      }
+    }
+
+    // 3. Fetch live locations for online partners
+    const liveLocations = await LiveLocation.find({ is_online: true }).lean();
     const liveLocMap = new Map();
     for (const loc of liveLocations) {
       if (loc.partner_id) {
-        liveLocMap.set(loc.partner_id.toString().trim().toLowerCase(), loc);
-        const numOnly = loc.partner_id.toString().replace(/[^0-9]/g, '');
-        if (numOnly) liveLocMap.set(numOnly, loc);
+        const idLower = loc.partner_id.toString().trim().toLowerCase();
+        liveLocMap.set(idLower, loc);
+        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
+        if (numClean) liveLocMap.set(numClean, loc);
       }
     }
 
     // 4. Candidate matching and distance calculation
     const candidates = [];
-    const custLat = customerLat != null ? Number(customerLat) : KUMBAKONAM_GEOFENCE.center.latitude;
-    const custLng = customerLng != null ? Number(customerLng) : KUMBAKONAM_GEOFENCE.center.longitude;
+    const custLat = (customerLat != null && !isNaN(Number(customerLat))) ? Number(customerLat) : KUMBAKONAM_GEOFENCE.center.latitude;
+    const custLng = (customerLng != null && !isNaN(Number(customerLng))) ? Number(customerLng) : KUMBAKONAM_GEOFENCE.center.longitude;
 
     for (const dp of deliveryPersons) {
       const dpId = dp.DP_id.toString().trim();
       const dpIdLower = dpId.toLowerCase();
-      const numPart = dpId.replace(/[^0-9]/g, '');
+      const numClean = dpIdLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
 
-      // Check if busy
-      if (busyPartnerIds.has(dpIdLower) || (numPart && busyPartnerIds.has(numPart))) {
+      // Check if busy with ongoing order or pending offer
+      if (busyPartnerIds.has(dpIdLower) || (numClean && busyPartnerIds.has(numClean))) {
         continue;
       }
 
@@ -126,19 +152,20 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
         continue;
       }
 
-      // Determine partner coordinates (from LiveLocation or default to Kumbakonam center)
-      const loc = liveLocMap.get(dpIdLower) || (numPart ? liveLocMap.get(numPart) : null);
+      // 🛑 STRICT REQUIREMENT: Partner must have active LiveLocation with status online and valid GPS
+      const loc = liveLocMap.get(dpIdLower) || (numClean ? liveLocMap.get(numClean) : null);
       if (!loc || loc.is_online !== true) {
         continue;
       }
 
-      let partnerLat = (loc && loc.latitude != null && !isNaN(Number(loc.latitude))) ? Number(loc.latitude) : KUMBAKONAM_GEOFENCE.center.latitude;
-      let partnerLng = (loc && loc.longitude != null && !isNaN(Number(loc.longitude))) ? Number(loc.longitude) : KUMBAKONAM_GEOFENCE.center.longitude;
+      if (loc.latitude == null || loc.longitude == null) {
+        continue;
+      }
 
-      // If stored partner coordinates are outside Kumbakonam (> 30km, e.g. Chennai fallback), use Kumbakonam center
-      if (calculateDistanceKm(KUMBAKONAM_GEOFENCE.center.latitude, KUMBAKONAM_GEOFENCE.center.longitude, partnerLat, partnerLng) > 30) {
-        partnerLat = KUMBAKONAM_GEOFENCE.center.latitude;
-        partnerLng = KUMBAKONAM_GEOFENCE.center.longitude;
+      const partnerLat = Number(loc.latitude);
+      const partnerLng = Number(loc.longitude);
+      if (isNaN(partnerLat) || isNaN(partnerLng) || (partnerLat === 0 && partnerLng === 0)) {
+        continue;
       }
 
       const distance = calculateDistanceKm(custLat, custLng, partnerLat, partnerLng);
@@ -153,7 +180,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       });
     }
 
-    // 5. Sort by distance ascending (closest partner first)
+    // 5. Sort by distance ascending (strictly closest partner first)
     candidates.sort((a, b) => a.distance_km - b.distance_km);
     return candidates;
   } catch (err) {
@@ -186,7 +213,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
   let candidates = await findAvailablePartners(
     refLat,
     refLng,
-    excluded
+    excluded,
+    orderDoc.order_id
   );
 
   // If no candidates found with exclusions, handle looping!
@@ -198,7 +226,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
       candidates = await findAvailablePartners(
         refLat,
         refLng,
-        orderDoc.declined_partners || []
+        orderDoc.declined_partners || [],
+        orderDoc.order_id
       );
     }
 
@@ -210,7 +239,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
       candidates = await findAvailablePartners(
         refLat,
         refLng,
-        []
+        [],
+        orderDoc.order_id
       );
     }
   }

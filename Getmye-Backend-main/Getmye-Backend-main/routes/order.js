@@ -101,12 +101,6 @@ router.get('/pending', async (req, res) => {
       const numClean = numPart.replace(/^0+/, '');
       const pRegex = new RegExp(`^(dp_?0*)?${numClean || numPart}$`, 'i');
 
-      // Check if this delivery partner currently has an active ongoing delivery
-      const hasActiveOngoing = await Order.exists({
-        partner_id: { $in: [partnerId, pRegex] },
-        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
-      });
-
       // 🛑 STRICT REQUIREMENT: Delivery partner must be registered and ONLINE
       const partnerDoc = await DeliveryPerson.findOne({
         $or: [
@@ -114,26 +108,51 @@ router.get('/pending', async (req, res) => {
           { DP_id: pRegex },
           { mobile_number: partnerId }
         ]
-      }).select('dp_status').lean();
+      }).select('DP_id dp_status').lean();
       const isPartnerOnline = partnerDoc && partnerDoc.dp_status === 'online';
 
-      // 🛑 STRICT REQUIREMENT: Delivery partner's LiveLocation must be active and ONLINE
+      // Collect all partner ID formats for this partner
+      const partnerMatchList = [partnerId, pRegex];
+      if (partnerDoc && partnerDoc.DP_id) {
+        partnerMatchList.push(partnerDoc.DP_id);
+        partnerMatchList.push(new RegExp(`^${partnerDoc.DP_id}$`, 'i'));
+      }
+      if (numClean) {
+        partnerMatchList.push(numClean);
+        partnerMatchList.push(`dp_${numClean}`);
+        partnerMatchList.push(`DP${numClean.padStart(3, '0')}`);
+        partnerMatchList.push(`dp_${numClean.padStart(3, '0')}`);
+      }
+
+      // Check if this delivery partner currently has an active ongoing delivery
+      const hasActiveOngoing = await Order.exists({
+        partner_id: { $in: partnerMatchList },
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      });
+
+      // 🛑 STRICT REQUIREMENT: Delivery partner's LiveLocation must be active and ONLINE with valid GPS
       const liveLoc = await LiveLocation.findOne({
         $or: [
           { partner_id: partnerId },
           { partner_id: pRegex }
         ]
       }).lean();
-      const isLocationOnline = liveLoc && liveLoc.is_online === true;
+      const isLocationOnline = liveLoc &&
+        liveLoc.is_online === true &&
+        liveLoc.latitude != null &&
+        liveLoc.longitude != null &&
+        !isNaN(Number(liveLoc.latitude)) &&
+        !isNaN(Number(liveLoc.longitude)) &&
+        (Number(liveLoc.latitude) !== 0 || Number(liveLoc.longitude) !== 0);
 
       const orConditions = [
         // Ongoing accepted active orders for this partner (always allow them to view and complete their ongoing order)
         {
-          partner_id: { $in: [partnerId, pRegex] },
+          partner_id: { $in: partnerMatchList },
           status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
         },
         {
-          partner_id: { $in: [partnerId, pRegex] },
+          partner_id: { $in: partnerMatchList },
           status: 'cancelled',
           cancelled_at: { $gte: cancelledThreshold }
         },
@@ -143,15 +162,17 @@ router.get('/pending', async (req, res) => {
         }
       ];
 
-      // 🛑 ONLY broadcast unaccepted pending orders IF:
-      // 1. Partner is not busy with another delivery (!hasActiveOngoing)
-      // 2. Partner status is explicitly ONLINE (isPartnerOnline)
-      // 3. Partner Location status is explicitly ONLINE (isLocationOnline)
+      // 🛑 STRICT PROXIMITY SEQUENTIAL DISPATCH:
+      // An unaccepted pending order is STRICTLY offered ONLY to the currently assigned nearest partner!
+      // If that partner declines or times out (2 mins), it moves to the next closest partner.
+      // Multiple delivery persons will NEVER receive or ring alarms for the same order at the same time!
       if (!hasActiveOngoing && isPartnerOnline && isLocationOnline) {
         orConditions.unshift({
           status: 'pending',
           created_at: { $gte: pendingThreshold },
-          declined_partners: { $nin: [partnerId, pRegex] }
+          current_assigned_partner_id: { $in: partnerMatchList },
+          declined_partners: { $nin: partnerMatchList },
+          timed_out_partners: { $nin: partnerMatchList }
         });
       }
 
@@ -349,6 +370,18 @@ router.post('/accept', async (req, res) => {
         cancelled_by: existing.cancelled_by || 'customer',
         message: `Order #${order_id} was cancelled by the customer. Reason: ${existing.cancel_reason || 'Customer cancelled the order'}`
       });
+    }
+
+    // 🛑 STRICT DISPATCH GUARD: Ensure only the currently assigned partner can accept
+    if (existing && existing.status === 'pending' && existing.current_assigned_partner_id) {
+      if (!partnerIdsMatch(existing.current_assigned_partner_id, resolvedPartnerId)) {
+        console.warn(`⚠️ Order ${order_id} accept blocked: Assigned to ${existing.current_assigned_partner_id}, but accept attempted by ${resolvedPartnerId}`);
+        return res.status(403).json({
+          success: false,
+          error: 'ORDER_ASSIGNED_TO_ANOTHER_PARTNER',
+          message: 'This order is currently offered to the nearest delivery partner.'
+        });
+      }
     }
 
     const order = await Order.findOneAndUpdate(
@@ -637,11 +670,35 @@ router.post('/decline', async (req, res) => {
     const order = await Order.findOne({ order_id });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
+    if (order.status !== 'pending') {
+      return res.json({
+        success: true,
+        message: `Order is not pending (current status: ${order.status})`,
+        order
+      });
+    }
+
     const pId = (partner_id || 'DP001').toString().trim();
     if (!order.declined_partners) order.declined_partners = [];
     if (!isPartnerInList(pId, order.declined_partners)) {
       order.declined_partners.push(pId);
     }
+    if (order.current_assigned_partner_id && partnerIdsMatch(order.current_assigned_partner_id, pId)) {
+      if (!isPartnerInList(order.current_assigned_partner_id, order.declined_partners)) {
+        order.declined_partners.push(order.current_assigned_partner_id);
+      }
+    }
+    try {
+      const numPart = pId.replace(/[^0-9]/g, '');
+      const numClean = numPart.replace(/^0+/, '');
+      const pRegex = new RegExp(`^(dp_?0*)?${numClean || numPart}$`, 'i');
+      const dpDoc = await DeliveryPerson.findOne({
+        $or: [{ DP_id: pId }, { DP_id: pRegex }, { mobile_number: pId }]
+      }).select('DP_id').lean();
+      if (dpDoc && dpDoc.DP_id && !isPartnerInList(dpDoc.DP_id, order.declined_partners)) {
+        order.declined_partners.push(dpDoc.DP_id);
+      }
+    } catch (_) {}
     order.declined_by = pId;
     order.decline_reason = decline_reason || 'Partner declined';
 
