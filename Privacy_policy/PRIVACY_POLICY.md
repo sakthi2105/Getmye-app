@@ -70,13 +70,13 @@ We implement appropriate technical, administrative, and physical security measur
 ## 6. Data Retention and Account Deletion
 
 - We retain your personal information as long as your account remains active or as needed to comply with legal, tax, or regulatory obligations.
-- **Account Deletion:** Users have the right to request the deletion of their account and associated personal data at any time. You can request deletion directly from the app settings or by contacting our support team at **sivasakthi@coderead.in**. Upon verification, your data will be permanently deleted within 30 days, subject to legally required record-keeping.
+- **Account Deletion:** Users have the right to request the deletion of their account and associated personal data at any time. You can request deletion directly from the app settings or via our dedicated web portal at [delete-account.html](delete-account.html). Upon verification, your data will be permanently deleted within 30 days, subject to legally required record-keeping (such as GST and tax invoices).
 
 ---
 
-## 7. Children’s Privacy
+## 7. Children’s Privacy & Child Safety Standards
 
-GetMye is not intended for use by individuals under the age of 18 without parental consent. We do not knowingly collect personal identifiable information from children. If we discover that a minor has provided us with personal details, we will immediately delete such information.
+GetMye is not intended for use by individuals under the age of 18 without parental consent. We do not knowingly collect personal identifiable information from children. We maintain an absolute zero-tolerance policy against child sexual abuse and exploitation (CSAE/CSAM). For full details and reporting procedures, see our dedicated [Child Safety Standards Policy](child-safety.html).
 
 ---
 

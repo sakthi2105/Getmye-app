@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Child Safety Standards & Protection Policy - GetMye</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #FF5722;
+      --primary-dark: #E64A19;
+      --bg-color: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --border-color: #E2E8F0;
+      --danger: #DC2626;
+      --danger-bg: #FEF2F2;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      padding: 48px 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+      border: 1px solid var(--border-color);
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+      flex-wrap: wrap;
+    }
+    .nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      background: #F1F5F9;
+      color: var(--text-main);
+      text-decoration: none;
+    }
+    .nav-link.active {
+      background: #FFF3E0;
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .header {
+      border-bottom: 2px solid #F1F5F9;
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+    .badge {
+      display: inline-block;
+      background: #FEF2F2;
+      color: var(--danger);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    h1 {
+      font-size: 2.1rem;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 8px;
+    }
+    .meta-text {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: #0F172A;
+      margin-top: 36px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    p {
+      margin-bottom: 16px;
+      color: #334155;
+    }
+    ul, ol {
+      margin-left: 24px;
+      margin-bottom: 16px;
+      color: #334155;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+    .alert-box {
+      background: var(--danger-bg);
+      border-left: 4px solid var(--danger);
+      padding: 16px 20px;
+      border-radius: 0 10px 10px 0;
+      margin: 20px 0;
+    }
+    .alert-box p {
+      margin: 0;
+      font-weight: 600;
+      color: #991B1B;
+    }
+    .info-box {
+      background: #F1F5F9;
+      border-left: 4px solid var(--primary);
+      padding: 16px 20px;
+      border-radius: 0 10px 10px 0;
+      margin: 20px 0;
+    }
+    .info-box p {
+      margin: 0;
+      font-weight: 500;
+      color: #1E293B;
+    }
+    .contact-card {
+      background: #F8FAFC;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px;
+      margin-top: 20px;
+    }
+    .contact-card p {
+      margin-bottom: 8px;
+    }
+    .contact-card strong {
+      color: #0F172A;
+      display: inline-block;
+      width: 140px;
+    }
+    a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    @media (max-width: 640px) {
+      body {
+        padding: 16px 12px;
+      }
+      .container {
+        padding: 28px 20px;
+      }
+      h1 {
+        font-size: 1.7rem;
+      }
+      .contact-card strong {
+        display: block;
+        width: 100%;
+        margin-bottom: 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Navigation Bar -->
+    <nav class="nav-bar">
+      <a href="index.html" class="nav-link">Privacy Policy</a>
+      <a href="child-safety.html" class="nav-link active">Child Safety Policy</a>
+      <a href="delete-account.html" class="nav-link">Delete Account & Data</a>
+    </nav>
+
+    <div class="header">
+      <span class="badge">Google Play Safety Compliance</span>
+      <h1>Child Safety Standards & Protection Policy</h1>
+      <p class="meta-text">Application: <strong>GetMye</strong> | Effective Date: <strong>November 4, 2026</strong></p>
+    </div>
+
+    <p>At <strong>GetMye</strong> ("we," "our," or "us"), operated under the management of our registered entity in Kumbakonam, Tamil Nadu, we uphold the highest standards of safety, ethics, and legal compliance. We are strictly committed to the protection of children and maintaining a digital and physical environment that actively prevents, identifies, and eradicates any form of child sexual abuse, exploitation, or harm.</p>
+
+    <p>This Child Safety Standards Policy outlines our non-negotiable principles, user eligibility criteria, proactive safeguards, and reporting procedures in full compliance with <strong>Google Play’s Child Safety Standards</strong>, the <strong>Protection of Children from Sexual Offences (POCSO) Act</strong>, the <strong>Information Technology (Intermediary Guidelines and Digital Media Ethics Code) Rules</strong>, and international standards including <strong>COPPA</strong>.</p>
+
+    <div class="alert-box">
+      <p>ZERO TOLERANCE: GetMye has zero tolerance for Child Sexual Abuse Material (CSAM), Child Sexual Exploitation and Abuse (CSAE), predatory behavior, or any conduct that endangers minors. Any violation results in immediate account termination, device bans, and immediate referral to national and international law enforcement agencies.</p>
+    </div>
+
+    <h2>1. Target Audience & Age Restrictions</h2>
+    <p>GetMye is a hyperlocal on-demand food, grocery, and errand ordering application designed strictly for general adult audiences.</p>
+    <ul>
+      <li><strong>Minimum Age Requirement:</strong> You must be at least <strong>18 years of age</strong> to create an account, register as a delivery partner, or place orders independently on GetMye.</li>
+      <li><strong>Minors Under 18:</strong> Individuals under 18 years of age may only access or use GetMye services under the direct supervision, consent, and authorization of a parent or legal guardian. The parent or guardian assumes all responsibility and liability for transactions conducted.</li>
+      <li><strong>No Targeted Marketing to Children:</strong> We do not direct content, advertising, promotions, or merchandise towards children under the age of 13.</li>
+    </ul>
+
+    <h2>2. Zero Tolerance for CSAM & CSAE</h2>
+    <p>We strictly prohibit the creation, storage, transmission, facilitation, solicitation, or promotion of:</p>
+    <ul>
+      <li><strong>Child Sexual Abuse Material (CSAM)</strong> or any visual, textual, or digital depictions of child sexual exploitation.</li>
+      <li><strong>Child Sexual Exploitation and Abuse (CSAE)</strong>, including child grooming, extortion, coercion, or harassment of minors.</li>
+      <li>Any predatory communication or inappropriate solicitation directed at minors through delivery instructions, support chats, review feedback, or partner interactions.</li>
+      <li>Any delivery request involving harmful or age-restricted substances (e.g., tobacco, alcoholic beverages) to minors.</li>
+    </ul>
+
+    <h2>3. Delivery Partner & On-Ground Safeguards</h2>
+    <p>Because GetMye facilitates real-world physical deliveries in Kumbakonam and surrounding regions, we enforce rigorous safety guidelines for our delivery personnel and vendors:</p>
+    <ul>
+      <li><strong>Identity Verification:</strong> All delivery personnel undergo government identity checks (Aadhaar/PAN and driver’s license verification) and background vetting prior to onboarding.</li>
+      <li><strong>Code of Conduct for Deliveries:</strong> Delivery personnel are strictly prohibited from entering premises unsupervised when a delivery is accepted by an unaccompanied child. Delivery handovers must happen at the doorstep or building entrance.</li>
+      <li><strong>No Personal Contact Retention:</strong> Delivery partners are strictly prohibited from saving, storing, calling, or messaging customer phone numbers outside the temporary, order-specific delivery fulfillment window. Any harassment, unsolicited contact, or inappropriate behavior towards children or family members will result in immediate police complaint filing.</li>
+    </ul>
+
+    <h2>4. Children's Data Privacy & Parental Rights (COPPA & DPDP Act)</h2>
+    <p>We are committed to the data privacy of minors in accordance with India's Digital Personal Data Protection (DPDP) Act and global privacy frameworks:</p>
+    <ul>
+      <li><strong>No Knowingly Collected Data:</strong> We do not knowingly solicit, collect, or store personal identifiable information from children under the age of 18 without verified parental consent.</li>
+      <li><strong>Immediate Deletion Upon Notice:</strong> If we discover or are notified that an unsupervised minor under 18 has registered an account or provided personal details (such as name, phone number, or GPS location), we will immediately suspend the account and permanently purge their data from our operational databases.</li>
+      <li><strong>Parental Requests:</strong> Parents or legal guardians who suspect that their child has provided personal information to GetMye can contact our Grievance Officer directly at <a href="mailto:sivasakthi@coderead.in">sivasakthi@coderead.in</a> with the subject line <em>"Child Data Removal Request"</em>. The request will be processed within 24–48 hours.</li>
+    </ul>
+
+    <h2>5. Reporting Mechanisms & Law Enforcement Cooperation</h2>
+    <p>We provide multiple immediate reporting channels to ensure zero latency when addressing child safety concerns:</p>
+    <ol>
+      <li><strong>In-App Support:</strong> Users can flag any inappropriate message, driver conduct, or order instruction immediately via the Help & Support section.</li>
+      <li><strong>Direct Child Safety Officer Contact:</strong> Concerns, suspected child endangerment, or violations can be reported directly to our designated safety team via email at <a href="mailto:sivasakthi@coderead.in">sivasakthi@coderead.in</a> or phone at <a href="tel:+919344701545">+91 9344701545</a>.</li>
+    </ol>
+
+    <div class="info-box">
+      <p><strong>Mandatory Reporting Protocol:</strong> In compliance with Indian legal requirements (POCSO Act & Information Technology Act) and Google Play Safety Standards, if any incident involving child sexual exploitation, abuse, or endangerment is detected or reported, GetMye will immediately report the incident, user logs, and IP addresses to the <strong>National Cyber Crime Reporting Portal (cybercrime.gov.in)</strong>, local law enforcement authorities, and international bodies such as the <strong>National Center for Missing & Exploited Children (NCMEC)</strong>.</p>
+    </div>
+
+    <h2>6. Contact & Designated Child Safety Grievance Officer</h2>
+    <p>For inquiries, complaints, or reports relating specifically to child safety, please contact our designated Grievance & Safety Officer:</p>
+
+    <div class="contact-card">
+      <p><strong>Application:</strong> GetMye</p>
+      <p><strong>Officer Name:</strong> Sivasakthi</p>
+      <p><strong>Role:</strong> Grievance & Child Safety Officer</p>
+      <p><strong>Email:</strong> <a href="mailto:sivasakthi@coderead.in">sivasakthi@coderead.in</a></p>
+      <p><strong>Emergency Contact:</strong> <a href="tel:+919344701545">+91 9344701545</a></p>
+      <p><strong>Official Address:</strong> 9C/ 6-1 South Madappa Lane, Bharathi Nagar, Kumbakonam, Thanjavur, Tamil Nadu 612001, India</p>
+    </div>
+
+  </div>
+
+  <footer>
+    <p>&copy; 2026 GetMye. All rights reserved. | <a href="index.html">Privacy Policy</a> | <a href="child-safety.html">Child Safety Policy</a> | <a href="delete-account.html">Account Deletion</a></p>
+  </footer>
+
+</body>
+</html>
+

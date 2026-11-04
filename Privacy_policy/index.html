@@ -38,6 +38,33 @@
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
       border: 1px solid var(--border-color);
     }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+      flex-wrap: wrap;
+    }
+    .nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      background: #F1F5F9;
+      color: var(--text-main);
+      text-decoration: none;
+    }
+    .nav-link.active {
+      background: #FFF3E0;
+      color: var(--primary);
+      font-weight: 600;
+    }
     .header {
       border-bottom: 2px solid #F1F5F9;
       padding-bottom: 24px;
@@ -156,6 +183,13 @@
 <body>
 
   <div class="container">
+    <!-- Navigation Bar -->
+    <nav class="nav-bar">
+      <a href="index.html" class="nav-link active">Privacy Policy</a>
+      <a href="child-safety.html" class="nav-link">Child Safety Policy</a>
+      <a href="delete-account.html" class="nav-link">Delete Account & Data</a>
+    </nav>
+
     <div class="header">
       <span class="badge">Legal Document</span>
       <h1>Privacy Policy</h1>
@@ -220,10 +254,18 @@
 
     <h2>6. Data Retention and Account Deletion</h2>
     <p>We retain your personal information as long as your account remains active or as needed to comply with legal, tax, or regulatory obligations.</p>
-    <p><strong>Account Deletion:</strong> Users have the right to request the deletion of their account and associated personal data at any time. You can request deletion directly from the app settings or by sending an email to <a href="mailto:sivasakthi@coderead.in">sivasakthi@coderead.in</a>. Upon verification, your data will be permanently deleted within 30 days, subject to legally required record-keeping.</p>
+    <p><strong>Account Deletion:</strong> Users have the right to request the deletion of their account and associated personal data at any time. You can request deletion directly from the app settings, or online via our dedicated deletion portal.</p>
+    
+    <div class="highlight-box">
+      <p><strong>Account & Data Deletion Portal:</strong> In compliance with Google Play requirements, visit our step-by-step <a href="delete-account.html"><strong>Account and Data Deletion Page</strong></a> to submit an online deletion request, review deletion timelines, or see which data is purged vs legally retained.</p>
+    </div>
 
-    <h2>7. Children's Privacy</h2>
-    <p>GetMye is not intended for use by individuals under the age of 18 without parental consent. We do not knowingly collect personal identifiable information from children.</p>
+    <h2>7. Children's Privacy & Child Safety Standards</h2>
+    <p>GetMye is not intended for use by individuals under the age of 18 without parental consent. We do not knowingly collect personal identifiable information from children, and we maintain an absolute zero-tolerance policy against child sexual abuse and exploitation.</p>
+
+    <div class="highlight-box">
+      <p><strong>Child Safety Policy:</strong> For comprehensive details on our child protection mechanisms, compliance with Google Play Child Safety Standards, and reporting protocols, please review our dedicated <a href="child-safety.html"><strong>Child Safety Standards & Protection Policy</strong></a>.</p>
+    </div>
 
     <h2>8. Changes to This Privacy Policy</h2>
     <p>We may update our Privacy Policy periodically to reflect changes in our practices or applicable legal requirements. Any modifications will be posted here with an updated "Last Updated" date.</p>
@@ -241,7 +283,7 @@
   </div>
 
   <footer>
-    <p>&copy; 2026 GetMye. All rights reserved.</p>
+    <p>&copy; 2026 GetMye. All rights reserved. | <a href="index.html">Privacy Policy</a> | <a href="child-safety.html">Child Safety Policy</a> | <a href="delete-account.html">Account Deletion</a></p>
   </footer>
 
 </body>

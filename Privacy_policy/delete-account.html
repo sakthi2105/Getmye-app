@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account and Data Deletion Request - GetMye</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #FF5722;
+      --primary-dark: #E64A19;
+      --bg-color: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --border-color: #E2E8F0;
+      --danger: #DC2626;
+      --danger-bg: #FEF2F2;
+      --success: #16A34A;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      padding: 48px 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+      border: 1px solid var(--border-color);
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+      flex-wrap: wrap;
+    }
+    .nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      background: #F1F5F9;
+      color: var(--text-main);
+      text-decoration: none;
+    }
+    .nav-link.active {
+      background: #FFF3E0;
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .header {
+      border-bottom: 2px solid #F1F5F9;
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+    .badge {
+      display: inline-block;
+      background: #FFF3E0;
+      color: var(--primary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    h1 {
+      font-size: 2.1rem;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 8px;
+    }
+    .meta-text {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: #0F172A;
+      margin-top: 36px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    p {
+      margin-bottom: 16px;
+      color: #334155;
+    }
+    ul, ol {
+      margin-left: 24px;
+      margin-bottom: 16px;
+      color: #334155;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+    .step-box {
+      background: #F8FAFC;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .step-box h4 {
+      font-size: 1.05rem;
+      color: #0F172A;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      color: #FFFFFF;
+      border-radius: 50%;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .table-container {
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.95rem;
+    }
+    th, td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    th {
+      background-color: #F1F5F9;
+      color: #0F172A;
+      font-weight: 600;
+    }
+    .data-pill-delete {
+      background: #FEE2E2;
+      color: #991B1B;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .data-pill-retain {
+      background: #FEF3C7;
+      color: #92400E;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .deletion-form-card {
+      background: #FFFFFF;
+      border: 2px solid #E2E8F0;
+      border-radius: 12px;
+      padding: 28px;
+      margin: 28px 0;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    }
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-group label {
+      display: block;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: #1E293B;
+      margin-bottom: 6px;
+    }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.95rem;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(255, 87, 34, 0.15);
+    }
+    .btn-submit {
+      background: var(--primary);
+      color: #FFFFFF;
+      border: none;
+      padding: 12px 24px;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      display: inline-block;
+    }
+    .btn-submit:hover {
+      background: var(--primary-dark);
+      text-decoration: none;
+    }
+    .alert-box {
+      background: var(--danger-bg);
+      border-left: 4px solid var(--danger);
+      padding: 16px 20px;
+      border-radius: 0 10px 10px 0;
+      margin: 20px 0;
+    }
+    .alert-box p {
+      margin: 0;
+      font-weight: 500;
+      color: #991B1B;
+    }
+    .contact-card {
+      background: #F8FAFC;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px;
+      margin-top: 20px;
+    }
+    .contact-card p {
+      margin-bottom: 8px;
+    }
+    .contact-card strong {
+      color: #0F172A;
+      display: inline-block;
+      width: 140px;
+    }
+    a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    @media (max-width: 640px) {
+      body {
+        padding: 16px 12px;
+      }
+      .container {
+        padding: 28px 20px;
+      }
+      h1 {
+        font-size: 1.7rem;
+      }
+      .contact-card strong {
+        display: block;
+        width: 100%;
+        margin-bottom: 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Navigation Bar -->
+    <nav class="nav-bar">
+      <a href="index.html" class="nav-link">Privacy Policy</a>
+      <a href="child-safety.html" class="nav-link">Child Safety Policy</a>
+      <a href="delete-account.html" class="nav-link active">Delete Account & Data</a>
+    </nav>
+
+    <div class="header">
+      <span class="badge">Google Play Data Safety Requirement</span>
+      <h1>Account & Personal Data Deletion</h1>
+      <p class="meta-text">Application: <strong>GetMye</strong> | Applicable URL: <strong>https://getmye.coderead.in/delete-account.html</strong></p>
+    </div>
+
+    <p>At <strong>GetMye</strong>, we respect your right to control your personal data. In full compliance with <strong>Google Play’s Account Deletion Policy</strong> and global privacy laws, users can permanently delete their GetMye account and all associated personal data at any time, directly through the mobile application or online through this web resource.</p>
+
+    <div class="alert-box">
+      <p><strong>Warning:</strong> Deleting your account is permanent and cannot be undone. You will lose access to order histories, saved addresses, wallet credits/loyalty rewards, and account settings.</p>
+    </div>
+
+    <h2>1. How to Request Account Deletion</h2>
+    <p>We provide two convenient options to initiate an account and data deletion request:</p>
+
+    <div class="step-box">
+      <h4><span class="step-number">A</span> Option 1: In-App Self-Serve Deletion (Instant & Recommended)</h4>
+      <p>If you have the GetMye app installed on your smartphone:</p>
+      <ol>
+        <li>Open the <strong>GetMye</strong> app.</li>
+        <li>Tap on your <strong>Profile / Account</strong> icon in the bottom navigation bar.</li>
+        <li>Go to <strong>Settings</strong> &gt; <strong>Account Security & Privacy</strong>.</li>
+        <li>Tap on <strong>"Delete My Account"</strong>.</li>
+        <li>Review the data loss confirmation and enter your registered mobile number OTP to verify your identity.</li>
+        <li>Tap <strong>"Confirm Permanent Deletion"</strong>. Your account will be immediately signed out and scheduled for permanent deletion.</li>
+      </ol>
+    </div>
+
+    <div class="step-box">
+      <h4><span class="step-number">B</span> Option 2: Web / Email Request (If App is Uninstalled)</h4>
+      <p>If you have uninstalled the app or lost access to your device, you can submit an online request directly using the form below or by emailing our Grievance Officer:</p>
+      <ul>
+        <li><strong>Email:</strong> <a href="mailto:sivasakthi@coderead.in?subject=Account%20and%20Data%20Deletion%20Request%20-%20GetMye">sivasakthi@coderead.in</a></li>
+        <li><strong>Subject:</strong> <code>Account and Data Deletion Request - GetMye</code></li>
+        <li><strong>Required Details:</strong> Your registered full name, registered mobile number (+91), and registered email address.</li>
+      </ul>
+    </div>
+
+    <!-- Web Deletion Request Form -->
+    <div class="deletion-form-card">
+      <h3 style="margin-top: 0;">Online Account Deletion Request Form</h3>
+      <p style="font-size: 0.92rem; color: var(--text-muted); margin-bottom: 20px;">
+        Fill out this form to submit your account deletion request directly. Our support team will verify your phone number via SMS/call and process the purge.
+      </p>
+
+      <form id="deletionForm" onsubmit="handleFormSubmit(event)">
+        <div class="form-group">
+          <label for="fullName">Registered Full Name *</label>
+          <input type="text" id="fullName" name="fullName" placeholder="e.g. Rahul Kumar" required>
+        </div>
+
+        <div class="form-group">
+          <label for="phone">Registered Mobile Number (with country code) *</label>
+          <input type="tel" id="phone" name="phone" placeholder="e.g. +91 9876543210" required>
+        </div>
+
+        <div class="form-group">
+          <label for="email">Registered Email Address (if linked)</label>
+          <input type="email" id="email" name="email" placeholder="e.g. rahul@example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="reason">Reason for Leaving (Optional)</label>
+          <select id="reason" name="reason">
+            <option value="No longer using the app">No longer using the app</option>
+            <option value="Privacy concerns">Privacy concerns</option>
+            <option value="Relocated out of delivery zone">Relocated out of delivery zone</option>
+            <option value="Temporary break">Temporary break</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="confirmCheckbox" required style="width: auto; margin-right: 8px;">
+            I confirm that I want to permanently delete my GetMye account and associated data.
+          </label>
+        </div>
+
+        <button type="submit" class="btn-submit">Submit Deletion Request</button>
+      </form>
+
+      <div id="formSuccess" style="display: none; background: #ECFDF5; border: 1px solid #10B981; padding: 16px; border-radius: 8px; margin-top: 20px;">
+        <p style="margin: 0; color: #065F46; font-weight: 600;">
+          Request Prepared! Please click below to send the official deletion email to our verification desk:
+        </p>
+        <p style="margin-top: 10px;">
+          <a id="mailToLink" href="#" class="btn-submit" style="font-size: 0.9rem; padding: 8px 16px;">Click to Send Verification Email</a>
+        </p>
+      </div>
+    </div>
+
+    <h2>2. What Data Is Deleted vs Retained</h2>
+    <p>When your account deletion is confirmed, GetMye takes specific actions regarding your data categories:</p>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Data Category</th>
+            <th>Action Taken</th>
+            <th>Retention Reason & Period</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>User Profile</strong><br><small>Name, Phone, Email, Profile Picture</small></td>
+            <td><span class="data-pill-delete">PERMANENTLY DELETED</span></td>
+            <td>Purged from active production databases within 30 days.</td>
+          </tr>
+          <tr>
+            <td><strong>Saved Addresses & Location</strong><br><small>Home/Work addresses, GPS coordinates, landmarks</small></td>
+            <td><span class="data-pill-delete">PERMANENTLY DELETED</span></td>
+            <td>Completely removed from database records.</td>
+          </tr>
+          <tr>
+            <td><strong>Device Identifiers & Tokens</strong><br><small>FCM Push notification tokens, device IDs, auth sessions</small></td>
+            <td><span class="data-pill-delete">REVOKED & PURGED</span></td>
+            <td>All active sessions immediately invalidated upon request.</td>
+          </tr>
+          <tr>
+            <td><strong>Customer Support Chats</strong><br><small>Support queries, tickets, feedback logs</small></td>
+            <td><span class="data-pill-delete">DE-IDENTIFIED / PURGED</span></td>
+            <td>Personal identifiers scrubbed; anonymized for quality auditing.</td>
+          </tr>
+          <tr>
+            <td><strong>Financial & Billing Records</strong><br><small>Tax invoices, GST details, payment transaction IDs, refund logs</small></td>
+            <td><span class="data-pill-retain">LEGALLY RETAINED</span></td>
+            <td>Retained strictly for statutory compliance under Indian Companies Act, GST Act, and RBI rules (up to 7 years). Not used for any marketing.</td>
+          </tr>
+          <tr>
+            <td><strong>Fraud & Safety Records</strong><br><small>Fraud prevention flags, unresolved chargeback disputes</small></td>
+            <td><span class="data-pill-retain">RESTRICTED RETENTION</span></td>
+            <td>Retained solely until dispute resolution or regulatory clearance.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>3. Deletion Timeline & Process</h2>
+    <ol>
+      <li><strong>Immediate Deactivation (Within 24 Hours):</strong> Your account is locked immediately upon receiving the verified request. You will no longer receive marketing communications, push notifications, or order updates.</li>
+      <li><strong>Primary Database Purge (Within 30 Days):</strong> All personal profile data, saved addresses, search history, and live tracking records are permanently deleted from all active servers.</li>
+      <li><strong>Backup Purge (Up to 90 Days):</strong> Encrypted database snapshots and backup archives are overwritten according to our automated 90-day retention cycle.</li>
+    </ol>
+
+    <h2>4. Grievance Redressal & Support Desk</h2>
+    <p>For questions or assistance regarding the deletion of your account, you can directly contact our Grievance Officer:</p>
+
+    <div class="contact-card">
+      <p><strong>Application:</strong> GetMye</p>
+      <p><strong>Grievance Officer:</strong> Sivasakthi</p>
+      <p><strong>Email:</strong> <a href="mailto:sivasakthi@coderead.in">sivasakthi@coderead.in</a></p>
+      <p><strong>Helpline:</strong> <a href="tel:+919344701545">+91 9344701545</a></p>
+      <p><strong>Registered Address:</strong> 9C/ 6-1 South Madappa Lane, Bharathi Nagar, Kumbakonam, Thanjavur, Tamil Nadu 612001, India</p>
+    </div>
+
+  </div>
+
+  <footer>
+    <p>&copy; 2026 GetMye. All rights reserved. | <a href="index.html">Privacy Policy</a> | <a href="child-safety.html">Child Safety Policy</a> | <a href="delete-account.html">Account Deletion</a></p>
+  </footer>
+
+  <script>
+    function handleFormSubmit(e) {
+      e.preventDefault();
+      const name = document.getElementById('fullName').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const reason = document.getElementById('reason').value;
+
+      const subject = encodeURIComponent("Account and Data Deletion Request - GetMye");
+      const body = encodeURIComponent(
+        `Dear GetMye Support Team,\n\n` +
+        `I am requesting the permanent deletion of my GetMye account and associated data.\n\n` +
+        `Details:\n` +
+        `- Full Name: ${name}\n` +
+        `- Registered Mobile Number: ${phone}\n` +
+        `- Registered Email: ${email || 'Not provided'}\n` +
+        `- Reason: ${reason}\n\n` +
+        `I understand this action is permanent and cannot be undone.\n\n` +
+        `Thank you.`
+      );
+
+      const mailtoUrl = `mailto:sivasakthi@coderead.in?subject=${subject}&body=${body}`;
+      
+      const mailLink = document.getElementById('mailToLink');
+      mailLink.href = mailtoUrl;
+
+      document.getElementById('formSuccess').style.display = 'block';
+      window.location.href = mailtoUrl;
+    }
+  </script>
+
+</body>
+</html>
+
