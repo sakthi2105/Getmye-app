@@ -176,7 +176,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
       }
 
       final pId = prefs.getString('active_order_partner_id') ?? prefs.getString('d_id') ?? 'DP001';
-      final res = await http.get(Uri.parse("${ApiConfig.orderPending}?partner_id=$pId")).timeout(const Duration(seconds: 3));
+      final res = await http.get(Uri.parse("${ApiConfig.orderPending}?partner_id=$pId")).timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List ordersList = data['orders'] ?? [];
@@ -301,8 +301,30 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                   status == 'picked_up' ||
                   status == 'in_transit' ||
                   status == 'Accepted');
+          final assignedPartner = (o['current_assigned_partner_id'] ?? '').toString().trim().toLowerCase();
+          final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final myPId = pId.trim().toLowerCase();
+          final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+              assignedPartner == myPId ||
+              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
+          );
+          final List declinedList = (o['declined_partners'] as List?)
+              ?.map((e) => e.toString().toLowerCase().trim())
+              .toList() ?? [];
+          final bool isDeclinedInBackend = declinedList.contains(myPId) ||
+              (myDigits.isNotEmpty && declinedList.any((d) => d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == myDigits));
+
+          if (isAssignedToMe && !isDeclinedInBackend && (_declinedOrderIds.contains(oId) || savedDeclined.contains(oId))) {
+            _declinedOrderIds.remove(oId);
+            savedDeclined.remove(oId);
+            await prefs.setStringList('partner_declined_order_ids', savedDeclined);
+            await prefs.remove('order_${oId}_status');
+          }
+
           final isDeclined = !isAccepted &&
               (_declinedOrderIds.contains(oId) ||
+                  isDeclinedInBackend ||
                   localStatus == 'declined' ||
                   status == 'declined' ||
                   status == 'rejected');
@@ -977,8 +999,10 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           String partnerPhone = prefs.getString('d_phone') ?? prefs.getString('partner_phone') ?? "";
                                           String partnerId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? prefs.getString('active_order_partner_id') ?? "";
                                           final partnerPic = prefs.getString('d_profile_picture_base64');
+                                          bool acceptSuccess = false;
+                                          String? cancelReason;
                                           try {
-                                            await http.post(
+                                            final acceptRes = await http.post(
                                               ApiConfig.orderAccept,
                                               headers: {'Content-Type': 'application/json'},
                                               body: jsonEncode({
@@ -988,10 +1012,57 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                                 'partner_phone': partnerPhone,
                                                 if (partnerPic != null && partnerPic.isNotEmpty) 'partner_profile_picture': partnerPic,
                                               }),
-                                            );
+                                            ).timeout(const Duration(seconds: 4));
+                                            if (acceptRes.statusCode == 200) {
+                                              acceptSuccess = true;
+                                            } else {
+                                              try {
+                                                final resData = jsonDecode(acceptRes.body);
+                                                if (resData['cancelled'] == true || resData['error'] == 'ORDER_CANCELLED') {
+                                                  cancelReason = (resData['cancel_reason'] ?? resData['message'] ?? 'Customer cancelled the order').toString();
+                                                }
+                                              } catch (_) {}
+                                            }
                                           } catch (e) {
                                             debugPrint("Error accepting order on backend: $e");
+                                            acceptSuccess = false;
                                           }
+
+                                          if (!acceptSuccess) {
+                                            if (!context.mounted) return;
+                                            if (cancelReason != null) {
+                                              showDialog(
+                                                context: context,
+                                                builder: (ctx) => AlertDialog(
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                  title: const Row(
+                                                    children: [
+                                                      Icon(Icons.cancel_rounded, color: Colors.red, size: 24),
+                                                      SizedBox(width: 8),
+                                                      Text("Order Cancelled", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                                    ],
+                                                  ),
+                                                  content: Text("The customer has cancelled this order.\nReason: $cancelReason"),
+                                                  actions: [
+                                                    ElevatedButton(
+                                                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+                                                      onPressed: () => Navigator.pop(ctx),
+                                                      child: const Text("OK", style: TextStyle(color: Colors.white)),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            } else {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text("Order is no longer available or was cancelled."),
+                                                  backgroundColor: Color(0xFFDC2626),
+                                                ),
+                                              );
+                                            }
+                                            return;
+                                          }
+
                                           await prefs.setBool('active_order_partner_accepted', true);
                                           await prefs.setString('active_order_partner_id', partnerId);
                                           await prefs.setString('active_order_partner_name', partnerName);

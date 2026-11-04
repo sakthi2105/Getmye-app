@@ -185,7 +185,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
     }
     if (dist <= 50) {
-      return "Arrived at your doorstep!";
+      return "Arrived";
     } else if (dist < 1000) {
       final m = dist.round();
       final mins = (dist / 350).ceil().clamp(1, 30);
@@ -207,22 +207,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   LatLng _customerLocation = const LatLng(10.9601, 79.3845);
   LatLng _riderLocation = const LatLng(10.9620, 79.3860);
 
-  // 📍 Geo-fencing / Service Area Restriction: Kumbakonam Town Exclusivity
-  static const double _kumbakonamCenterLat = 10.9601;
-  static const double _kumbakonamCenterLng = 79.3845;
-  static const double _kumbakonamMaxRadiusKm = 10.0;
-  static const String _kumbakonamUnavailableMsg =
-      "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!";
 
   bool _isLocationInKumbakonam(double lat, double lng) {
-    final double dLat = (_kumbakonamCenterLat - lat) * (pi / 180.0);
-    final double dLng = (_kumbakonamCenterLng - lng) * (pi / 180.0);
-    final double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(lat * (pi / 180.0)) * cos(_kumbakonamCenterLat * (pi / 180.0)) *
-        sin(dLng / 2) * sin(dLng / 2);
-    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    final double distKm = 6371.0 * c;
-    return distKm <= _kumbakonamMaxRadiusKm;
+    return true;
   }
 
   void _showGeofenceRestrictionDialog() {
@@ -257,7 +244,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ],
         ),
         content: const Text(
-          _kumbakonamUnavailableMsg,
+          "Sorry, our service is currently unavailable in your location.",
           style: TextStyle(
             fontSize: 14,
             height: 1.5,
@@ -400,7 +387,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         // Location is enabled & permission granted: get live location
         final prefs = await SharedPreferences.getInstance();
         final savedShort = prefs.getString('customer_address_short');
-        final bool hasAddress = savedShort != null && savedShort.isNotEmpty && savedShort != 'Detecting...' && savedShort != 'Current Location';
+        final bool hasAddress = savedShort != null &&
+            savedShort.isNotEmpty &&
+            savedShort != 'Detecting...' &&
+            savedShort != 'Current Location' &&
+            !savedShort.toLowerCase().contains('matthi') &&
+            !savedShort.toLowerCase().contains('mathi') &&
+            !savedShort.toLowerCase().contains('live gps');
         await _requestLiveLocation(forceOverrideAddress: !hasAddress);
       }
     } catch (e) {
@@ -495,15 +488,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _loadSavedLocation() async {
     final prefs = await SharedPreferences.getInstance();
-    final shortA = prefs.getString('customer_address_short');
-    final fullA = prefs.getString('customer_address_full');
+    String? shortA = prefs.getString('customer_address_short');
+    String? fullA = prefs.getString('customer_address_full');
     final lat = prefs.getDouble('customer_latitude');
     final lng = prefs.getDouble('customer_longitude');
 
-    if (shortA != null && shortA.isNotEmpty) {
+    // Clean any old stale 'Matthi' or 'Live GPS' string
+    if (shortA != null && (shortA.toLowerCase().contains('matthi') || shortA.toLowerCase().contains('mathi'))) {
+      await prefs.remove('customer_address_short');
+      shortA = null;
+    }
+    if (fullA != null && (fullA.toLowerCase().contains('matthi') || fullA.toLowerCase().contains('mathi') || fullA.toLowerCase().contains('live gps'))) {
+      await prefs.remove('customer_address_full');
+      await prefs.remove('active_order_customer_address');
+      fullA = null;
+    }
+
+    // 🛑 Sanitize conflated 'Nageswaran' + 'Annalagraharam' OSM tag artifact
+    if (shortA != null && shortA.toLowerCase().contains('nageswaran') && shortA.toLowerCase().contains('annalagraharam')) {
+      shortA = 'Nageswaran South Street';
+      await prefs.setString('customer_address_short', shortA);
+    }
+    if (fullA != null && fullA.toLowerCase().contains('nageswaran') && fullA.toLowerCase().contains('annalagraharam')) {
+      fullA = 'Nageswaran South Street, Kumbakonam - 612001';
+      await prefs.setString('customer_address_full', fullA);
+      await prefs.setString('active_order_customer_address', fullA);
+    }
+
+    final String validShort = shortA ?? '';
+    final String validFull = (fullA != null && fullA.isNotEmpty) ? fullA : validShort;
+    if (validShort.isNotEmpty) {
       setState(() {
-        _currentAddressShort = shortA;
-        _currentAddressFull = (fullA != null && fullA.isNotEmpty) ? fullA : shortA;
+        _currentAddressShort = validShort;
+        _currentAddressFull = validFull;
         _deliveryLocationController.text = _currentAddressFull;
       });
     }
@@ -697,7 +714,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         try {
           final livePos = await Geolocator.getCurrentPosition(
             desiredAccuracy: LocationAccuracy.high,
-            timeLimit: const Duration(seconds: 5),
+            timeLimit: const Duration(seconds: 8),
           );
           position = livePos;
         } catch (_) {}
@@ -719,53 +736,145 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           );
         }
 
-        String shortA = "Current Location";
-        String fullA = "Live GPS Location (${curPos.latitude.toStringAsFixed(4)}, ${curPos.longitude.toStringAsFixed(4)})";
+        String road = "";
+        String area = "";
+        String city = "";
+        String district = "";
+        String state = "";
+        String postcode = "";
 
-        // Reverse geocoding via OpenStreetMap with street/building accuracy
+        // 1. High-precision dynamic street/road & locality geocoding via Photon (Komoot)
         try {
-          final geoRes = await http.get(
-            Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}&zoom=18&addressdetails=1'),
+          final photonRes = await http.get(
+            Uri.parse('https://photon.komoot.io/reverse?lat=${curPos.latitude}&lon=${curPos.longitude}'),
             headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
-          ).timeout(const Duration(seconds: 5));
+          ).timeout(const Duration(seconds: 4));
 
-          if (geoRes.statusCode == 200) {
-            final geoData = jsonDecode(geoRes.body);
-            final address = geoData['address'];
-            if (address != null) {
-              String road = (address['road'] ?? address['pedestrian'] ?? address['neighbourhood'] ?? address['residential'] ?? '').toString().trim();
-              final suburb = (address['suburb'] ?? address['subdistrict'] ?? '').toString().trim();
-              final city = (address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Kumbakonam').toString().trim();
+          if (photonRes.statusCode == 200) {
+            final data = jsonDecode(photonRes.body);
+            final features = data['features'] as List?;
+            if (features != null && features.isNotEmpty) {
+              final props = features[0]['properties'] as Map<String, dynamic>?;
+              if (props != null) {
+                final pStreet = (props['street'] ?? '').toString().trim();
+                final pName = (props['name'] ?? '').toString().trim();
+                final pDistrict = (props['district'] ?? props['suburb'] ?? '').toString().trim();
+                final pCity = (props['city'] ?? props['county'] ?? '').toString().trim();
+                final pState = (props['state'] ?? '').toString().trim();
+                final pPostcode = (props['postcode'] ?? '').toString().trim();
 
-              if (road.isEmpty) {
-                if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
-                  road = suburb;
-                } else {
-                  road = (city.isNotEmpty && city != 'Live Location') ? city : 'Current Location';
+                final isMatthiStreet = pStreet.toLowerCase().contains('matthi') || pStreet.toLowerCase().contains('mathi');
+                final isMatthiName = pName.toLowerCase().contains('matthi') || pName.toLowerCase().contains('mathi');
+                final isMatthiDist = pDistrict.toLowerCase().contains('matthi') || pDistrict.toLowerCase().contains('mathi');
+
+                if (pStreet.isNotEmpty && !isMatthiStreet) {
+                  road = pStreet;
+                } else if (pName.isNotEmpty && !isMatthiName) {
+                  road = pName;
                 }
-              }
 
-              if (road.isNotEmpty && road != "Current Location" && city.isNotEmpty && city != "Live Location" && road.toLowerCase() != city.toLowerCase()) {
-                shortA = '$road, $city';
-              } else if (road.isNotEmpty && road != "Current Location") {
-                shortA = road;
-              } else if (city.isNotEmpty && city != "Live Location") {
-                shortA = city;
-              } else {
-                shortA = "Kumbakonam";
-              }
+                if (pDistrict.isNotEmpty && !isMatthiDist) {
+                  area = pDistrict;
+                }
 
-              String cleanFull = geoData['display_name'] ?? fullA;
-              if (cleanFull.startsWith('Matthi, ')) {
-                cleanFull = cleanFull.replaceFirst('Matthi, ', '');
+                if (pCity.isNotEmpty) city = pCity;
+                if (pState.isNotEmpty) state = pState;
+                if (pPostcode.isNotEmpty) postcode = pPostcode;
               }
-              fullA = cleanFull;
             }
           }
         } catch (_) {}
 
+        // 2. Secondary fallback via Nominatim dynamic reverse geocoding if road or area is not yet resolved
+        if (road.isEmpty || city.isEmpty) {
+          try {
+            final geoRes = await http.get(
+              Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=${curPos.latitude}&lon=${curPos.longitude}&zoom=18&addressdetails=1'),
+              headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
+            ).timeout(const Duration(seconds: 4));
+
+            if (geoRes.statusCode == 200) {
+              final geoData = jsonDecode(geoRes.body);
+              final address = geoData['address'] as Map<String, dynamic>?;
+              if (address != null) {
+                final nRoad = (address['road'] ?? address['pedestrian'] ?? address['street'] ?? address['residential'] ?? '').toString().trim();
+                final nSuburb = (address['suburb'] ?? address['neighbourhood'] ?? address['quarter'] ?? address['subdistrict'] ?? '').toString().trim();
+                final nCity = (address['city'] ?? address['town'] ?? address['village'] ?? address['municipality'] ?? '').toString().trim();
+                final nDistrict = (address['state_district'] ?? address['county'] ?? '').toString().trim();
+                final nState = (address['state'] ?? '').toString().trim();
+                final nPostcode = (address['postcode'] ?? '').toString().trim();
+
+                if (road.isEmpty && nRoad.isNotEmpty && !nRoad.toLowerCase().contains('matthi') && !nRoad.toLowerCase().contains('mathi')) {
+                  road = nRoad;
+                }
+                if (area.isEmpty && nSuburb.isNotEmpty && !nSuburb.toLowerCase().contains('matthi') && !nSuburb.toLowerCase().contains('mathi')) {
+                  area = nSuburb;
+                }
+                if (city.isEmpty && nCity.isNotEmpty) city = nCity;
+                if (district.isEmpty && nDistrict.isNotEmpty) district = nDistrict;
+                if (state.isEmpty && nState.isNotEmpty) state = nState;
+                if (postcode.isEmpty && nPostcode.isNotEmpty) postcode = nPostcode;
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 🛑 Filter out OpenStreetMap's erroneous suburb tagging for Kumbakonam
+        // OSM has an incorrect wide suburb node 'Annalagraharam' covering central town.
+        // If a specific road/street is identified (e.g. Nageswaran South Street, TSR Big St),
+        // and that road itself is NOT in Annalagraharam, discard the erroneous 'Annalagraharam' tag.
+        final bool isRoadInsideAnnalagraharam = road.toLowerCase().contains('annalagraharam');
+        if (!isRoadInsideAnnalagraharam && area.toLowerCase().contains('annalagraharam')) {
+          area = '';
+        }
+
+        // Clean out Matthi / Mathi / Live GPS artifacts
+        if (road.toLowerCase().contains('matthi') || road.toLowerCase().contains('mathi') || road.toLowerCase().contains('live gps')) road = '';
+        if (area.toLowerCase().contains('matthi') || area.toLowerCase().contains('mathi') || area.toLowerCase().contains('live gps')) area = '';
+
+        if (city.isEmpty) city = 'Kumbakonam';
+
+        // 🌟 Swiggy-style Primary Header (Short Location)
+        // Swiggy rule: Show the most specific identifier (Street / Landmark), NOT a cluttered concatenation
+        String shortA;
+        if (road.isNotEmpty) {
+          shortA = road;
+        } else if (area.isNotEmpty && area.toLowerCase() != city.toLowerCase()) {
+          shortA = area;
+        } else {
+          shortA = city;
+        }
+
+        // 🌟 Swiggy-style Detailed Delivery Address (Full Address)
+        // Swiggy rule: Clean, ordered, deduplicated: [Road], [Area if distinct], [City] - [Pincode]
+        final List<String> addressParts = [];
+        if (road.isNotEmpty) {
+          addressParts.add(road);
+        }
+        if (area.isNotEmpty &&
+            area.toLowerCase() != road.toLowerCase() &&
+            area.toLowerCase() != city.toLowerCase() &&
+            !road.toLowerCase().contains(area.toLowerCase())) {
+          addressParts.add(area);
+        }
+        if (city.isNotEmpty && !addressParts.any((p) => p.toLowerCase() == city.toLowerCase())) {
+          addressParts.add(city);
+        }
+
+        String fullA = addressParts.isNotEmpty ? addressParts.join(', ') : shortA;
+        if (postcode.isNotEmpty && postcode.length >= 6) {
+          fullA = '$fullA - $postcode';
+        }
+
         final existingShort = prefs.getString('customer_address_short');
-        final bool shouldUpdateAddress = forceOverrideAddress || existingShort == null || existingShort.isEmpty || existingShort == 'Detecting...' || existingShort == 'Current Location';
+        final bool isStaleShort = existingShort == null ||
+            existingShort.isEmpty ||
+            existingShort == 'Detecting...' ||
+            existingShort == 'Current Location' ||
+            existingShort.toLowerCase().contains('matthi') ||
+            existingShort.toLowerCase().contains('mathi') ||
+            existingShort.toLowerCase().contains('live gps');
+        final bool shouldUpdateAddress = forceOverrideAddress || isStaleShort;
 
         if (shouldUpdateAddress) {
           await prefs.setString('customer_address_short', shortA);
@@ -1511,7 +1620,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                         borderRadius: BorderRadius.circular(12),
                                         onTap: () async {
                                           final p = await SharedPreferences.getInstance();
-                                          final shortA = city.isNotEmpty ? city : line1;
+                                          final shortA = (line1.isNotEmpty && !line1.toLowerCase().contains('live gps') && !line1.toLowerCase().contains('matthi'))
+                                              ? line1
+                                              : (city.isNotEmpty ? city : 'Kumbakonam');
                                           final fullA = full.isNotEmpty ? full : shortA;
 
                                           await p.setString('customer_address_short', shortA);
@@ -2306,6 +2417,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   );
                   return;
                 }
+
+                // 🛑 Requirement: Both item name and budget are mandatory
+                final budgetText = _budgetController.text.trim();
+                final budgetVal = double.tryParse(budgetText);
+                if (budgetText.isEmpty || budgetVal == null || budgetVal <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Enter your budget')),
+                  );
+                  return;
+                }
                 final prefs = await SharedPreferences.getInstance();
 
                 // 🛑 Requirement: "cutomer um oru order mudinja tha adutha order podanum athu maari vai"
@@ -2341,12 +2462,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 final userId = prefs.getString('user_id') ?? 'usr_001';
                 final custName = prefs.getString('user_name') ?? 'Customer';
                 final custPhone = prefs.getString('mobile_number') ?? '+91 98765 43210';
-                final custAddr = _deliveryLocationController.text.trim().isNotEmpty
+                final custAddrRaw = (_deliveryLocationController.text.trim().isNotEmpty &&
+                        !_deliveryLocationController.text.trim().toLowerCase().contains('live gps') &&
+                        _deliveryLocationController.text.trim() != 'Detecting...')
                     ? _deliveryLocationController.text.trim()
-                    : (_currentAddressFull.isNotEmpty
+                    : (_currentAddressFull.isNotEmpty && !_currentAddressFull.toLowerCase().contains('live gps')
                         ? _currentAddressFull
-                        : "Current Delivery Location");
-                final budgetVal = double.tryParse(_budgetController.text.trim()) ?? 150.0;
+                        : "Kumbakonam, Thanjavur District, Tamil Nadu 612001");
+                final custAddr = custAddrRaw
+                    .replaceAll(RegExp(r'\bmatthi,?\s*', caseSensitive: false), '')
+                    .replaceAll(RegExp(r'\bmathi,?\s*', caseSensitive: false), '')
+                    .trim();
 
                 // ⚡ Fast: Live GPS coordinates of selected customer address
                 final orderLat = _customerLocation.latitude;
@@ -2711,6 +2837,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   showDeliveryDetails = false;
                   showCancelButtonContainer = false;
                 });
+
+                final num? bGrand = order['grand_total'] ?? order['budget'];
+                final double finalTot = (bGrand != null && bGrand > 0) ? bGrand.toDouble() : 0.0;
+                final num? bFood = order['item_total'];
+                final num? bTip = order['tip_amount'];
+                final String payMethod = order['payment_method']?.toString() ?? 'Payment Successful';
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FullScreenPaymentSuccessScreen(
+                      orderId: curOId,
+                      totalAmount: finalTot,
+                      foodPrice: bFood?.toDouble(),
+                      tipAmount: bTip?.toDouble(),
+                      paymentMethod: payMethod,
+                      isDeliveryPartner: false,
+                    ),
+                  ),
+                );
               }
               return;
             }
@@ -2864,41 +3010,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     priceRange: pr,
                   );
                 }
-              }
-            } else if (st == 'delivered') {
-              timer.cancel();
-              AlarmService.stopCustomerOrderListeningService();
-              final p = await SharedPreferences.getInstance();
-              await p.setBool('has_active_order', false);
-              await p.setString('active_order_status', 'delivered');
-              await p.remove('active_order_id');
-              if (mounted) {
-                setState(() {
-                  isSearchingRider = false;
-                  hasRiderAccepted = false;
-                  showDeliveryDetails = false;
-                  showCancelButtonContainer = false;
-                });
-
-                final num? bGrand = order['grand_total'] ?? order['budget'];
-                final double finalTot = (bGrand != null && bGrand > 0) ? bGrand.toDouble() : 0.0;
-                final num? bFood = order['item_total'];
-                final num? bTip = order['tip_amount'];
-                final String payMethod = order['payment_method']?.toString() ?? 'Payment Successful';
-
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FullScreenPaymentSuccessScreen(
-                      orderId: orderId,
-                      totalAmount: finalTot,
-                      foodPrice: bFood?.toDouble(),
-                      tipAmount: bTip?.toDouble(),
-                      paymentMethod: payMethod,
-                      isDeliveryPartner: false,
-                    ),
-                  ),
-                );
               }
             }
           }
@@ -3088,65 +3199,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 12),
 
-          // Live ETA and Delivery Status Banner (Full width, responsive, never overflows)
-          Builder(
-            builder: (context) {
-              final statusText = _formatRiderDistance();
-              final isArrived = statusText.toLowerCase().contains("arrived");
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isArrived ? const Color(0xFFDCFCE7) : const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isArrived ? const Color(0xFF86EFAC) : const Color(0xFFBBF7D0),
-                    width: 1.2,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isArrived ? Icons.home_rounded : Icons.directions_bike_rounded,
-                      size: 18,
-                      color: const Color(0xFF15803D),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        statusText,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF15803D),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF15803D),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        isArrived ? "ARRIVED" : "ON THE WAY",
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-
           // Live Google Maps GPS Tracking
           Container(
             height: 175,
@@ -3243,74 +3295,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
           ),
-
-          // Prominent Delivery OTP Card for customer
-          if (assignedOrderOtp.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFFDE68A)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFD97706),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.key_rounded, color: Colors.white, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "DELIVERY OTP",
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.5,
-                            color: Color(0xFF92400E),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          "Share this code with partner to receive delivery",
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF78350F),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFFD97706), width: 1.5),
-                    ),
-                    child: Text(
-                      assignedOrderOtp,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2,
-                        color: Color(0xFFD97706),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(12),

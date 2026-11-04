@@ -63,7 +63,7 @@ class _PaymentPageState extends State<PaymentPage> {
   bool isBillConfirmed = false;
   double itemTotal = 0.0;
   double deliveryEarnings = 0.0; // Delivery charges removed as requested
-  double tipAmount = 0.0;
+  double tipAmount = 10.0;
   String? uploadedBillImageUrl;
   List<String> uploadedBillImages = [];
   Timer? _pollTimer;
@@ -212,7 +212,7 @@ class _PaymentPageState extends State<PaymentPage> {
     } else if (savedBillImg != null && savedBillImg.isNotEmpty) {
       initialImgs = [savedBillImg];
     }
-    final savedTip = effectiveCurrentId.isNotEmpty ? (prefs.getDouble('order_${effectiveCurrentId}_tip') ?? 0.0) : 0.0;
+    final savedTip = effectiveCurrentId.isNotEmpty ? (prefs.getDouble('order_${effectiveCurrentId}_tip') ?? 10.0) : 10.0;
 
     final activeStatus = prefs.getString('active_order_status');
     final isDone = activeStatus == 'delivered' || activeStatus == 'completed';
@@ -239,7 +239,7 @@ class _PaymentPageState extends State<PaymentPage> {
         isOnlinePaid = onlinePaid;
         uploadedBillImageUrl = savedBillImg ?? (initialImgs.isNotEmpty ? initialImgs.first : null);
         uploadedBillImages = initialImgs;
-        if (savedTip > 0) tipAmount = savedTip;
+        tipAmount = savedTip > 0 ? savedTip : 10.0;
       });
       _fetchRoadRoute();
     }
@@ -525,9 +525,9 @@ class _PaymentPageState extends State<PaymentPage> {
         if (bill != null) {
           final List rawItems = bill['items'] ?? [];
           final double subTot = (bill['item_total'] as num?)?.toDouble() ?? 120.0;
-          final double tip = (bill['tip_amount'] as num?)?.toDouble() ?? 0.0;
+          final double tip = (bill['tip_amount'] as num?)?.toDouble() ?? 10.0;
           final savedTip = prefs.getDouble('order_${currentOrderId}_tip') ?? tipAmount;
-          final effectiveTip = savedTip > 0 ? savedTip : tip;
+          final effectiveTip = savedTip > 0 ? savedTip : (tip > 0 ? tip : 10.0);
           final String shop = bill['shop_name'] ?? 'Restaurant';
           final String? billImg = bill['bill_image_url'] ?? orderBillImg ?? prefs.getString('order_${currentOrderId}_bill_image');
 
@@ -3289,7 +3289,7 @@ class _PaymentPageState extends State<PaymentPage> {
                 _buildRow("Delivery Charges", "FREE (₹0)"),
                 if (tipAmount > 0) ...[
                   const SizedBox(height: 6),
-                  _buildRow("Delivery Tip", "₹ ${tipAmount.toStringAsFixed(0)}", isTip: true),
+                  _buildRow("Rider Tip (Mandatory)", "₹ ${tipAmount.toStringAsFixed(0)}", isTip: true),
                 ],
                 const SizedBox(height: 12),
                 const Divider(height: 1),
@@ -3483,7 +3483,7 @@ class _PaymentPageState extends State<PaymentPage> {
                 const SizedBox(height: 16),
 
                 // Tip Chips
-                const Text("Add Rider Tip (Optional):", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
+                const Text("Rider Tip (Mandatory):", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -3503,7 +3503,8 @@ class _PaymentPageState extends State<PaymentPage> {
                       side: BorderSide(color: isSelected ? AppColors.primary : AppColors.border),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       onSelected: (val) async {
-                        final newTip = val ? t : 0.0;
+                        // Rider tip is mandatory - cannot unselect to 0. Minimum is 10.0
+                        final newTip = val ? t : (tipAmount > 0 ? tipAmount : 10.0);
                         setState(() => tipAmount = newTip);
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setDouble('order_${orderId}_tip', newTip);

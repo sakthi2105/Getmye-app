@@ -68,6 +68,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
   Position? _lastKnownPosition;
   int _pollCount = 0;
   Map<String, dynamic>? activeDeliveryOrder;
+  bool _isShowingGPSDialog = false;
 
   @override
   void initState() {
@@ -202,18 +203,22 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     }
   }
 
-  // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum"
+  // 🛰️ Requirement: "app kull avanthathum 2 perukum location on pana solanum" - Only prompt 1 time
   Future<void> _checkAndPromptLocationService() async {
+    if (_isShowingGPSDialog || !mounted) return;
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && mounted) {
         if (isOnline) {
           await _handleDeviceLocationTurnedOff(showToast: false);
         }
+        _isShowingGPSDialog = true;
         await _showTurnOnGPSDialog(
           title: "Turn On GPS Location",
           message: "Please turn ON device GPS location to receive incoming orders and enable live tracking. Delivery partner status can only be ONLINE when location is turned ON.",
         );
+        _isShowingGPSDialog = false;
+        return; // 🛑 Stop immediately so 2nd permission dialog is not displayed
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -225,11 +230,14 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         if (isOnline) {
           await _handleDeviceLocationTurnedOff(showToast: false);
         }
+        _isShowingGPSDialog = true;
         await _showTurnOnGPSDialog(
           title: "Location Permission Required",
           message: "Location permission is disabled for Getmye Delivery. You cannot go ONLINE without location permission. Please enable it in device settings.",
           isPermissionSettings: true,
         );
+        _isShowingGPSDialog = false;
+        return;
       }
 
       if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
@@ -238,6 +246,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         }
       }
     } catch (e) {
+      _isShowingGPSDialog = false;
       debugPrint("Partner location service check error: $e");
     }
   }
@@ -298,9 +307,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               } else {
                 await Geolocator.openLocationSettings();
               }
-              Future.delayed(const Duration(seconds: 1), () {
-                if (mounted) _checkAndPromptLocationService();
-              });
             },
           ),
         ],
@@ -312,8 +318,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     _pendingOrdersTimer?.cancel();
     _checkPendingOrders();
     _updateLiveLocationToBackend();
-    // ⚡ Optimized polling: 2500ms ensures sub-3-second order arrival alerts without battery/network strain!
-    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) async {
+    // ⚡ Ultra-fast 1000ms polling for instant sub-second order alert delivery!
+    _pendingOrdersTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) async {
       // 🛰️ REQUIREMENT: If delivery person's location is turned OFF, automatically switch status to OFFLINE!
       if (isOnline) {
         final hasLocation = await _isDeviceLocationAvailable();
@@ -423,7 +429,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
       // 🚨 CRITICAL: Check live status of current ongoing order directly so cancellation is NEVER missed!
       final String? curOngoingOrderId = activeDeliveryOrder?['order_id']?.toString() ?? partnerActiveId;
-      if (curOngoingOrderId != null && curOngoingOrderId.isNotEmpty && _pollCount % 2 == 0) {
+      if (curOngoingOrderId != null && curOngoingOrderId.isNotEmpty) {
         try {
           final ordRes = await http.get(ApiConfig.orderById(curOngoingOrderId)).timeout(const Duration(seconds: 3));
           if (ordRes.statusCode == 200) {
@@ -476,7 +482,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       }
 
       final uri = Uri.parse('${ApiConfig.orderPending}?partner_id=$pId');
-      final res = await http.get(uri).timeout(const Duration(seconds: 4));
+      final res = await http.get(uri).timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final List orders = data['orders'] ?? [];
@@ -685,16 +691,24 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
               .toList() ?? [];
           final myPId = pId.trim().toLowerCase();
           final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
-          final bool isDeclined = declinedIds.contains(id) ||
-              declinedList.contains(myPId) ||
-              (myDigits.isNotEmpty && declinedList.any((d) => d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == myDigits));
-
           final assignedPartner = (o['current_assigned_partner_id'] ?? '').toString().trim().toLowerCase();
           final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
           final bool isAssignedToMe = assignedPartner.isNotEmpty && (
               assignedPartner == myPId ||
               (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
           );
+
+          final bool isDeclinedInBackend = declinedList.contains(myPId) ||
+              (myDigits.isNotEmpty && declinedList.any((d) => d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == myDigits));
+
+          // If backend reassigned or looped back the order to me, clear previous local decline & silence state!
+          if (isAssignedToMe && !isDeclinedInBackend && declinedIds.contains(id)) {
+            declinedIds.remove(id);
+            prefs.setStringList('partner_declined_order_ids', declinedIds);
+            AlarmService.clearOrderSilenced(id);
+          }
+
+          final bool isDeclined = declinedIds.contains(id) || isDeclinedInBackend;
 
           return isAssignedToMe &&
               !isDeclined &&
@@ -789,7 +803,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
 
         return StatefulBuilder(
           builder: (context, setModalState) {
-            countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (tm) {
+            countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (tm) async {
               if (secondsLeft > 1) {
                 if (modalCtx.mounted) {
                   setModalState(() {
@@ -798,7 +812,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 }
               } else {
                 tm.cancel();
-                // ⏰ 2-Minute Timeout Reached: Auto-forward/reassign order to next closest delivery partner
+                // ⏰ Timeout Reached: Auto-forward/reassign order to next closest delivery partner
                 AlarmService.silenceOrder(orderId);
                 AlarmService.stopAlarm();
                 AppNotificationService.cancelNotification(999);
@@ -807,6 +821,19 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                 }
                 _isShowingIncomingModal = false;
                 _currentIncomingModalOrderId = null;
+                try {
+                  final prefs = await SharedPreferences.getInstance();
+                  final pId = prefs.getString('d_id') ?? prefs.getString('partner_id') ?? 'DP001';
+                  http.post(
+                    ApiConfig.orderDecline,
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({
+                      'order_id': orderId,
+                      'decline_reason': 'Partner offer timed out',
+                      'partner_id': pId,
+                    }),
+                  ).catchError((_) => http.Response('', 500));
+                } catch (_) {}
                 _checkPendingOrders();
               }
             });
@@ -1068,7 +1095,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                     'decline_reason': 'Declined from alert modal',
                                     'partner_id': pId,
                                   }),
-                                ).timeout(const Duration(seconds: 3));
+                                ).timeout(const Duration(seconds: 10));
                               } catch (_) {}
                               if (modalCtx.mounted) Navigator.pop(modalCtx);
                               _checkPendingOrders();
@@ -1153,6 +1180,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 if (isCancelled) {
                                   final cancelReason = (resData['cancel_reason'] ?? resData['message'] ?? 'Customer cancelled the order').toString();
                                   _notifiedCancelledOrderIds.add(orderId);
+                                  await _clearActiveOrderStorage(prefs);
+                                  if (mounted) {
+                                    setState(() {
+                                      activeDeliveryOrder = null;
+                                    });
+                                  }
                                   await AppNotificationService.showOrderCancelledNotification(
                                     orderId: orderId,
                                     reason: cancelReason,
@@ -1168,7 +1201,7 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                    content: Text("Order is no longer available or was already accepted."),
+                                    content: Text("Order is no longer available or was cancelled by customer."),
                                     backgroundColor: Color(0xFFDC2626),
                                   ),
                                 );
@@ -1176,12 +1209,18 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             }
                           } catch (e) {
                             debugPrint("Error accepting order: $e");
-                            acceptSuccess = true;
+                            acceptSuccess = false;
                           } finally {
                             _isAcceptingOrder = false;
                           }
 
                           if (!acceptSuccess) {
+                            await _clearActiveOrderStorage(prefs);
+                            if (mounted) {
+                              setState(() {
+                                activeDeliveryOrder = null;
+                              });
+                            }
                             _checkPendingOrders();
                             return;
                           }

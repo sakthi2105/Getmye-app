@@ -97,10 +97,19 @@ class _EditAddressPageState extends State<EditAddressPage> {
         final data = jsonDecode(res.body);
         final addr = data['address'];
         if (addr != null && mounted) {
-          final road = addr['road'] ?? addr['suburb'] ?? addr['neighbourhood'] ?? addr['quarter'] ?? '';
-          final city = addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? addr['state_district'] ?? '';
-          final state = addr['state'] ?? 'Tamil Nadu';
-          final postcode = addr['postcode'] ?? '';
+          String road = (addr['road'] ?? addr['pedestrian'] ?? addr['street'] ?? addr['residential'] ?? '').toString().trim();
+          String suburb = (addr['suburb'] ?? addr['neighbourhood'] ?? addr['quarter'] ?? '').toString().trim();
+          final city = (addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? addr['state_district'] ?? 'Kumbakonam').toString().trim();
+          final state = (addr['state'] ?? 'Tamil Nadu').toString().trim();
+          final postcode = (addr['postcode'] ?? '').toString().trim();
+
+          // Discard OSM erroneous 'Annalagraharam' tag when road is identified in Kumbakonam town
+          if (!road.toLowerCase().contains('annalagraharam') && suburb.toLowerCase().contains('annalagraharam')) {
+            suburb = '';
+          }
+          if (road.isEmpty && suburb.isNotEmpty) {
+            road = suburb;
+          }
 
           setState(() {
             if (road.isNotEmpty) addressLine1Controller.text = road;

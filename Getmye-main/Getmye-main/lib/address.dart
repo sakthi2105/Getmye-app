@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -37,22 +36,8 @@ class _AddressScreenState extends State<AddressScreen> {
   String _activeAddressFull = "Detecting delivery address...";
   String? _activeAddId;
 
-  // 📍 Geo-fencing / Service Area Restriction: Kumbakonam Town Exclusivity
-  static const double _kumbakonamCenterLat = 10.9601;
-  static const double _kumbakonamCenterLng = 79.3845;
-  static const double _kumbakonamMaxRadiusKm = 10.0;
-  static const String _kumbakonamUnavailableMsg =
-      "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!";
-
   bool _isLocationInKumbakonam(double lat, double lng) {
-    final double dLat = (_kumbakonamCenterLat - lat) * (pi / 180.0);
-    final double dLng = (_kumbakonamCenterLng - lng) * (pi / 180.0);
-    final double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(lat * (pi / 180.0)) * cos(_kumbakonamCenterLat * (pi / 180.0)) *
-        sin(dLng / 2) * sin(dLng / 2);
-    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    final double distKm = 6371.0 * c;
-    return distKm <= _kumbakonamMaxRadiusKm;
+    return true;
   }
 
   void _showGeofenceRestrictionDialog() {
@@ -87,7 +72,7 @@ class _AddressScreenState extends State<AddressScreen> {
           ],
         ),
         content: const Text(
-          _kumbakonamUnavailableMsg,
+          "Sorry, our service is currently unavailable in your location.",
           style: TextStyle(
             fontSize: 14,
             height: 1.5,
@@ -124,13 +109,27 @@ class _AddressScreenState extends State<AddressScreen> {
 
   Future<void> _loadActiveAddressFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    final shortA = prefs.getString('customer_address_short');
-    final fullA = prefs.getString('customer_address_full');
+    String? shortA = prefs.getString('customer_address_short');
+    String? fullA = prefs.getString('customer_address_full');
     final activeId = prefs.getString('active_delivery_add_id');
-    if (mounted && shortA != null && shortA.isNotEmpty) {
+
+    // 🛑 Sanitize conflated 'Nageswaran' + 'Annalagraharam' OSM tag artifact
+    if (shortA != null && shortA.toLowerCase().contains('nageswaran') && shortA.toLowerCase().contains('annalagraharam')) {
+      shortA = 'Nageswaran South Street';
+      await prefs.setString('customer_address_short', shortA);
+    }
+    if (fullA != null && fullA.toLowerCase().contains('nageswaran') && fullA.toLowerCase().contains('annalagraharam')) {
+      fullA = 'Nageswaran South Street, Kumbakonam - 612001';
+      await prefs.setString('customer_address_full', fullA);
+      await prefs.setString('active_order_customer_address', fullA);
+    }
+
+    final String cleanShort = shortA ?? '';
+    final String cleanFull = (fullA != null && fullA.isNotEmpty) ? fullA : cleanShort;
+    if (mounted && cleanShort.isNotEmpty) {
       setState(() {
-        _activeAddressShort = shortA;
-        _activeAddressFull = fullA ?? shortA;
+        _activeAddressShort = cleanShort;
+        _activeAddressFull = cleanFull;
         _activeAddId = activeId;
       });
     }
@@ -195,7 +194,7 @@ class _AddressScreenState extends State<AddressScreen> {
       try {
         position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
-          timeLimit: const Duration(seconds: 6),
+          timeLimit: const Duration(seconds: 8),
         );
       } catch (_) {
         position = await Geolocator.getLastKnownPosition();
@@ -225,56 +224,135 @@ class _AddressScreenState extends State<AddressScreen> {
         return;
       }
 
-      String road = "Current Location";
-      String city = "Live Location";
-      String state = "Tamil Nadu";
+      String road = "";
+      String suburb = "";
+      String city = "";
+      String district = "";
+      String state = "";
       String pincode = "";
-      String fullDisplayName = "Live GPS Location ($lat, $lng)";
 
+      // 1. High-precision dynamic street/road & locality geocoding via Photon (Komoot)
       try {
-        final geoRes = await http.get(
-          Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1'),
+        final photonRes = await http.get(
+          Uri.parse('https://photon.komoot.io/reverse?lat=$lat&lon=$lng'),
           headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 4));
 
-        if (geoRes.statusCode == 200) {
-          final geoData = jsonDecode(geoRes.body);
-          final address = geoData['address'];
-          if (address != null) {
-            road = (address['road'] ?? address['pedestrian'] ?? address['neighbourhood'] ?? address['residential'] ?? '').toString().trim();
-            final suburb = (address['suburb'] ?? address['subdistrict'] ?? '').toString().trim();
-            city = (address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? address['state_district'] ?? 'Kumbakonam').toString().trim();
-            state = (address['state'] ?? 'Tamil Nadu').toString().trim();
-            pincode = (address['postcode'] ?? '').toString().trim();
+        if (photonRes.statusCode == 200) {
+          final data = jsonDecode(photonRes.body);
+          final features = data['features'] as List?;
+          if (features != null && features.isNotEmpty) {
+            final props = features[0]['properties'] as Map<String, dynamic>?;
+            if (props != null) {
+              final pStreet = (props['street'] ?? '').toString().trim();
+              final pName = (props['name'] ?? '').toString().trim();
+              final pDistrict = (props['district'] ?? props['suburb'] ?? '').toString().trim();
+              final pCity = (props['city'] ?? props['county'] ?? '').toString().trim();
+              final pState = (props['state'] ?? '').toString().trim();
+              final pPostcode = (props['postcode'] ?? '').toString().trim();
 
-            if (road.isEmpty) {
-              if (suburb.isNotEmpty && !suburb.toLowerCase().contains('matthi')) {
-                road = suburb;
-              } else {
-                road = (city.isNotEmpty && city != 'Live Location') ? city : 'Current Location';
+              final isMatthiStreet = pStreet.toLowerCase().contains('matthi') || pStreet.toLowerCase().contains('mathi');
+              final isMatthiName = pName.toLowerCase().contains('matthi') || pName.toLowerCase().contains('mathi');
+              final isMatthiDist = pDistrict.toLowerCase().contains('matthi') || pDistrict.toLowerCase().contains('mathi');
+
+              if (pStreet.isNotEmpty && !isMatthiStreet) {
+                road = pStreet;
+              } else if (pName.isNotEmpty && !isMatthiName) {
+                road = pName;
               }
-            }
 
-            String cleanDisplay = geoData['display_name'] ?? "$road, $city, $state $pincode";
-            if (cleanDisplay.startsWith('Matthi, ')) {
-              cleanDisplay = cleanDisplay.replaceFirst('Matthi, ', '');
+              if (pDistrict.isNotEmpty && !isMatthiDist) {
+                suburb = pDistrict;
+              }
+
+              if (pCity.isNotEmpty) city = pCity;
+              if (pState.isNotEmpty) state = pState;
+              if (pPostcode.isNotEmpty) pincode = pPostcode;
             }
-            fullDisplayName = cleanDisplay;
           }
         }
       } catch (_) {}
 
-      String shortA;
-      if (road.isNotEmpty && road != "Current Location" && city.isNotEmpty && city != "Live Location" && road.toLowerCase() != city.toLowerCase()) {
-        shortA = "$road, $city";
-      } else if (road.isNotEmpty && road != "Current Location") {
-        shortA = road;
-      } else if (city.isNotEmpty && city != "Live Location") {
-        shortA = city;
-      } else {
-        shortA = "Kumbakonam";
+      // 2. Secondary fallback via Nominatim dynamic reverse geocoding if road or suburb is not yet resolved
+      if (road.isEmpty || city.isEmpty) {
+        try {
+          final geoRes = await http.get(
+            Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1'),
+            headers: {'User-Agent': 'GetmyeApp/1.0 (contact@getmye.com)'},
+          ).timeout(const Duration(seconds: 4));
+
+          if (geoRes.statusCode == 200) {
+            final geoData = jsonDecode(geoRes.body);
+            final address = geoData['address'] as Map<String, dynamic>?;
+            if (address != null) {
+              final nRoad = (address['road'] ?? address['pedestrian'] ?? address['street'] ?? address['residential'] ?? '').toString().trim();
+              final nSuburb = (address['suburb'] ?? address['neighbourhood'] ?? address['quarter'] ?? address['subdistrict'] ?? '').toString().trim();
+              final nCity = (address['city'] ?? address['town'] ?? address['village'] ?? address['municipality'] ?? '').toString().trim();
+              final nDistrict = (address['state_district'] ?? address['county'] ?? '').toString().trim();
+              final nState = (address['state'] ?? '').toString().trim();
+              final nPostcode = (address['postcode'] ?? '').toString().trim();
+
+              if (road.isEmpty && nRoad.isNotEmpty && !nRoad.toLowerCase().contains('matthi') && !nRoad.toLowerCase().contains('mathi')) {
+                road = nRoad;
+              }
+              if (suburb.isEmpty && nSuburb.isNotEmpty && !nSuburb.toLowerCase().contains('matthi') && !nSuburb.toLowerCase().contains('mathi')) {
+                suburb = nSuburb;
+              }
+              if (city.isEmpty && nCity.isNotEmpty) city = nCity;
+              if (district.isEmpty && nDistrict.isNotEmpty) district = nDistrict;
+              if (state.isEmpty && nState.isNotEmpty) state = nState;
+              if (pincode.isEmpty && nPostcode.isNotEmpty) pincode = nPostcode;
+            }
+          }
+        } catch (_) {}
       }
-      final fullA = fullDisplayName;
+
+      // 🛑 Filter out OpenStreetMap's erroneous suburb tagging for Kumbakonam
+      // OSM has an incorrect wide suburb node 'Annalagraharam' covering central town.
+      // If a specific road/street is identified (e.g. Nageswaran South Street, TSR Big St),
+      // and that road itself is NOT in Annalagraharam, discard the erroneous 'Annalagraharam' tag.
+      final bool isRoadInsideAnnalagraharam = road.toLowerCase().contains('annalagraharam');
+      if (!isRoadInsideAnnalagraharam && suburb.toLowerCase().contains('annalagraharam')) {
+        suburb = '';
+      }
+
+      // Discard Matthi / Mathi / Live GPS
+      if (road.toLowerCase().contains('matthi') || road.toLowerCase().contains('mathi')) road = '';
+      if (suburb.toLowerCase().contains('matthi') || suburb.toLowerCase().contains('mathi')) suburb = '';
+
+      if (city.isEmpty) city = 'Kumbakonam';
+
+      // 🌟 Swiggy-style Primary Header (Short Location)
+      // Swiggy rule: Show the most specific identifier (Street / Locality), clean and uncluttered
+      String shortA;
+      if (road.isNotEmpty) {
+        shortA = road;
+      } else if (suburb.isNotEmpty && suburb.toLowerCase() != city.toLowerCase()) {
+        shortA = suburb;
+      } else {
+        shortA = city;
+      }
+
+      // 🌟 Swiggy-style Detailed Delivery Address (Full Address)
+      // Swiggy rule: Clean, ordered, deduplicated: [Road], [Area if distinct], [City] - [Pincode]
+      final List<String> addressParts = [];
+      if (road.isNotEmpty) {
+        addressParts.add(road);
+      }
+      if (suburb.isNotEmpty &&
+          suburb.toLowerCase() != road.toLowerCase() &&
+          suburb.toLowerCase() != city.toLowerCase() &&
+          !road.toLowerCase().contains(suburb.toLowerCase())) {
+        addressParts.add(suburb);
+      }
+      if (city.isNotEmpty && !addressParts.any((p) => p.toLowerCase() == city.toLowerCase())) {
+        addressParts.add(city);
+      }
+
+      String fullA = addressParts.isNotEmpty ? addressParts.join(', ') : shortA;
+      if (pincode.isNotEmpty && pincode.length >= 6) {
+        fullA = '$fullA - $pincode';
+      }
 
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('user_id');
@@ -295,8 +373,8 @@ class _AddressScreenState extends State<AddressScreen> {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'user_id': userId,
-              'line1': road,
-              'line2': 'Live GPS Location',
+              'line1': road.isNotEmpty ? road : (suburb.isNotEmpty ? suburb : 'Kumbakonam'),
+              'line2': suburb.isNotEmpty && suburb != road ? suburb : (district.isNotEmpty ? '$district District' : city),
               'city': city,
               'state': state,
               'country': 'India',
@@ -347,27 +425,46 @@ class _AddressScreenState extends State<AddressScreen> {
   // 🎯 Set an existing address as Active Delivery Address
   Future<void> _selectAddressAsActive(Map<String, dynamic> addr, {bool notify = true}) async {
     final line1 = (addr['line1'] ?? '').toString().trim();
+    final line2 = (addr['line2'] ?? '').toString().trim();
     final city = (addr['city'] ?? '').toString().trim();
+    final pincode = (addr['pincode'] ?? '').toString().trim();
+
+    // 🌟 Swiggy header: line1 (specific address) if available, otherwise city
     String shortA;
-    if (line1.isNotEmpty && line1 != 'Live GPS Location' && city.isNotEmpty && line1.toLowerCase() != city.toLowerCase()) {
-      shortA = "$line1, $city";
+    if (line1.isNotEmpty && !line1.toLowerCase().contains('live gps') && !line1.toLowerCase().contains('matthi')) {
+      shortA = line1;
     } else if (city.isNotEmpty) {
       shortA = city;
-    } else if (line1.isNotEmpty && line1 != 'Live GPS Location') {
-      shortA = line1;
     } else {
       shortA = "Kumbakonam";
     }
 
-    final parts = [
-      addr['line1'],
-      addr['line2'],
-      addr['city'],
-      addr['state'],
-      if (addr['pincode'] != null && addr['pincode'].toString().isNotEmpty) "- ${addr['pincode']}"
-    ].where((p) => p != null && p.toString().trim().isNotEmpty).join(', ');
+    // Clean line2 if it incorrectly contains Annalagraharam for a town street
+    String cleanLine2 = line2;
+    if (!line1.toLowerCase().contains('annalagraharam') && cleanLine2.toLowerCase().contains('annalagraharam')) {
+      cleanLine2 = '';
+    }
 
-    final fullA = parts.isNotEmpty ? parts : shortA;
+    final parts = [
+      if (line1.isNotEmpty &&
+          !line1.toLowerCase().contains('live gps') &&
+          !line1.toLowerCase().contains('matthi') &&
+          !line1.toLowerCase().contains('mathi'))
+        line1,
+      if (cleanLine2.isNotEmpty &&
+          !cleanLine2.toLowerCase().contains('live gps') &&
+          !cleanLine2.toLowerCase().contains('matthi') &&
+          !cleanLine2.toLowerCase().contains('mathi') &&
+          cleanLine2.toLowerCase() != line1.toLowerCase())
+        cleanLine2,
+      if (city.isNotEmpty && city.toLowerCase() != line1.toLowerCase())
+        city,
+    ];
+
+    String fullA = parts.isNotEmpty ? parts.join(', ') : shortA;
+    if (pincode.isNotEmpty && pincode.length >= 6) {
+      fullA = "$fullA - $pincode";
+    }
     final addId = addr['add_id']?.toString();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('customer_address_short', shortA);
@@ -1041,12 +1138,17 @@ class _EditAddressPageState extends State<EditAddressPage> {
             final data = jsonDecode(res.body);
             final addr = data['address'];
             if (addr != null) {
-              final road = addr['road'] ?? addr['suburb'] ?? addr['neighbourhood'] ?? '';
-              final landmark = addr['quarter'] ?? addr['suburb'] ?? '';
-              final city = addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? '';
-              final dist = addr['state_district'] ?? '';
-              final state = addr['state'] ?? 'Tamil Nadu';
-              final pin = addr['postcode'] ?? '';
+              String road = (addr['road'] ?? addr['suburb'] ?? addr['neighbourhood'] ?? '').toString().trim();
+              String landmark = (addr['quarter'] ?? '').toString().trim();
+              final city = (addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['county'] ?? '').toString().trim();
+              final dist = (addr['state_district'] ?? '').toString().trim();
+              final state = (addr['state'] ?? 'Tamil Nadu').toString().trim();
+              final pin = (addr['postcode'] ?? '').toString().trim();
+
+              // Avoid auto-filling Annalagraharam as landmark for central town street
+              if (!road.toLowerCase().contains('annalagraharam') && landmark.toLowerCase().contains('annalagraharam')) {
+                landmark = '';
+              }
 
               setState(() {
                 if (road.isNotEmpty) c1.text = road;

@@ -49,6 +49,13 @@ router.post('/submit', async (req, res) => {
     }));
 
     const billId = await getNextSequence('bill_id', 'BILL-', 4);
+    const existingOrder = await Order.findOne({ order_id }).select('tip_amount').lean();
+    const effectiveTip = (Number(tip_amount) && Number(tip_amount) >= 10)
+      ? Number(tip_amount)
+      : (existingOrder && existingOrder.tip_amount && existingOrder.tip_amount >= 10 ? existingOrder.tip_amount : 10);
+    const finalItemTotal = Number(item_total) || 0;
+    const finalDelFee = Number(delivery_fee) || 0;
+    const finalGrandTotal = finalItemTotal + finalDelFee + effectiveTip;
 
     const newBill = new Bill({
       bill_id: billId,
@@ -57,10 +64,10 @@ router.post('/submit', async (req, res) => {
       user_id: user_id || 'USER001',
       shop_name: shop_name || 'Restaurant',
       items: processedItems,
-      item_total: Number(item_total) || 0,
-      delivery_fee: Number(delivery_fee) || 0,
-      tip_amount: Number(tip_amount) || 0,
-      grand_total: Number(grand_total) || 0,
+      item_total: finalItemTotal,
+      delivery_fee: finalDelFee,
+      tip_amount: effectiveTip,
+      grand_total: finalGrandTotal,
       bill_image_url: primaryBillImage,
       bill_images: imagesList,
       status: 'submitted'
@@ -72,10 +79,10 @@ router.post('/submit', async (req, res) => {
     const orderUpdatePayload = {
       status: 'bill_sent',
       bill_confirmed: true,
-      grand_total: Number(grand_total),
-      item_total: Number(item_total) || 0,
-      tip_amount: Number(tip_amount) || 0,
-      delivery_fee: Number(delivery_fee) || 0,
+      grand_total: finalGrandTotal,
+      item_total: finalItemTotal,
+      tip_amount: effectiveTip,
+      delivery_fee: finalDelFee,
       bill_image_url: primaryBillImage,
       bill_images: imagesList,
       items: processedItems.map(it => ({
@@ -157,7 +164,7 @@ router.post('/tip', async (req, res) => {
     if (!order_id) {
       return res.status(400).json({ error: 'order_id is required' });
     }
-    const tip = Number(tip_amount) || 0;
+    const tip = Math.max(10, Number(tip_amount) || 10);
     const bill = await Bill.findOne({ order_id }).sort({ created_at: -1 });
     let foodPrice = 0;
     let delFee = 0;

@@ -44,6 +44,10 @@ router.post('/create', async (req, res) => {
 
     const orderId = await getNextSequence('order_id', 'ORD-', 4);
     const finalOtp = (cod_otp || (Math.floor(1000 + Math.random() * 9000))).toString();
+    const finalTip = (req.body.tip_amount != null && !isNaN(Number(req.body.tip_amount)) && Number(req.body.tip_amount) >= 10)
+      ? Number(req.body.tip_amount)
+      : 10;
+    const finalBudget = Number(budget) || 0;
 
     const newOrder = new Order({
       order_id: orderId,
@@ -52,7 +56,10 @@ router.post('/create', async (req, res) => {
       customer_phone: customer_phone || '',
       delivery_address,
       item_name,
-      budget: Number(budget) || 0,
+      budget: finalBudget,
+      item_total: finalBudget,
+      tip_amount: finalTip,
+      grand_total: finalBudget + finalTip,
       customer_latitude: finalLat,
       customer_longitude: finalLng,
       status: 'pending',
@@ -130,20 +137,14 @@ router.get('/pending', async (req, res) => {
         status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
       });
 
-      // 🛑 STRICT REQUIREMENT: Delivery partner's LiveLocation must be active and ONLINE with valid GPS
+      // Delivery partner's LiveLocation must not be explicitly offline
       const liveLoc = await LiveLocation.findOne({
         $or: [
           { partner_id: partnerId },
           { partner_id: pRegex }
         ]
       }).lean();
-      const isLocationOnline = liveLoc &&
-        liveLoc.is_online === true &&
-        liveLoc.latitude != null &&
-        liveLoc.longitude != null &&
-        !isNaN(Number(liveLoc.latitude)) &&
-        !isNaN(Number(liveLoc.longitude)) &&
-        (Number(liveLoc.latitude) !== 0 || Number(liveLoc.longitude) !== 0);
+      const isLocationEligible = !liveLoc || liveLoc.is_online !== false;
 
       const orConditions = [
         // Ongoing accepted active orders for this partner (always allow them to view and complete their ongoing order)
@@ -166,7 +167,7 @@ router.get('/pending', async (req, res) => {
       // An unaccepted pending order is STRICTLY offered ONLY to the currently assigned nearest partner!
       // If that partner declines or times out (2 mins), it moves to the next closest partner.
       // Multiple delivery persons will NEVER receive or ring alarms for the same order at the same time!
-      if (!hasActiveOngoing && isPartnerOnline && isLocationOnline) {
+      if (!hasActiveOngoing && isPartnerOnline && isLocationEligible) {
         orConditions.unshift({
           status: 'pending',
           created_at: { $gte: pendingThreshold },
@@ -751,13 +752,24 @@ router.post('/update-status', async (req, res) => {
     if (partner_phone) updateData.partner_phone = partner_phone;
     if (partner_profile_picture) updateData.partner_profile_picture = partner_profile_picture;
 
+    const existing = await Order.findOne({ order_id });
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+    if (existing.status === 'cancelled') {
+      return res.status(400).json({
+        error: 'ORDER_CANCELLED',
+        cancelled: true,
+        cancel_reason: existing.cancel_reason || 'Order was cancelled by customer',
+        message: 'Order was cancelled by customer'
+      });
+    }
+
     const order = await Order.findOneAndUpdate(
-      { order_id },
+      { order_id, status: { $ne: 'cancelled' } },
       updateData,
       { returnDocument: 'after' }
     );
 
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!order) return res.status(404).json({ error: 'Order not found or was cancelled' });
 
     if (status === 'delivered') {
       try {

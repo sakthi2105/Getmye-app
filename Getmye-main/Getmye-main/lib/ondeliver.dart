@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
-import 'delivery_bill_flow.dart' show clearDeliveryPartnerActiveOrder;
+import 'delivery_bill_flow.dart' show FullScreenPaymentSuccessScreen, clearDeliveryPartnerActiveOrder;
 import 'homed.dart';
 import 'theme/app_theme.dart';
 
@@ -107,11 +107,27 @@ class _OrderStatusPageState extends State<OrderStatusPage> {
     setState(() {
       showGreenOverlay = true;
     });
-    Future.delayed(const Duration(seconds: 1), () {
+    Future.delayed(const Duration(seconds: 1), () async {
       setState(() {
         showGreenOverlay = false;
         orderCompleted = true;
       });
+      final prefs = await SharedPreferences.getInstance();
+      final oId = _currentOrderId ?? prefs.getString('partner_active_order_id') ?? prefs.getString('active_order_id') ?? '';
+      await clearDeliveryPartnerActiveOrder(orderId: oId);
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (_) => FullScreenPaymentSuccessScreen(
+              orderId: oId,
+              totalAmount: 0.0,
+              isDeliveryPartner: true,
+            ),
+          ),
+          (route) => false,
+        );
+      }
     });
   }
 

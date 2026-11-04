@@ -98,6 +98,12 @@ class AlarmService {
     return _silencedOrderIds.contains(orderId);
   }
 
+  static void clearOrderSilenced(String? orderId) {
+    if (orderId != null && orderId.isNotEmpty) {
+      _silencedOrderIds.remove(orderId);
+    }
+  }
+
   /// Play instant pleasant payment confirmation sound & vibration for both customer and delivery partner
   static Future<void> playPaymentSuccessSound() async {
     try {
