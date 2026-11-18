@@ -27,21 +27,23 @@ router.post('/update', async (req, res) => {
       { upsert: true, returnDocument: 'after' }
     );
 
-    // If partner went offline, sync DeliveryPerson model immediately
-    if (!isOnlineVal) {
-      try {
-        const DeliveryPerson = require('../models/DeliveryPerson');
-        await DeliveryPerson.findOneAndUpdate(
-          {
-            $or: [
-              { DP_id: partner_id },
-              { DP_id: new RegExp(`^${partner_id}$`, 'i') }
-            ]
-          },
-          { dp_status: 'offline' }
-        );
-      } catch (_) {}
-    }
+    // Sync DeliveryPerson model status with location online state
+    try {
+      const DeliveryPerson = require('../models/DeliveryPerson');
+      const numPart = partner_id.toString().trim().replace(/^dp_?/i, '');
+      const dpIdRegex = new RegExp(`^(dp_?0*)?${numPart}$`, 'i');
+      await DeliveryPerson.findOneAndUpdate(
+        {
+          $or: [
+            { DP_id: partner_id },
+            { DP_id: new RegExp(`^${partner_id}$`, 'i') },
+            { DP_id: dpIdRegex },
+            { mobile_number: partner_id }
+          ]
+        },
+        { dp_status: isOnlineVal ? 'online' : 'offline' }
+      );
+    } catch (_) {}
 
     res.json({ success: true, location: loc });
   } catch (err) {

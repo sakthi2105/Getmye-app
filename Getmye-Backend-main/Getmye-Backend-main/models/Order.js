@@ -40,6 +40,10 @@ const OrderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  quantity: {
+    type: Number,
+    default: 1
+  },
   partner_id: {
     type: String,
     default: null,

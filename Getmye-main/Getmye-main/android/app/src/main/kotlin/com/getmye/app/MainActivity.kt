@@ -1,4 +1,4 @@
-package com.example.flutter_application_1
+package com.getmye.app
 
 import android.content.Context
 import android.os.Build

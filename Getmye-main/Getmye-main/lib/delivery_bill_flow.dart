@@ -260,6 +260,10 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               await prefs.setString('today_completed_deliveries', jsonEncode(localList));
             }
 
+            final int cQty = int.tryParse(o['quantity']?.toString() ?? '') ?? 1;
+            final double cBudget = (o['budget'] as num?)?.toDouble() ?? 150.0;
+            final double cUnitPrice = cQty > 0 ? (cBudget / cQty) : cBudget;
+
             // Keep in loaded orders list with status cancelled
             loaded.add(
               DeliveryOrder(
@@ -270,7 +274,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                 restaurantName: "Local Restaurant",
                 restaurantAddress: "Pickup Point (Store)",
                 items: [
-                  BillItem(name: o['item_name'] ?? 'Food Item', quantity: 1, price: (o['budget'] as num?)?.toDouble() ?? 150.0, isCollected: false),
+                  BillItem(name: o['item_name'] ?? 'Food Item', quantity: cQty, price: cUnitPrice, isCollected: false),
                 ],
                 deliveryFee: 0.0,
                 status: "cancelled",
@@ -329,6 +333,40 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                   status == 'declined' ||
                   status == 'rejected');
 
+          int itemQty = int.tryParse(o['quantity']?.toString() ?? '') ?? 1;
+          final iNameLower = iName.toLowerCase();
+          if (itemQty <= 1 && bVal > 65 && (bVal.toInt() % 65 == 0) &&
+              (iNameLower.contains('65') || iNameLower.contains('biriyani') || iNameLower.contains('biryani') || iNameLower.contains('briyani'))) {
+            itemQty = (bVal / 65).round();
+          }
+          final double unitPrice = itemQty > 0 ? (bVal / itemQty) : bVal;
+
+          List<BillItem> parsedBillItems = [];
+          if (o['items'] is List && (o['items'] as List).isNotEmpty) {
+            parsedBillItems = (o['items'] as List).map<BillItem>((it) {
+              if (it is Map) {
+                int q = (it['quantity'] as num?)?.toInt() ?? int.tryParse(it['quantity']?.toString() ?? '') ?? itemQty;
+                double p = (it['price'] as num?)?.toDouble() ?? double.tryParse(it['price']?.toString() ?? '') ?? unitPrice;
+                if (q <= 1 && itemQty > 1) {
+                  q = itemQty;
+                  p = unitPrice;
+                }
+                return BillItem(
+                  name: it['name']?.toString() ?? iName,
+                  quantity: q,
+                  price: p,
+                  isCollected: it['isCollected'] as bool? ?? it['is_collected'] as bool? ?? false,
+                );
+              }
+              return BillItem(name: it.toString(), quantity: itemQty, price: unitPrice);
+            }).toList();
+          }
+          if (parsedBillItems.isEmpty) {
+            parsedBillItems = [
+              BillItem(name: iName, quantity: itemQty, price: unitPrice, isCollected: false),
+            ];
+          }
+
           loaded.add(
             DeliveryOrder(
               orderId: oId,
@@ -337,9 +375,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               deliveryAddress: dAddr,
               restaurantName: "Local Restaurant",
               restaurantAddress: "Pickup Point (Store)",
-              items: [
-                BillItem(name: iName, quantity: 1, price: bVal, isCollected: false),
-              ],
+              items: parsedBillItems,
               deliveryFee: 0.0,
               status: isAccepted ? "Accepted" : (isDeclined ? "declined" : "New Customer Order"),
               customerLatitude: (o['customer_latitude'] as num?)?.toDouble(),
@@ -1076,54 +1112,13 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           await prefs.setString('active_order_restaurant', order.restaurantName);
                                           await prefs.setDouble('active_order_grand_total', order.grandTotal);
                                           if (!context.mounted) return;
-                                          final acceptedByCustomer = await showDialog<bool>(
-                                            context: context,
-                                            barrierDismissible: false,
-                                            builder: (_) => DeliveryPartnerPriceRangeDialog(
-                                              orderId: order.orderId,
-                                              customerName: order.customerName,
-                                              customerPhone: order.customerPhone,
-                                              itemName: order.items.isNotEmpty ? order.items.first.name : 'Food Order',
-                                              budget: order.items.isNotEmpty ? order.items.first.price.toString() : '150',
+                                          if (!context.mounted) return;
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => DeliveryBillPostPage(order: order),
                                             ),
                                           );
-
-                                          if (context.mounted && acceptedByCustomer == true) {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) => DeliveryBillPostPage(order: order),
-                                              ),
-                                            );
-                                          } else if (context.mounted) {
-                                            final prefs = await SharedPreferences.getInstance();
-                                            await prefs.remove("partner_active_order_id");
-                                            await prefs.remove("active_order_id");
-                                            await prefs.remove("active_order_status");
-                                            await prefs.remove("active_order_customer_name");
-                                            await prefs.remove("active_order_customer_phone");
-                                            await prefs.remove("active_order_customer_address");
-                                            await prefs.remove("active_order_item");
-                                            await prefs.remove("active_order_budget");
-                                            await prefs.remove("active_order_bill_sent");
-                                            await prefs.remove("active_order_food_purchased");
-                                            await prefs.remove("active_order_partner_accepted");
-                                            await prefs.remove("active_order_restaurant");
-                                            await prefs.remove("active_order_grand_total");
-                                            final curDeclined = prefs.getStringList("partner_declined_order_ids") ?? [];
-                                            if (!curDeclined.contains(order.orderId)) {
-                                              curDeclined.add(order.orderId);
-                                              await prefs.setStringList("partner_declined_order_ids", curDeclined);
-                                            }
-                                            AlarmService.silenceOrder(order.orderId);
-                                            AlarmService.stopAlarm();
-                                            AppNotificationService.cancelNotification(999);
-                                            if (!context.mounted) return;
-                                            Navigator.of(context).pushAndRemoveUntil(
-                                              MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
-                                              (route) => false,
-                                            );
-                                          }
                                         },
                                       ),
                                     ),
@@ -1181,6 +1176,37 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       deliveryFee: 0.0,
     );
     _items = List.from(_order.items);
+    if (_items.length == 1) {
+      final first = _items.first;
+      final double totalItemAmount = first.total > 0 ? first.total : (first.price * first.quantity);
+      final fName = first.name.toLowerCase();
+      if (first.quantity <= 1 && totalItemAmount > 65 && (totalItemAmount.toInt() % 65 == 0) &&
+          (fName.contains('65') || fName.contains('biriyani') || fName.contains('biryani') || fName.contains('briyani'))) {
+        first.quantity = (totalItemAmount / 65).round();
+        first.price = 65.0;
+      }
+    }
+
+    // Recover saved order quantity from SharedPreferences if missing or single
+    SharedPreferences.getInstance().then((p) {
+      final savedQty = p.getInt('order_${_order.orderId}_quantity') ??
+          int.tryParse(p.getString('active_order_quantity') ?? '');
+      if (savedQty != null && savedQty > 1 && mounted) {
+        setState(() {
+          for (var item in _items) {
+            if (item.quantity <= 1) {
+              item.quantity = savedQty;
+              if (item.price > 65 && (item.price.toInt() % savedQty == 0)) {
+                item.price = item.price / savedQty;
+              } else if (item.total > 0) {
+                item.price = item.total / savedQty;
+              }
+            }
+          }
+        });
+        _syncChecklistToBackend();
+      }
+    });
     _deliveryFee = 0.0;
 
     // Notify backend that partner is at restaurant purchasing food
@@ -1244,6 +1270,25 @@ class _DeliveryBillPostPageState extends State<DeliveryBillPostPage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final orderData = data['order'] ?? data;
+        int backendQty = int.tryParse(orderData['quantity']?.toString() ?? '') ?? 1;
+        final double totalBudget = (orderData['budget'] as num?)?.toDouble() ?? 
+            (orderData['grand_total'] as num?)?.toDouble() ?? 
+            (orderData['item_total'] as num?)?.toDouble() ?? 
+            (_items.isNotEmpty ? _items.first.total : 0.0);
+        final fName = _items.isNotEmpty ? _items.first.name.toLowerCase() : '';
+        if (backendQty <= 1 && totalBudget > 65 && (totalBudget.toInt() % 65 == 0) && 
+            (_items.isNotEmpty && (fName.contains('65') || fName.contains('biriyani') || fName.contains('biryani') || fName.contains('briyani')))) {
+          backendQty = (totalBudget / 65).round();
+        }
+        if (backendQty > 1 && _items.length == 1 && _items.first.quantity != backendQty) {
+          if (mounted) {
+            setState(() {
+              _items.first.quantity = backendQty;
+              _items.first.price = totalBudget > 0 ? (totalBudget / backendQty) : 65.0;
+            });
+            _syncChecklistToBackend();
+          }
+        }
         // Incoming chat messages are tracked globally and deduplicated via AppNotificationService
 
         if (orderData['status'] == 'cancelled') {

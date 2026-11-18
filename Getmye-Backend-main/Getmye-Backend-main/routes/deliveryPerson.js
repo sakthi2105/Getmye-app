@@ -420,6 +420,13 @@ router.post('/status', async (req, res) => {
       { upsert: true }
     );
 
+    if (isOnline) {
+      try {
+        const { notifyWaitingCustomersThatPartnerIsAvailable } = require('../services/orderDispatchService');
+        notifyWaitingCustomersThatPartnerIsAvailable({ partner_id }).catch(e => console.warn('Notification trigger warn:', e.message));
+      } catch (_) {}
+    }
+
     res.json({
       success: true,
       message: `Partner status updated to ${cleanStatus}`,

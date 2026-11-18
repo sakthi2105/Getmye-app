@@ -693,10 +693,9 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           final myDigits = myPId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
           final assignedPartner = (o['current_assigned_partner_id'] ?? '').toString().trim().toLowerCase();
           final assignedDigits = assignedPartner.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
-          final bool isAssignedToMe = assignedPartner.isNotEmpty && (
+          final bool isAssignedToMe = assignedPartner.isEmpty ||
               assignedPartner == myPId ||
-              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits)
-          );
+              (myDigits.isNotEmpty && assignedDigits.isNotEmpty && myDigits == assignedDigits);
 
           final bool isDeclinedInBackend = declinedList.contains(myPId) ||
               (myDigits.isNotEmpty && declinedList.any((d) => d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == myDigits));
@@ -740,10 +739,21 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
           final addr = firstOrder['delivery_address']?.toString() ?? '';
           final budget = (firstOrder['budget'] as num?)?.toDouble() ?? 150.0;
 
+          int firstOrderQty = int.tryParse(firstOrder['quantity']?.toString() ?? '') ?? 1;
+          if (firstOrderQty <= 1 && firstOrder['items'] is List && (firstOrder['items'] as List).isNotEmpty) {
+            final fItem = (firstOrder['items'] as List).first;
+            if (fItem is Map && fItem['quantity'] != null) {
+              firstOrderQty = int.tryParse(fItem['quantity'].toString()) ?? firstOrderQty;
+            }
+          }
+          if (firstOrderQty <= 1 && budget > 65 && (budget.toInt() % 65 == 0) && itemName.toLowerCase().contains('65')) {
+            firstOrderQty = (budget / 65).round();
+          }
+
           if (!AlarmService.isPlaying || AlarmService.currentAlarmOrderId != newId) {
             AlarmService.startAlarm(
               orderId: newId,
-              item: itemName,
+              item: "$itemName (Qty: $firstOrderQty)",
               customerName: custName,
               address: addr,
               budget: budget,
@@ -779,6 +789,17 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final customerName = order['customer_name']?.toString() ?? 'Customer';
     final customerPhone = order['customer_phone']?.toString() ?? '';
     final address = order['delivery_address']?.toString() ?? 'Customer Delivery Location';
+    int orderQuantity = int.tryParse(order['quantity']?.toString() ?? '') ?? 1;
+    if (orderQuantity <= 1 && order['items'] is List && (order['items'] as List).isNotEmpty) {
+      final f = (order['items'] as List).first;
+      if (f is Map && f['quantity'] != null) {
+        orderQuantity = int.tryParse(f['quantity'].toString()) ?? orderQuantity;
+      }
+    }
+    final double parsedBudget = double.tryParse(budget) ?? 150.0;
+    if (orderQuantity <= 1 && parsedBudget > 65 && (parsedBudget.toInt() % 65 == 0) && itemName.toLowerCase().contains('65')) {
+      orderQuantity = (parsedBudget / 65).round();
+    }
 
     // ⏳ Proximity-Based 2-Minute Acceptance Window
     int totalRemainingSeconds = 120;
@@ -1002,29 +1023,103 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                     const Icon(Icons.restaurant_rounded, size: 20, color: AppColors.primary),
                                     const SizedBox(width: 8),
                                     Expanded(
-                                      child: Text(
-                                        itemName,
-                                        style: const TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w800,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "$itemName ($orderQuantity×)",
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w800,
+                                              color: AppColors.textPrimary,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF1D4ED8),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(Icons.shopping_bag_rounded, size: 13, color: Colors.white),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  "Quantity: $orderQuantity",
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w900,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              Text(
-                                "₹$budget",
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w900,
-                                  color: AppColors.primaryDark,
-                                ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    "₹$budget",
+                                    style: const TextStyle(
+                                      fontSize: 19,
+                                      fontWeight: FontWeight.w900,
+                                      color: AppColors.primaryDark,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFEF3C7),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: const Color(0xFFF59E0B)),
+                                    ),
+                                    child: Text(
+                                      "$orderQuantity × Biriyani",
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFFB45309),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFBFDBFE)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.receipt_long_rounded, size: 16, color: Color(0xFF1D4ED8)),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "Total Biriyani Quantity: $orderQuantity",
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF1D4ED8),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                           const Divider(height: 18),
                           Row(
@@ -1245,6 +1340,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             });
                           }
 
+                          final int orderQty = orderQuantity;
+                          final double totalBudget = double.tryParse(budget) ?? 150.0;
+                          final double unitPrice = orderQty > 0 ? (totalBudget / orderQty) : totalBudget;
+                          await prefs.setInt('order_${orderId}_quantity', orderQty);
+                          await prefs.setString('active_order_quantity', orderQty.toString());
+
                           final deliveryOrder = DeliveryOrder(
                             orderId: orderId,
                             customerName: customerName,
@@ -1255,8 +1356,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             items: [
                               BillItem(
                                 name: itemName,
-                                quantity: 1,
-                                price: double.tryParse(budget) ?? 150.0,
+                                quantity: orderQty,
+                                price: unitPrice,
                                 isCollected: false,
                               ),
                             ],
@@ -1265,57 +1366,12 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           );
 
                           if (mounted) {
-                            // Show popup: Call Customer & Send Estimated Price Range Acknowledgement
-                            final acceptedByCustomer = await showDialog<bool>(
-                              context: context,
-                              barrierDismissible: false,
-                              builder: (_) => DeliveryPartnerPriceRangeDialog(
-                                orderId: orderId,
-                                customerName: customerName,
-                                customerPhone: customerPhone,
-                                itemName: itemName,
-                                budget: budget,
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
                               ),
-                            );
-
-                            if (mounted && (acceptedByCustomer == true)) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
-                                ),
-                              ).then((_) => _loadPartnerData());
-                            } else if (mounted) {
-                              // Customer declined price range / chose another partner / cancelled
-                              setState(() {
-                                activeDeliveryOrder = null;
-                              });
-                              await prefs.remove('partner_active_order_id');
-                              await prefs.remove('active_order_id');
-                              await prefs.remove('active_order_status');
-                              await prefs.remove('active_order_customer_name');
-                              await prefs.remove('active_order_customer_phone');
-                              await prefs.remove('active_order_customer_address');
-                              await prefs.remove('active_order_item');
-                              await prefs.remove('active_order_budget');
-                              await prefs.remove('active_order_bill_sent');
-                              await prefs.remove('active_order_food_purchased');
-                              await prefs.remove('active_order_partner_accepted');
-                              await prefs.remove('active_order_restaurant');
-                              await prefs.remove('active_order_grand_total');
-
-                              final curDeclined = prefs.getStringList('partner_declined_order_ids') ?? [];
-                              if (!curDeclined.contains(orderId)) {
-                                curDeclined.add(orderId);
-                                await prefs.setStringList('partner_declined_order_ids', curDeclined);
-                              }
-
-                              AlarmService.silenceOrder(orderId);
-                              AlarmService.stopAlarm();
-                              AppNotificationService.cancelNotification(999);
-
-                              _loadPartnerData();
-                            }
+                            ).then((_) => _loadPartnerData());
                           }
                         },
                         child: const Row(
@@ -2816,26 +2872,38 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
     final double? custLat = (o['customer_latitude'] as num?)?.toDouble();
     final double? custLng = (o['customer_longitude'] as num?)?.toDouble();
 
+    int itemQty = int.tryParse(o['quantity']?.toString() ?? '') ?? 1;
+    if (itemQty <= 1 && budget > 65 && (budget.toInt() % 65 == 0) && itemName.toLowerCase().contains('65')) {
+      itemQty = (budget / 65).round();
+    }
+    final double unitPrice = itemQty > 0 ? (budget / itemQty) : budget;
+
     List<BillItem> billItems = [];
     if (o['items'] is List && (o['items'] as List).isNotEmpty) {
       billItems = (o['items'] as List).map((it) {
         if (it is Map) {
+          int q = (it['quantity'] as num?)?.toInt() ?? int.tryParse(it['quantity']?.toString() ?? '') ?? itemQty;
+          double p = (it['price'] as num?)?.toDouble() ?? double.tryParse(it['price']?.toString() ?? '') ?? unitPrice;
+          if (q <= 1 && itemQty > 1) {
+            q = itemQty;
+            p = unitPrice;
+          }
           return BillItem(
-            name: it['name']?.toString() ?? 'Item',
-            quantity: (it['quantity'] as num?)?.toInt() ?? 1,
-            price: (it['price'] as num?)?.toDouble() ?? 0.0,
-            isCollected: it['isCollected'] as bool? ?? false,
+            name: it['name']?.toString() ?? itemName,
+            quantity: q,
+            price: p,
+            isCollected: it['isCollected'] as bool? ?? it['is_collected'] as bool? ?? false,
           );
         }
-        return BillItem(name: it.toString(), quantity: 1, price: 0.0);
+        return BillItem(name: it.toString(), quantity: itemQty, price: unitPrice);
       }).toList();
     }
     if (billItems.isEmpty) {
       billItems = [
         BillItem(
           name: itemName,
-          quantity: 1,
-          price: budget,
+          quantity: itemQty,
+          price: unitPrice,
           isCollected: false,
         ),
       ];
@@ -2904,44 +2972,6 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ),
       ).then((_) => _loadPartnerData());
     } else {
-      // Strictly verify whether customer has approved the price range acknowledgement
-      bool isPriceRangeAccepted = false;
-      try {
-        final res = await http.get(ApiConfig.orderById(deliveryOrder.orderId)).timeout(const Duration(seconds: 3));
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body);
-          final ord = data['order'];
-          if (ord != null && (ord['price_range_status'] ?? '').toString().toLowerCase() == 'accepted') {
-            isPriceRangeAccepted = true;
-          }
-        }
-      } catch (_) {}
-
-      if (!isPriceRangeAccepted) {
-        if (!mounted) return;
-        final acceptedByCustomer = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => DeliveryPartnerPriceRangeDialog(
-            orderId: deliveryOrder.orderId,
-            customerName: deliveryOrder.customerName,
-            customerPhone: deliveryOrder.customerPhone,
-            itemName: deliveryOrder.items.isNotEmpty ? deliveryOrder.items.first.name : 'Food Order',
-            budget: deliveryOrder.items.isNotEmpty ? deliveryOrder.items.first.price.toString() : '150',
-          ),
-        );
-
-        if (mounted && (acceptedByCustomer == true)) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
-            ),
-          ).then((_) => _loadPartnerData());
-        }
-        return;
-      }
-
       if (!mounted) return;
       Navigator.push(
         context,

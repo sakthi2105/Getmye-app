@@ -1,4 +1,4 @@
-package com.example.flutter_application_1
+package com.getmye.app
 
 import android.app.Notification
 import android.app.NotificationChannel

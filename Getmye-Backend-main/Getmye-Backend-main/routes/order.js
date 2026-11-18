@@ -5,19 +5,22 @@ const Profile = require('../models/Profile');
 const DeliveryPerson = require('../models/DeliveryPerson');
 const LiveLocation = require('../models/LiveLocation');
 const { getNextSequence } = require('../models/Counter');
+const WaitingCustomer = require('../models/WaitingCustomer');
 const {
   KUMBAKONAM_GEOFENCE,
   isWithinKumbakonam,
   partnerIdsMatch,
   isPartnerInList,
   assignNextClosestPartner,
-  checkAndReassignExpiredOrders
+  checkAndReassignExpiredOrders,
+  getPartnerAvailabilityStats,
+  notifyWaitingCustomersThatPartnerIsAvailable
 } = require('../services/orderDispatchService');
 
 // POST /api/order/create - Customer places a new order
 router.post('/create', async (req, res) => {
   try {
-    const { user_id, customer_name, customer_phone, delivery_address, item_name, budget, cod_otp, customer_latitude, customer_longitude } = req.body;
+    const { user_id, customer_name, customer_phone, delivery_address, item_name, quantity, budget, cod_otp, customer_latitude, customer_longitude } = req.body;
     if (!user_id || !delivery_address || !item_name) {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
@@ -48,6 +51,7 @@ router.post('/create', async (req, res) => {
       ? Number(req.body.tip_amount)
       : 10;
     const finalBudget = Number(budget) || 0;
+    const finalQuantity = Math.max(1, parseInt(quantity, 10) || 1);
 
     const newOrder = new Order({
       order_id: orderId,
@@ -56,6 +60,7 @@ router.post('/create', async (req, res) => {
       customer_phone: customer_phone || '',
       delivery_address,
       item_name,
+      quantity: finalQuantity,
       budget: finalBudget,
       item_total: finalBudget,
       tip_amount: finalTip,
@@ -63,6 +68,14 @@ router.post('/create', async (req, res) => {
       customer_latitude: finalLat,
       customer_longitude: finalLng,
       status: 'pending',
+      items: [
+        {
+          name: item_name,
+          quantity: finalQuantity,
+          price: finalQuantity > 0 ? (finalBudget / finalQuantity) : finalBudget,
+          is_collected: false
+        }
+      ],
       cod_otp: finalOtp,
       bill_confirmed: false,
       bill_image_url: null,
@@ -76,10 +89,12 @@ router.post('/create', async (req, res) => {
     const assignedPartner = await assignNextClosestPartner(newOrder, newOrder.customer_latitude, newOrder.customer_longitude);
 
     await newOrder.save();
+    const stats = await getPartnerAvailabilityStats();
     res.status(201).json({
       success: true,
       message: 'Order created successfully and routed to closest partner',
       assigned_partner_id: assignedPartner ? assignedPartner.partner_id : null,
+      partner_stats: stats,
       order: newOrder
     });
   } catch (err) {
@@ -116,7 +131,17 @@ router.get('/pending', async (req, res) => {
           { mobile_number: partnerId }
         ]
       }).select('DP_id dp_status').lean();
-      const isPartnerOnline = partnerDoc && partnerDoc.dp_status === 'online';
+      // Delivery partner's LiveLocation must not be explicitly offline
+      const liveLoc = await LiveLocation.findOne({
+        $or: [
+          { partner_id: partnerId },
+          { partner_id: pRegex }
+        ]
+      }).lean();
+
+      // Delivery partner is considered online if marked online in DeliveryPerson OR LiveLocation is_online is true
+      const isPartnerOnline = (partnerDoc && /^online$/i.test(partnerDoc.dp_status || '')) || (liveLoc && liveLoc.is_online === true);
+      const isLocationEligible = !liveLoc || liveLoc.is_online !== false;
 
       // Collect all partner ID formats for this partner
       const partnerMatchList = [partnerId, pRegex];
@@ -132,19 +157,12 @@ router.get('/pending', async (req, res) => {
       }
 
       // Check if this delivery partner currently has an active ongoing delivery
+      const recentActiveThreshold = new Date(Date.now() - 12 * 60 * 60 * 1000);
       const hasActiveOngoing = await Order.exists({
         partner_id: { $in: partnerMatchList },
-        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+        created_at: { $gte: recentActiveThreshold }
       });
-
-      // Delivery partner's LiveLocation must not be explicitly offline
-      const liveLoc = await LiveLocation.findOne({
-        $or: [
-          { partner_id: partnerId },
-          { partner_id: pRegex }
-        ]
-      }).lean();
-      const isLocationEligible = !liveLoc || liveLoc.is_online !== false;
 
       const orConditions = [
         // Ongoing accepted active orders for this partner (always allow them to view and complete their ongoing order)
@@ -164,14 +182,16 @@ router.get('/pending', async (req, res) => {
       ];
 
       // 🛑 STRICT PROXIMITY SEQUENTIAL DISPATCH:
-      // An unaccepted pending order is STRICTLY offered ONLY to the currently assigned nearest partner!
-      // If that partner declines or times out (2 mins), it moves to the next closest partner.
-      // Multiple delivery persons will NEVER receive or ring alarms for the same order at the same time!
+      // An unaccepted pending order is offered to the currently assigned nearest partner, or any online partner if unassigned!
       if (!hasActiveOngoing && isPartnerOnline && isLocationEligible) {
         orConditions.unshift({
           status: 'pending',
           created_at: { $gte: pendingThreshold },
-          current_assigned_partner_id: { $in: partnerMatchList },
+          $or: [
+            { current_assigned_partner_id: { $in: partnerMatchList } },
+            { current_assigned_partner_id: null },
+            { current_assigned_partner_id: '' }
+          ],
           declined_partners: { $nin: partnerMatchList },
           timed_out_partners: { $nin: partnerMatchList }
         });
@@ -354,7 +374,7 @@ router.post('/accept', async (req, res) => {
     const protocol = req.protocol;
     const partnerPhotoUrl = `${protocol}://${host}/api/deliveryperson/photo/${resolvedPartnerId}`;
 
-    // Check if order was cancelled by customer before accepting
+    // Check if order was cancelled before accepting
     const existing = await Order.findOne({
       $or: [
         { order_id },
@@ -362,15 +382,28 @@ router.post('/accept', async (req, res) => {
       ]
     });
     if (existing && existing.status === 'cancelled') {
-      console.log(`⚠️ Order ${order_id} accept blocked: Order was already cancelled by customer: ${existing.cancel_reason}`);
-      return res.status(400).json({
-        success: false,
-        error: 'ORDER_CANCELLED',
-        cancelled: true,
-        cancel_reason: existing.cancel_reason || 'Customer cancelled the order',
-        cancelled_by: existing.cancelled_by || 'customer',
-        message: `Order #${order_id} was cancelled by the customer. Reason: ${existing.cancel_reason || 'Customer cancelled the order'}`
-      });
+      const isSystemTimeout = existing.cancelled_by === 'system_no_rider' ||
+          (existing.cancel_reason && existing.cancel_reason.includes('busy with ongoing deliveries'));
+      const isWithinGrace = existing.cancelled_at && (Date.now() - new Date(existing.cancelled_at).getTime() < 180000); // 3 minutes grace
+
+      if (isSystemTimeout && isWithinGrace) {
+        console.log(`🔄 [Order Accept] Order ${order_id} was auto-cancelled by system, but partner ${resolvedPartnerId} accepted within grace! Reviving order to accepted...`);
+        existing.status = 'pending';
+        existing.cancelled_at = null;
+        existing.cancel_reason = null;
+        existing.cancelled_by = null;
+        await existing.save();
+      } else {
+        console.log(`⚠️ Order ${order_id} accept blocked: Order was already cancelled by customer: ${existing.cancel_reason}`);
+        return res.status(400).json({
+          success: false,
+          error: 'ORDER_CANCELLED',
+          cancelled: true,
+          cancel_reason: existing.cancel_reason || 'Customer cancelled the order',
+          cancelled_by: existing.cancelled_by || 'customer',
+          message: `Order #${order_id} was cancelled by the customer. Reason: ${existing.cancel_reason || 'Customer cancelled the order'}`
+        });
+      }
     }
 
     // 🛑 STRICT DISPATCH GUARD: Ensure only the currently assigned partner can accept
@@ -649,6 +682,10 @@ router.post('/checklist/update', async (req, res) => {
         price: Math.max(0, parseFloat(it.price) || 0),
         is_collected: Boolean(it.is_collected ?? it.isCollected)
       }));
+      const totalItemQty = order.items.reduce((sum, it) => sum + (it.quantity || 1), 0);
+      if (totalItemQty > 0) {
+        order.quantity = totalItemQty;
+      }
       await order.save();
     }
 
@@ -803,6 +840,9 @@ router.post('/update-status', async (req, res) => {
             message: `Great job! Order #${order.order_id} has been delivered successfully.`
           });
         }
+
+        // Notify any waiting customers who couldn't get a delivery partner earlier
+        notifyWaitingCustomersThatPartnerIsAvailable().catch(e => console.warn('Notification trigger warn:', e.message));
       } catch (notifErr) {
         console.error('Error creating delivered notifications in update-status:', notifErr.message);
       }
@@ -876,6 +916,11 @@ router.post('/verify-delivery-otp', async (req, res) => {
     } catch (notifErr) {
       console.error('Error saving delivered notification in DB:', notifErr.message);
     }
+
+    // Notify any waiting customers who couldn't get a delivery partner earlier
+    try {
+      notifyWaitingCustomersThatPartnerIsAvailable().catch(e => console.warn('Notification trigger warn:', e.message));
+    } catch (_) {}
 
     res.json({ success: true, message: 'OTP verified successfully! Order delivered.', order });
   } catch (err) {
@@ -1097,7 +1142,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     }
 
     // High performance projection: select only lightweight metadata fields (skip massive base64 images)
-    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at';
+    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name quantity budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at items';
 
     let orders = await Order.find(query)
       .select(projection)
@@ -1136,7 +1181,11 @@ const handleGetOrder = async (req, res) => {
       .lean();
     if (!order) return res.status(404).json({ error: 'Order not found' });
     const enrichedOrder = await enrichOrderWithPartner(order, req);
-    res.json({ success: true, order: enrichedOrder });
+    let partnerStats = null;
+    try {
+      partnerStats = await getPartnerAvailabilityStats();
+    } catch (_) {}
+    res.json({ success: true, order: enrichedOrder, partner_stats: partnerStats });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch order' });
   }
@@ -1235,6 +1284,82 @@ router.post('/debug/reset-all', async (req, res) => {
     res.json({ success: true, message: 'All stuck test orders cancelled', modifiedCount: result.modifiedCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/order/waiting-customer - Register customer when no delivery partner is available
+router.post('/waiting-customer', async (req, res) => {
+  try {
+    const { user_id, customer_name, customer_phone, reason, order_id } = req.body;
+    if (!user_id && !customer_phone) {
+      return res.status(400).json({ error: 'user_id or customer_phone is required' });
+    }
+    const updatePayload = {
+      user_id: user_id || '',
+      customer_name: customer_name || 'Customer',
+      customer_phone: customer_phone || '',
+      reason: reason || 'no_partner_available',
+      order_id: order_id || '',
+      requested_at: new Date(),
+      notified: false
+    };
+
+    const record = await WaitingCustomer.findOneAndUpdate(
+      {
+        $or: [
+          ...(user_id ? [{ user_id }] : []),
+          ...(customer_phone ? [{ customer_phone }] : [])
+        ],
+        notified: false
+      },
+      updatePayload,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log(`📝 Saved unserved customer waiting notification entry for user: ${user_id || customer_phone} (reason: ${reason})`);
+    res.json({ success: true, waiting_customer: record });
+  } catch (err) {
+    console.error('Error saving waiting customer:', err);
+    res.status(500).json({ error: 'Failed to save waiting customer' });
+  }
+});
+
+// GET /api/order/notifications/:user_id - Get unread customer notifications (e.g., partner now online)
+router.get('/notifications/:user_id', async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const { user_id } = req.params;
+    const notifs = await Notification.find({
+      recipient_id: user_id,
+      recipient_type: 'customer',
+      is_read: false
+    }).sort({ created_at: -1 }).limit(10);
+    res.json({ success: true, notifications: notifs || [] });
+  } catch (err) {
+    console.error('Error fetching customer notifications:', err);
+    res.status(500).json({ error: 'Failed to get notifications' });
+  }
+});
+
+// POST /api/order/notifications/mark-read - Mark customer notifications as read
+router.post('/notifications/mark-read', async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const { notification_ids, user_id } = req.body;
+    if (notification_ids && Array.isArray(notification_ids) && notification_ids.length > 0) {
+      await Notification.updateMany(
+        { notification_id: { $in: notification_ids } },
+        { is_read: true }
+      );
+    } else if (user_id) {
+      await Notification.updateMany(
+        { recipient_id: user_id, recipient_type: 'customer' },
+        { is_read: true }
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error marking notifications as read:', err);
+    res.status(500).json({ error: 'Failed to mark notifications read' });
   }
 });
 

@@ -59,6 +59,9 @@ class ApiConfig {
   static Uri get orderSendPriceRange => Uri.parse('$baseUrl/api/order/price-range/send');
   static Uri get orderRespondPriceRange => Uri.parse('$baseUrl/api/order/price-range/respond');
   static Uri get orderUpdateChecklist => Uri.parse('$baseUrl/api/order/checklist/update');
+  static Uri get orderWaitingCustomer => Uri.parse('$baseUrl/api/order/waiting-customer');
+  static Uri orderNotifications(String userId) => Uri.parse('$baseUrl/api/order/notifications/$userId');
+  static Uri get orderNotificationsMarkRead => Uri.parse('$baseUrl/api/order/notifications/mark-read');
 
   // Bill Endpoints
   static Uri get billSubmit => Uri.parse('$baseUrl/api/bill/submit');

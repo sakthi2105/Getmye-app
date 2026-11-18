@@ -698,6 +698,41 @@ class AppNotificationService {
       final String accountType = prefs.getString('account_type') ?? 'customer';
       if (accountType != 'customer') return;
 
+      // Check for waiting customer notifications (e.g. partner is now online / completed delivery)
+      final String? userId = prefs.getString('user_id') ?? prefs.getString('mobile_number');
+      if (userId != null && userId.isNotEmpty) {
+        try {
+          final notifRes = await http
+              .get(ApiConfig.orderNotifications(userId))
+              .timeout(const Duration(milliseconds: 2500));
+          if (notifRes.statusCode == 200) {
+            final notifData = jsonDecode(notifRes.body);
+            final notifs = notifData['notifications'];
+            if (notifs is List && notifs.isNotEmpty) {
+              final List<String> idsToMark = [];
+              for (final n in notifs) {
+                final String nId = n['notification_id']?.toString() ?? '';
+                final String nTitle = n['title']?.toString() ?? '🛵 Delivery Partner Available Now!';
+                final String nMsg = n['message']?.toString() ?? 'A delivery partner is now online and available in Kumbakonam! You can place your order now on GETMYE.';
+                if (nId.isNotEmpty) idsToMark.add(nId);
+                await showNotification(
+                  id: (DateTime.now().millisecondsSinceEpoch ~/ 1000) % 100000,
+                  title: nTitle,
+                  body: nMsg,
+                );
+              }
+              if (idsToMark.isNotEmpty) {
+                await http.post(
+                  ApiConfig.orderNotificationsMarkRead,
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({'notification_ids': idsToMark, 'user_id': userId}),
+                );
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
       final String? activeOrderId = prefs.getString('active_order_id');
       if (activeOrderId == null || activeOrderId.isEmpty) return;
 

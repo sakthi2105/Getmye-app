@@ -48,6 +48,7 @@ class _PaymentPageState extends State<PaymentPage> {
   String orderStatus = 'pending';
   String orderId = "";
   String itemName = "";
+  int orderQuantity = 1;
   String customerName = "Customer";
   String customerAddress = "Live Delivery Location";
   String partnerName = "";
@@ -225,6 +226,7 @@ class _PaymentPageState extends State<PaymentPage> {
         isPartnerAccepted = accepted;
         if (activeId != null) orderId = activeId;
         if (activeItem != null) itemName = activeItem;
+        orderQuantity = int.tryParse(prefs.getString('active_order_quantity') ?? '') ?? 1;
         partnerName = pName;
         final savedPartnerPic = prefs.getString('active_order_partner_pic') ??
             prefs.getString('active_order_partner_image') ??
@@ -283,7 +285,12 @@ class _PaymentPageState extends State<PaymentPage> {
 
           final dAddr = order['delivery_address'] ?? customerAddress;
           final iName = order['item_name'] ?? itemName;
+          int oQty = int.tryParse(order['quantity']?.toString() ?? '') ?? orderQuantity;
           final num gTot = order['grand_total'] ?? 0;
+          final double bBudget = (order['budget'] as num?)?.toDouble() ?? (order['item_total'] as num?)?.toDouble() ?? gTot.toDouble();
+          if (oQty <= 1 && bBudget > 65 && (bBudget.toInt() % 65 == 0) && (iName.toLowerCase().contains('65') || itemName.toLowerCase().contains('65'))) {
+            oQty = (bBudget / 65).round();
+          }
           final bOtp = order['cod_otp']?.toString();
           final bMethod = order['payment_method']?.toString();
           final bPayStatus = order['payment_status']?.toString();
@@ -317,6 +324,22 @@ class _PaymentPageState extends State<PaymentPage> {
                 orderId: currentOrderId,
                 partnerName: pName,
               );
+            }
+
+            // Decrement biryani remaining stock count ONLY AFTER delivery is completed
+            final bool alreadyReduced = prefs.getBool('biryani_reduced_$currentOrderId') ?? false;
+            if (!alreadyReduced) {
+              await prefs.setBool('biryani_reduced_$currentOrderId', true);
+              final itemStr = (order['item_name'] ?? prefs.getString('active_order_item') ?? '').toString().toLowerCase();
+              if (itemStr.contains('biryani') || itemStr.contains('briyani') || itemStr.contains('biriyani') || itemStr.contains('65')) {
+                final int qty = int.tryParse(order['quantity']?.toString() ?? '') ??
+                    int.tryParse(prefs.getString('active_order_quantity') ?? '') ?? 1;
+                final int currentStock = prefs.getInt('remaining_biryani_count') ?? 75;
+                if (currentStock > 1) {
+                  final int newStock = (currentStock - qty).clamp(1, 100);
+                  await prefs.setInt('remaining_biryani_count', newStock);
+                }
+              }
             }
 
             await prefs.setBool('has_active_order', false);
@@ -389,6 +412,10 @@ class _PaymentPageState extends State<PaymentPage> {
               'price': (e['price'] as num?)?.toDouble() ?? 0.0,
               'is_collected': e['is_collected'] == true,
             }).toList();
+            if (parsedChecklist.length == 1 && parsedChecklist.first['quantity'] == 1 && oQty > 1) {
+              parsedChecklist.first['quantity'] = oQty;
+              parsedChecklist.first['price'] = bBudget > 0 ? (bBudget / oQty) : 65.0;
+            }
           }
 
           List<String> parsedOrderImgs = [];
@@ -426,18 +453,8 @@ class _PaymentPageState extends State<PaymentPage> {
               (orderBillImg != null && uploadedBillImageUrl != orderBillImg);
 
           final String pr = (order['price_range'] ?? '').toString().trim();
-          final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
           if (pr.isNotEmpty && agreedPriceRange != pr) {
             agreedPriceRange = pr;
-          }
-          if (pr.isNotEmpty && prStatus == 'pending') {
-            _checkAndShowCustomerPriceRangeDialog(
-              orderId: currentOrderId,
-              partnerName: pName,
-              partnerPhone: pPhone,
-              partnerPhoto: pPic,
-              priceRange: pr,
-            );
           }
 
           // 🚨 Customer Notification: Delivery Partner confirmed order and sent bill (ONLY when status is bill_sent)
@@ -464,6 +481,7 @@ class _PaymentPageState extends State<PaymentPage> {
               orderStatus = status;
               orderId = currentOrderId;
               itemName = iName;
+              orderQuantity = oQty;
               customerAddress = dAddr;
               partnerName = pName;
               partnerPhone = pPhone;
@@ -1670,11 +1688,9 @@ class _PaymentPageState extends State<PaymentPage> {
                       _buildOrderStatusHeaderCard(),
                       const SizedBox(height: 16),
 
-                      // Delivery Verification OTP Card (Shown whenever activeOtp exists)
-                      if (activeOtp != null && activeOtp!.isNotEmpty) ...[
-                        _buildDeliveryOtpCard(),
-                        const SizedBox(height: 16),
-                      ],
+                      // Kumbakonam Kitchen Specials Carousel (Replaces OTP container)
+                      _buildTrackingBillHotelsCarousel(),
+                      const SizedBox(height: 16),
 
                       // LIVE LOCATION MAP (Customer tracks delivery person's live location)
                       _buildLiveLocationMapCard(),
@@ -2314,93 +2330,146 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  // Delivery Verification OTP Card (Shown for both Online and COD payments)
-  Widget _buildDeliveryOtpCard() {
-    final otpToShow = activeOtp ?? "----";
-    final isPaid = isOnlinePaid;
+  static const List<Map<String, dynamic>> _kBillPageHotels = [
+    {
+      'name': 'Devan Biriyani',
+      'tagline': 'Authentic Woodfired Dum Biriyani',
+      'location': 'Kumbakonam Main Road',
+      'rating': '4.9',
+      'image': 'assets/banner_biryani.jpg',
+      'badge': 'ICONIC SPOT',
+      'specialty': 'Woodfired Seeraga Samba Feast',
+      'offer': 'Special Dum Biriyani',
+      'color': Color(0xFFEA580C),
+      'prepTime': '10-15m',
+    },
+    {
+      'name': 'Aathurar Biriyani',
+      'tagline': 'Traditional Spiced Rich Dum Feast',
+      'location': 'Railway Feeder Road',
+      'rating': '4.8',
+      'image': 'assets/banner_biryani_crushing.jpg',
+      'badge': 'TOP RATED',
+      'specialty': 'Special Masala Dum Biriyani',
+      'offer': 'Authentic Traditional Flavor',
+      'color': Color(0xFFDC2626),
+      'prepTime': '12-18m',
+    },
+    {
+      'name': 'Sumaiya Biriyani',
+      'tagline': 'Famous Muslim Wedding Dum Biriyani',
+      'location': 'Town Hall Market',
+      'rating': '4.9',
+      'image': 'assets/banner_mutton_biryani_hd.png',
+      'badge': 'CHEF SPECIAL',
+      'specialty': 'Royal Wedding Mutton & Chicken',
+      'offer': 'Rich Flavorful Feast',
+      'color': Color(0xFFD97706),
+      'prepTime': '10-15m',
+    },
+    {
+      'name': 'Thoppi Vappa Biriyani',
+      'tagline': 'Aromatic Seeraga Samba Traditional Feast',
+      'location': 'Bus Stand Corner',
+      'rating': '4.8',
+      'image': 'assets/banner_mutton_biryani.jpg',
+      'badge': 'LEGENDARY',
+      'specialty': 'Classic Tamil Traditional Dum',
+      'offer': 'Tender Meat & Fragrant Rice',
+      'color': Color(0xFF059669),
+      'prepTime': '15-20m',
+    },
+    {
+      'name': 'Aslaam Biriyani',
+      'tagline': 'Mouthwatering Charcoal Dum Biriyani',
+      'location': 'Bazaar Street',
+      'rating': '4.7',
+      'image': 'assets/banner_biryani_65_landscape.jpg',
+      'badge': 'CROWD FAVORITE',
+      'specialty': 'Charcoal Dum & Chicken 65',
+      'offer': 'Hot Dum with Juicy 65',
+      'color': Color(0xFF7C3AED),
+      'prepTime': '10-15m',
+    },
+  ];
+
+  // Kumbakonam Kitchen Specials Carousel (Replaced OTP container with distinct food showcase)
+  Widget _buildTrackingBillHotelsCarousel() {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isPaid
-              ? [const Color(0xFF047857), const Color(0xFF059669)]
-              : [const Color(0xFFB45309), const Color(0xFFD97706)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: (isPaid ? const Color(0xFF047857) : const Color(0xFFD97706)).withValues(alpha: 0.25),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
+            color: const Color(0xFF142B4A).withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Icon(isPaid ? Icons.verified_user_rounded : Icons.vpn_key_rounded, color: Colors.white, size: 20),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        isPaid ? "ONLINE DELIVERY OTP" : "COD DELIVERY OTP",
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
                     ),
-                  ],
-                ),
+                    child: const Icon(Icons.local_fire_department_rounded, color: Color(0xFFD97706), size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Trending Kitchen Specials",
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      Text(
+                        "Certified partner kitchens in Kumbakonam",
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  isPaid ? "Paid Online" : "Pay Cash",
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11),
+                child: const Text(
+                  "5 SPOTS",
+                  style: TextStyle(
+                    color: Color(0xFF475569),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          const Text(
-            "Share this OTP with your delivery partner when they arrive to complete delivery:",
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.12),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Text(
-              otpToShow,
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 8,
-                color: isPaid ? const Color(0xFF047857) : const Color(0xFFB45309),
-              ),
-            ),
-          ),
+          const SizedBox(height: 12),
+          const _BillPageHotelsCarouselWidget(),
         ],
       ),
     );
@@ -2815,8 +2884,8 @@ class _PaymentPageState extends State<PaymentPage> {
         : [
             {
               'name': itemName,
-              'quantity': 1,
-              'price': itemTotal > 0 ? itemTotal : 150.0,
+              'quantity': orderQuantity,
+              'price': itemTotal > 0 ? (itemTotal / (orderQuantity > 0 ? orderQuantity : 1)) : 150.0,
               'is_collected': isBillConfirmed || isBillSent,
             }
           ];
@@ -3282,7 +3351,7 @@ class _PaymentPageState extends State<PaymentPage> {
                     return _buildBillItem("$qty× $name", hotel, price > 0 ? (price * qty) : (itemTotal > 0 ? itemTotal : totalAmount));
                   })
                 else
-                  _buildBillItem("1× ${itemName.isNotEmpty ? itemName : 'Food Order'}", "Local Restaurant", itemTotal > 0 ? itemTotal : totalAmount),
+                  _buildBillItem("$orderQuantity× ${itemName.isNotEmpty ? itemName : 'Food Order'}", "Local Restaurant", itemTotal > 0 ? itemTotal : totalAmount),
                 const Divider(thickness: 1, height: 24),
                 _buildRow("Item Subtotal", "₹ ${itemTotal.toStringAsFixed(0)}"),
                 const SizedBox(height: 6),
@@ -4307,4 +4376,228 @@ class _PhonePePageState extends State<PhonePePage> {
     ),
   );
 }
+}
+
+/// Unique Carousel 3 on Order Tracking & Bill Page
+class _BillPageHotelsCarouselWidget extends StatefulWidget {
+  const _BillPageHotelsCarouselWidget();
+
+  @override
+  State<_BillPageHotelsCarouselWidget> createState() => _BillPageHotelsCarouselWidgetState();
+}
+
+class _BillPageHotelsCarouselWidgetState extends State<_BillPageHotelsCarouselWidget> {
+  late PageController _pageController;
+  Timer? _timer;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _timer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
+      if (!mounted) return;
+      if (_PaymentPageState._kBillPageHotels.isEmpty) return;
+      final next = (_currentIndex + 1) % _PaymentPageState._kBillPageHotels.length;
+      _pageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 124,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: _PaymentPageState._kBillPageHotels.length,
+            onPageChanged: (i) => setState(() => _currentIndex = i),
+            itemBuilder: (context, index) {
+              final hotel = _PaymentPageState._kBillPageHotels[index];
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFFBEB), Color(0xFFFEF3C7)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFDE68A), width: 1.2),
+                ),
+                child: Row(
+                  children: [
+                    // Left Image with Badge
+                    ClipRRect(
+                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(15)),
+                      child: Stack(
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            height: double.infinity,
+                            child: Image.asset(
+                              hotel['image'] as String,
+                              fit: BoxFit.cover,
+                              filterQuality: FilterQuality.high,
+                            ),
+                          ),
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: (hotel['color'] as Color).withValues(alpha: 0.90),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star_rounded, color: Colors.white, size: 10),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    hotel['rating'] as String,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Right Details
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (hotel['color'] as Color).withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: (hotel['color'] as Color).withValues(alpha: 0.45),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    hotel['badge'] as String,
+                                    style: TextStyle(
+                                      color: hotel['color'] as Color,
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.timer_outlined, size: 11, color: Color(0xFFB45309)),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      hotel['prepTime'] as String,
+                                      style: const TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFFB45309),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              hotel['name'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF0F172A),
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              hotel['specialty'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on_rounded, size: 10, color: Color(0xFF78350F)),
+                                const SizedBox(width: 2),
+                                Expanded(
+                                  child: Text(
+                                    hotel['location'] as String,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      color: Color(0xFF78350F),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(_PaymentPageState._kBillPageHotels.length, (idx) {
+            final isActive = _currentIndex == idx;
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              margin: const EdgeInsets.symmetric(horizontal: 2.5),
+              height: 3.5,
+              width: isActive ? 14 : 4,
+              decoration: BoxDecoration(
+                color: isActive ? const Color(0xFFD97706) : const Color(0xFFCBD5E1),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
 }

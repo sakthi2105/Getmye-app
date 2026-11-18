@@ -1,6 +1,9 @@
 const DeliveryPerson = require('../models/DeliveryPerson');
 const LiveLocation = require('../models/LiveLocation');
 const Order = require('../models/Order');
+const WaitingCustomer = require('../models/WaitingCustomer');
+const Notification = require('../models/Notification');
+const { getNextSequence } = require('../models/Counter');
 
 // Kumbakonam Town Geofence Definition
 const KUMBAKONAM_GEOFENCE = {
@@ -67,6 +70,16 @@ function isPartnerInList(partnerId, list = []) {
 }
 
 /**
+ * Helper to get a canonical clean identifier for a partner ID (lowercased without non-digits / leading zeros)
+ */
+function toCanonicalId(id) {
+  if (!id) return '';
+  const s = id.toString().trim().toLowerCase();
+  const num = s.replace(/[^0-9]/g, '').replace(/^0+/, '');
+  return num || s;
+}
+
+/**
  * Find all available delivery partners sorted by proximity to customer coordinates.
  * Excludes partners who:
  * 1. Are offline (dp_status !== 'online' or LiveLocation is_online !== true)
@@ -77,18 +90,40 @@ function isPartnerInList(partnerId, list = []) {
  */
 async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = [], excludeOrderId = null) {
   try {
-    // 1. Get all delivery persons who are registered and strictly ONLINE
+    // 1. Get all delivery persons who are registered and ONLINE (case-insensitive)
     const deliveryPersons = await DeliveryPerson.find({
-      dp_status: 'online'
+      dp_status: { $regex: /^online$/i }
     }).select('DP_id name mobile_number dp_status').lean();
+
+    // Also include partners actively online in LiveLocation
+    try {
+      const activeLiveLocs = await LiveLocation.find({ is_online: true }).select('partner_id').lean();
+      const locIds = activeLiveLocs.map(l => l.partner_id).filter(Boolean);
+      if (locIds.length > 0) {
+        const extraDPs = await DeliveryPerson.find({
+          $or: [
+            { DP_id: { $in: locIds } },
+            { mobile_number: { $in: locIds } }
+          ]
+        }).select('DP_id name mobile_number dp_status').lean();
+
+        for (const extra of extraDPs) {
+          if (!deliveryPersons.some(d => partnerIdsMatch(d.DP_id, extra.DP_id))) {
+            deliveryPersons.push(extra);
+          }
+        }
+      }
+    } catch (_) {}
 
     if (!deliveryPersons || deliveryPersons.length === 0) {
       return [];
     }
 
-    // 2. Find any partners currently engaged in active orders
+    // 2. Find any partners currently engaged in active orders within the last 12 hours
+    const recentThreshold = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const activeOrders = await Order.find({
-      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+      created_at: { $gte: recentThreshold }
     }).select('partner_id').lean();
 
     // Also exclude partners who currently have an unexpired pending assignment for another order
@@ -105,18 +140,14 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     const busyPartnerIds = new Set();
     for (const o of activeOrders) {
       if (o.partner_id) {
-        const idLower = o.partner_id.toString().trim().toLowerCase();
-        busyPartnerIds.add(idLower);
-        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
-        if (numClean) busyPartnerIds.add(numClean);
+        busyPartnerIds.add(toCanonicalId(o.partner_id));
+        busyPartnerIds.add(o.partner_id.toString().trim().toLowerCase());
       }
     }
     for (const o of pendingOrders) {
       if (o.current_assigned_partner_id) {
-        const idLower = o.current_assigned_partner_id.toString().trim().toLowerCase();
-        busyPartnerIds.add(idLower);
-        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
-        if (numClean) busyPartnerIds.add(numClean);
+        busyPartnerIds.add(toCanonicalId(o.current_assigned_partner_id));
+        busyPartnerIds.add(o.current_assigned_partner_id.toString().trim().toLowerCase());
       }
     }
 
@@ -127,8 +158,8 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       if (loc.partner_id) {
         const idLower = loc.partner_id.toString().trim().toLowerCase();
         liveLocMap.set(idLower, loc);
-        const numClean = idLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
-        if (numClean) liveLocMap.set(numClean, loc);
+        const canon = toCanonicalId(loc.partner_id);
+        if (canon) liveLocMap.set(canon, loc);
       }
     }
 
@@ -136,7 +167,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     const activeCandidates = [];
     const fallbackCandidates = [];
     const now = Date.now();
-    const LOCATION_ACTIVE_WINDOW_MS = 20 * 60 * 1000; // 20 minutes freshness for location on
+    const LOCATION_ACTIVE_WINDOW_MS = 25 * 60 * 1000; // 25 minutes freshness for location on
 
     const custLat = (customerLat != null && !isNaN(Number(customerLat))) ? Number(customerLat) : KUMBAKONAM_GEOFENCE.center.latitude;
     const custLng = (customerLng != null && !isNaN(Number(customerLng))) ? Number(customerLng) : KUMBAKONAM_GEOFENCE.center.longitude;
@@ -144,10 +175,10 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     for (const dp of deliveryPersons) {
       const dpId = dp.DP_id.toString().trim();
       const dpIdLower = dpId.toLowerCase();
-      const numClean = dpIdLower.replace(/[^0-9]/g, '').replace(/^0+/, '');
+      const canonId = toCanonicalId(dpId);
 
       // Check if busy with ongoing order or pending offer
-      if (busyPartnerIds.has(dpIdLower) || (numClean && busyPartnerIds.has(numClean))) {
+      if (busyPartnerIds.has(dpIdLower) || (canonId && busyPartnerIds.has(canonId))) {
         continue;
       }
 
@@ -158,7 +189,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
 
       // 🛑 LOCATION & ONLINE CHECK:
       // If partner is explicitly offline in LiveLocation, skip
-      const loc = liveLocMap.get(dpIdLower) || (numClean ? liveLocMap.get(numClean) : null);
+      const loc = liveLocMap.get(dpIdLower) || (canonId ? liveLocMap.get(canonId) : null);
       if (loc && loc.is_online === false) {
         continue;
       }
@@ -262,6 +293,26 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
         orderDoc.order_id
       );
     }
+
+    // 3. Ultimate fallback: If proximity filtering returned 0 but online delivery persons exist in Kumbakonam,
+    // dispatch to any online delivery partner so the order is never dropped!
+    if (candidates.length === 0) {
+      const anyOnlinePartner = await DeliveryPerson.findOne({
+        dp_status: { $regex: /^online$/i }
+      }).select('DP_id name mobile_number').lean();
+
+      if (anyOnlinePartner) {
+        console.log(`📍 [Order Dispatch] Order ${orderDoc.order_id}: Using online partner fallback -> ${anyOnlinePartner.DP_id}`);
+        candidates.push({
+          partner_id: anyOnlinePartner.DP_id,
+          name: anyOnlinePartner.name || 'Delivery Partner',
+          phone: anyOnlinePartner.mobile_number || '',
+          latitude: KUMBAKONAM_GEOFENCE.center.latitude,
+          longitude: KUMBAKONAM_GEOFENCE.center.longitude,
+          distance_km: 1.0
+        });
+      }
+    }
   }
 
   const timeoutSeconds = orderDoc.assignment_timeout_seconds || 120;
@@ -359,6 +410,114 @@ async function checkAndReassignExpiredOrders() {
   }
 }
 
+/**
+ * Calculates current real-time delivery partner availability metrics.
+ */
+async function getPartnerAvailabilityStats() {
+  try {
+    const onlineDPs = await DeliveryPerson.find({
+      dp_status: { $regex: /^online$/i }
+    }).select('DP_id mobile_number').lean();
+
+    const onlineLiveLocs = await LiveLocation.find({ is_online: true }).select('partner_id').lean();
+    const onlinePartnersMap = new Map();
+
+    for (const dp of onlineDPs) {
+      const canon = toCanonicalId(dp.DP_id);
+      if (canon) onlinePartnersMap.set(canon, dp);
+    }
+    for (const loc of onlineLiveLocs) {
+      const canon = toCanonicalId(loc.partner_id);
+      if (canon && !onlinePartnersMap.has(canon)) {
+        onlinePartnersMap.set(canon, { DP_id: loc.partner_id });
+      }
+    }
+
+    const totalOnline = onlinePartnersMap.size;
+
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const activeOrders = await Order.find({
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+      created_at: { $gte: twoHoursAgo }
+    }).select('partner_id').lean();
+
+    const busyPartners = new Set();
+    for (const o of activeOrders) {
+      if (o.partner_id) {
+        const canon = toCanonicalId(o.partner_id);
+        if (canon && onlinePartnersMap.has(canon)) {
+          busyPartners.add(canon);
+        }
+      }
+    }
+
+    const busyCount = busyPartners.size;
+    const freeCount = Math.max(0, totalOnline - busyCount);
+    const zeroOnline = totalOnline === 0;
+    const allBusy = totalOnline > 0 && freeCount === 0;
+
+    return {
+      total_online: totalOnline,
+      busy_count: busyCount,
+      free_count: freeCount,
+      zero_online: zeroOnline,
+      all_busy: allBusy
+    };
+  } catch (err) {
+    console.error('Error getting partner availability stats:', err);
+    return {
+      total_online: 0,
+      busy_count: 0,
+      free_count: 0,
+      zero_online: true,
+      all_busy: false
+    };
+  }
+}
+
+/**
+ * Notifies all customers who previously placed an order but couldn't get a delivery partner,
+ * as soon as any delivery partner comes online or completes a delivery.
+ */
+async function notifyWaitingCustomersThatPartnerIsAvailable(partnerInfo = {}) {
+  try {
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const waitingList = await WaitingCustomer.find({
+      notified: false,
+      requested_at: { $gte: fourHoursAgo }
+    }).sort({ requested_at: -1 });
+
+    if (!waitingList || waitingList.length === 0) return 0;
+
+    console.log(`🔔 [Partner Available] Notifying ${waitingList.length} unserved waiting customer(s) that a delivery partner is now available!`);
+
+    let notifiedCount = 0;
+    for (const customer of waitingList) {
+      try {
+        const notifId = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifId,
+          recipient_id: customer.user_id,
+          recipient_type: 'customer',
+          title: '🛵 Delivery Partner Available Now!',
+          message: 'A delivery partner is now online and available in Kumbakonam! You can place your order now on GETMYE.',
+          is_read: false
+        });
+
+        customer.notified = true;
+        await customer.save();
+        notifiedCount++;
+      } catch (err) {
+        console.error(`Error notifying waiting customer ${customer.user_id}:`, err.message);
+      }
+    }
+    return notifiedCount;
+  } catch (err) {
+    console.error('Error in notifyWaitingCustomersThatPartnerIsAvailable:', err);
+    return 0;
+  }
+}
+
 module.exports = {
   KUMBAKONAM_GEOFENCE,
   calculateDistanceKm,
@@ -367,5 +526,7 @@ module.exports = {
   isPartnerInList,
   findAvailablePartners,
   assignNextClosestPartner,
-  checkAndReassignExpiredOrders
+  checkAndReassignExpiredOrders,
+  getPartnerAvailabilityStats,
+  notifyWaitingCustomersThatPartnerIsAvailable
 };

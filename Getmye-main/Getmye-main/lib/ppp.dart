@@ -275,6 +275,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _itemController = TextEditingController();
   final TextEditingController _budgetController = TextEditingController();
+  final TextEditingController _quantityController = TextEditingController(text: '1');
   final TextEditingController _chatMsgController = TextEditingController();
   final TextEditingController _customLocationTextController = TextEditingController();
   final TextEditingController _deliveryLocationController = TextEditingController();
@@ -282,61 +283,91 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   bool _isLocationDialogShowing = false;
   bool _isCheckingLocation = false;
+  bool _showOrderForm = false;
 
-  // Promotional Banner Carousel Controller & Timer
-  late PageController _bannerPageController;
-  int _currentBannerIndex = 0;
-  Timer? _bannerTimer;
+  // Shop Advertisements Carousel Controller & Timer
+  late PageController _shopAdPageController;
+  int _currentShopAdIndex = 0;
+  Timer? _shopAdTimer;
+  int _remainingBiryaniCount = 75;
+  final int _totalBiryaniCount = 100;
+  int _selectedOfferUnitPrice = 65;
+  DateTime? _orderSearchStartTime;
+  int _allBusyHitCount = 0;
 
-  final List<Map<String, dynamic>> _carouselBanners = [
+  static const List<Map<String, dynamic>> _kPartnerHotels = [
     {
-      'image': 'assets/banner_biryani_crushing.jpg',
-      'fallback': 'assets/banner_biryani_crushing.jpg',
-      'title': 'Chicken Biryani',
-      'tag': 'CRUSHING OFFER',
-      'originalPrice': '150',
-      'offerPrice': '49',
-      'item': 'Chicken Biryani',
-      'budget': '49',
-      'isAnyDeal': false,
-      'icon': Icons.restaurant_rounded,
+      'name': 'Devan Biriyani',
+      'tagline': 'Authentic Woodfired Dum Biriyani',
+      'location': 'Kumbakonam Main Road',
+      'rating': '4.9',
+      'reviews': '2.4k+ orders',
+      'image': 'assets/banner_biryani.jpg',
+      'badge': 'ICONIC SPOT',
+      'specialty': 'Woodfired Seeraga Samba',
       'color': Color(0xFFEA580C),
+      'prepTime': '10-15m',
     },
     {
-      'image': 'assets/banner_shawarma_crushing.jpg',
-      'fallback': 'assets/banner_shawarma_crushing.jpg',
-      'title': 'Hot & Spicy Chicken Shawarma',
-      'tag': 'CRUSHING OFFER',
-      'originalPrice': '110',
-      'offerPrice': '30',
-      'item': 'Chicken Shawarma',
-      'budget': '30',
-      'isAnyDeal': false,
-      'icon': Icons.fastfood_rounded,
+      'name': 'Aathurar Biriyani',
+      'tagline': 'Traditional Spiced Rich Dum Feast',
+      'location': 'Railway Feeder Road',
+      'rating': '4.8',
+      'reviews': '1.8k+ orders',
+      'image': 'assets/banner_biryani_crushing.jpg',
+      'badge': 'TOP RATED',
+      'specialty': 'Special Masala Dum Biriyani',
       'color': Color(0xFFDC2626),
+      'prepTime': '12-18m',
     },
     {
-      'image': 'assets/banner_momos_crushing.jpg',
-      'fallback': 'assets/banner_momos_crushing.jpg',
-      'title': 'Hot & Steamy Momos',
-      'tag': 'CRUSHING OFFER',
-      'originalPrice': '120',
-      'offerPrice': '39',
-      'item': 'Hot & Steamy Momos',
-      'budget': '39',
-      'isAnyDeal': false,
-      'icon': Icons.soup_kitchen_rounded,
+      'name': 'Sumaiya Biriyani',
+      'tagline': 'Famous Wedding Style Muslim Dum Biriyani',
+      'location': 'Town Hall Market',
+      'rating': '4.9',
+      'reviews': '3.1k+ orders',
+      'image': 'assets/banner_mutton_biryani_hd.png',
+      'badge': 'CHEF SPECIAL',
+      'specialty': 'Royal Wedding Mutton & Chicken',
       'color': Color(0xFFD97706),
+      'prepTime': '10-15m',
+    },
+    {
+      'name': 'Thoppi Vappa Biriyani',
+      'tagline': 'Aromatic Seeraga Samba Traditional Feast',
+      'location': 'Bus Stand Corner',
+      'rating': '4.8',
+      'reviews': '1.5k+ orders',
+      'image': 'assets/banner_mutton_biryani.jpg',
+      'badge': 'LEGENDARY',
+      'specialty': 'Classic Tamil Traditional Dum',
+      'color': Color(0xFF059669),
+      'prepTime': '15-20m',
+    },
+    {
+      'name': 'Aslaam Biriyani',
+      'tagline': 'Mouthwatering Charcoal Dum Biriyani',
+      'location': 'Bazaar Street',
+      'rating': '4.7',
+      'reviews': '1.2k+ orders',
+      'image': 'assets/banner_biryani_65_landscape.jpg',
+      'badge': 'CROWD FAVORITE',
+      'specialty': 'Charcoal Dum & Chicken 65',
+      'color': Color(0xFF7C3AED),
+      'prepTime': '10-15m',
     },
   ];
+
+  final List<Map<String, dynamic>> _shopAdBanners = _kPartnerHotels;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _bannerPageController = PageController();
+    _shopAdPageController = PageController();
     _loadSavedLocation();
-    _startBannerAutoSlide();
+    _loadRemainingBiryaniStock();
+    _startShopAdAutoSlide();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
     });
@@ -472,12 +503,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  void _startBannerAutoSlide() {
-    _bannerTimer?.cancel();
-    _bannerTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
-      if (_bannerPageController.hasClients) {
-        int nextPage = (_currentBannerIndex + 1) % _carouselBanners.length;
-        _bannerPageController.animateToPage(
+  void _startShopAdAutoSlide() {
+    _shopAdTimer?.cancel();
+    if (_shopAdBanners.length <= 1) return;
+    _shopAdTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (_shopAdPageController.hasClients) {
+        int nextPage = (_currentShopAdIndex + 1) % _shopAdBanners.length;
+        _shopAdPageController.animateToPage(
           nextPage,
           duration: const Duration(milliseconds: 600),
           curve: Curves.easeInOutCubic,
@@ -603,9 +635,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           showDeliveryDetails = true;
           hasRiderAccepted = isAccepted;
           isSearchingRider = !isAccepted;
-          if (isAccepted) {
-            showCancelButtonContainer = false;
-          }
+          showCancelButtonContainer = !isAccepted;
           assignedPartnerName = isAccepted ? pName : '';
           assignedPartnerPhone = isAccepted ? pPhone : '';
           assignedPartnerId = isAccepted ? pId : '';
@@ -629,20 +659,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _startRiderLocationPolling();
         _startOrderChatPolling();
         _fetchTrackingRoadRoute();
-
-        final String pr = (activeOrderObj['price_range'] ?? '').toString().trim();
-        final String prStatus = (activeOrderObj['price_range_status'] ?? '').toString().toLowerCase().trim();
-        if (pr.isNotEmpty && prStatus == 'pending') {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _checkAndShowCustomerPriceRangeDialog(
-              orderId: curOrderId,
-              partnerName: pName,
-              partnerPhone: pPhone,
-              partnerPhoto: pPic,
-              priceRange: pr,
-            );
-          });
-        }
       }
       AlarmService.startCustomerOrderListeningService(
         baseUrl: ApiConfig.baseUrl,
@@ -685,6 +701,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         forceOverrideAddress: true,
       );
     }
+  }
+
+  Future<void> _loadRemainingBiryaniStock() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final count = prefs.getInt('remaining_biryani_count');
+      if (count != null && mounted) {
+        setState(() {
+          _remainingBiryaniCount = count;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = true}) async {
@@ -1016,8 +1044,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
     setState(() {
+      _showOrderForm = true;
       _itemController.text = banner['item'] as String;
-      _budgetController.text = banner['budget'] as String;
+      final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
+      _quantityController.text = qty.toString();
+      _selectedOfferUnitPrice = int.tryParse(banner['offerPrice'] as String? ?? '65') ?? 65;
+      _budgetController.text = (_selectedOfferUnitPrice * qty).toString();
     });
     final origPrice = banner['originalPrice'] as String? ?? '';
     final String priceText = origPrice.isNotEmpty
@@ -1045,20 +1077,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _scrollToOrderForm() {
-    Future.delayed(const Duration(milliseconds: 100), () {
+    Future.delayed(const Duration(milliseconds: 150), () {
       final ctx = _orderFormCardKey.currentContext;
       if (ctx != null) {
         Scrollable.ensureVisible(
           ctx,
-          duration: const Duration(milliseconds: 400),
+          duration: const Duration(milliseconds: 450),
           curve: Curves.easeInOutCubic,
-          alignment: 0.06,
+          alignment: 0.05,
         );
       } else if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          380.0,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeInOut,
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeInOutCubic,
         );
       }
     });
@@ -1220,11 +1252,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _searchRiderTimer?.cancel();
     _riderTrackingTimer?.cancel();
-    _bannerTimer?.cancel();
+    _shopAdTimer?.cancel();
     _inOrderChatTimer?.cancel();
-    _bannerPageController.dispose();
+    _shopAdPageController.dispose();
     _itemController.dispose();
     _budgetController.dispose();
+    _quantityController.dispose();
     _chatMsgController.dispose();
     _deliveryLocationController.dispose();
     _scrollController.dispose();
@@ -1779,56 +1812,78 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       child: Scaffold(
         backgroundColor: AppColors.background,
-        body: SingleChildScrollView(
-          controller: _scrollController,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top Wine Burgundy Section extending smoothly into status bar without overlap
-              _buildWineHeader(context),
-
-              // Main Body Content
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
+        body: showDeliveryDetails
+            ? (hasRiderAccepted
+                ? SingleChildScrollView(
+                    controller: _scrollController,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Quick Cravings Suggestions Chips & Order Form Card (vanishes when order placed)
-                        if (!showDeliveryDetails) ...[
-                          _buildQuickCravings(),
-                          const SizedBox(height: 20),
-                          _buildOrderFormCard(),
-                          const SizedBox(height: 20),
-                        ],
+                        // Top Blue Location Bar Header (for active order tracking)
+                        _buildWineHeader(context),
 
-                        // Delivery Partner Card (when Order Now is pressed)
-                        if (showDeliveryDetails) _buildExpandedContainer(),
-
-                        // Cancel Order Container
-                        if (showDeliveryDetails || showCancelButtonContainer) ...[
-                          const SizedBox(height: 16),
-                          _buildCancelOrderContainer(),
-                        ],
-
-                        const SizedBox(height: 30),
+                        // Main Body Content
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              child: _buildAssignedPartnerContainer(),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
+                  )
+                : SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 1. Delivery Partner Card (with Hotel Carousel 1 & SINGLE Cancel Order button inside)
+                              _buildExpandedContainer(),
+
+                              const SizedBox(height: 10),
+
+                              // 2. Featured Partner Kitchens (Hotel Carousel 2 in the space below)
+                              _buildWaitingHotelsShowcase(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ))
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 1. Blue background header ONLY for the Location area
+                  _buildWineHeader(context),
+
+                  // 2. Biriyani Offer (1:1 Ratio), Stock, Shop Ads & Button (NO SCROLL VIEW)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: _buildOffersCarouselBanner(),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
-        ),
         bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 0),
       ),
     ),
   );
 }
 
-  // Top Wine Header
+  // Top Blue Header (Location & Profile bar only)
   Widget _buildWineHeader(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     return Container(
@@ -1840,30 +1895,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           colors: [
             Color(0xFF0C1B30), // Deep Midnight Navy
             Color(0xFF142B4A), // Primary Navy Blue (#142B4A)
-            Color(0xFF19355C), // Rich Navy
           ],
         ),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x1A142B4A),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
       padding: EdgeInsets.only(
-        top: topPadding + 10,
+        top: topPadding + 6,
         left: 16,
         right: 16,
-        bottom: 22,
+        bottom: 12,
       ),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 1. Location and Profile Row
-              _buildLocationAndProfileRow(),
-              const SizedBox(height: 14),
-
-              // 2. Interactive Auto-Sliding Offers Carousel
-              _buildOffersCarouselBanner(),
-            ],
-          ),
+          child: _buildLocationAndProfileRow(),
         ),
       ),
     );
@@ -1953,63 +2005,452 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  void _openOrderFormPopup() {
+    setState(() {
+      _showOrderForm = true;
+      _itemController.text = "Biriyani 65";
+      final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
+      _quantityController.text = qty.toString();
+      _selectedOfferUnitPrice = 65;
+      _budgetController.text = (65 * qty).toString();
+    });
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.88,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 20,
+                    offset: Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                  ),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Grab Handle
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Form card content inside popup
+                        _buildOrderFormCard(sheetContext: ctx, setSheetState: setSheetState),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildOffersCarouselBanner() {
     return Column(
       children: [
+        // 1. Biriyani Offer Image - 1:1 Aspect Ratio (Dynamically fitted, NEVER overflows, NO SCROLL)
+        Expanded(
+          child: Center(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF142B4A).withValues(alpha: 0.16),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: AspectRatio(
+                  aspectRatio: 1.0, // 1:1 Aspect Ratio
+                  child: InkWell(
+                    onTap: _openOrderFormPopup,
+                    child: Image.asset(
+                      'assets/banner_biryani_65_4x5.jpg',
+                      fit: BoxFit.cover, // Cover full 1:1 square card
+                      alignment: Alignment.center,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        'assets/banner_biryani_65.jpg',
+                        fit: BoxFit.cover,
+                        filterQuality: FilterQuality.high,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 6),
+
+        // 2. Biryani stock counter below image
         Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: const Color(0xFFFDE68A),
+              width: 1.2,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
+                color: const Color(0xFF142B4A).withValues(alpha: 0.05),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      const Text("🔥", style: TextStyle(fontSize: 13)),
+                      const SizedBox(width: 6),
+                      Text(
+                        "$_remainingBiryaniCount out of $_totalBiryaniCount biryanis remaining",
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Text(
+                      "${((_remainingBiryaniCount / _totalBiryaniCount) * 100).toInt()}% LEFT",
+                      style: const TextStyle(
+                        color: Color(0xFFB45309),
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: LinearProgressIndicator(
+                  value: (_remainingBiryaniCount / _totalBiryaniCount).clamp(0.0, 1.0),
+                  minHeight: 5,
+                  backgroundColor: const Color(0xFFF1F5F9),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEA580C)),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        // 3. Shop Advertisements Carousel (Placed above the button)
+        _buildShopAdCarousel(),
+
+        const SizedBox(height: 8),
+
+        // 4. "Get This Offer" Button (Placed at the bottom)
+        SizedBox(
+          width: double.infinity,
+          height: 46,
+          child: ElevatedButton(
+            onPressed: _openOrderFormPopup,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEA580C),
+              foregroundColor: Colors.white,
+              elevation: 4,
+              shadowColor: const Color(0xFFEA580C).withValues(alpha: 0.40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.local_offer_rounded, size: 19, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  "Get This Offer • ₹65",
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                SizedBox(width: 6),
+                Icon(Icons.arrow_forward_rounded, size: 17, color: Colors.white),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildShopAdCarousel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section Header
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.campaign_rounded, color: Color(0xFFEA580C), size: 17),
+                SizedBox(width: 6),
+                Text(
+                  "Shop Advertisements",
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ],
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(5),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: const Text(
+                "SPONSORED",
+                style: TextStyle(
+                  color: Color(0xFF475569),
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+
+        // 3:1 Aspect Ratio Ad Carousel (View Only)
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF142B4A).withValues(alpha: 0.12),
                 blurRadius: 10,
                 offset: const Offset(0, 4),
               ),
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(16),
             child: AspectRatio(
-              aspectRatio: 1024 / 571,
+              aspectRatio: 3.0, // 3:1 ratio
               child: PageView.builder(
-                controller: _bannerPageController,
-                itemCount: _carouselBanners.length,
+                controller: _shopAdPageController,
+                itemCount: _shopAdBanners.length,
                 onPageChanged: (idx) {
-                  setState(() => _currentBannerIndex = idx);
+                  setState(() => _currentShopAdIndex = idx);
                 },
                 itemBuilder: (context, index) {
-                  final banner = _carouselBanners[index];
-                  return InkWell(
-                    onTap: () => _applyBannerOffer(banner),
-                    child: Image.asset(
-                      banner['image'] as String,
-                      fit: BoxFit.fill,
-                      filterQuality: FilterQuality.high,
-                      errorBuilder: (_, __, ___) => Image.asset(
-                        banner['fallback'] as String,
-                        fit: BoxFit.fill,
+                  final ad = _shopAdBanners[index];
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Food Image Background
+                      Image.asset(
+                        ad['image'] as String,
+                        fit: BoxFit.cover,
                         filterQuality: FilterQuality.high,
                       ),
-                    ),
+                      // Dark Gradient Overlay for Readability
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.88),
+                              Colors.black.withValues(alpha: 0.65),
+                              Colors.black.withValues(alpha: 0.20),
+                            ],
+                          ),
+                        ),
+                      ),
+                      // Shop Branding Content
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (ad['color'] as Color).withValues(alpha: 0.85),
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: Text(
+                                    ad['badge'] as String,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.4,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black45,
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.star_rounded, color: Color(0xFFFBBF24), size: 11),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        ad['rating'] as String,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              ad['name'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              ad['tagline'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFFDE68A),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on_rounded, color: Colors.white70, size: 11),
+                                const SizedBox(width: 3),
+                                Flexible(
+                                  child: Text(
+                                    ad['location'] as String,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   );
                 },
               ),
             ),
           ),
         ),
+
         const SizedBox(height: 6),
-        // Dots Indicator
+
+        // Dots Indicator for Shop Ads
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(_carouselBanners.length, (idx) {
-            final isActive = _currentBannerIndex == idx;
+          children: List.generate(_shopAdBanners.length, (idx) {
+            final isActive = _currentShopAdIndex == idx;
             return AnimatedContainer(
               duration: const Duration(milliseconds: 300),
-              margin: const EdgeInsets.symmetric(horizontal: 2.5),
-              height: 4,
-              width: isActive ? 16 : 5,
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              height: 3.5,
+              width: isActive ? 14 : 4,
               decoration: BoxDecoration(
-                color: isActive ? const Color(0xFFFFD700) : Colors.white30,
+                color: isActive ? const Color(0xFFEA580C) : const Color(0xFFCBD5E1),
                 borderRadius: BorderRadius.circular(2),
               ),
             );
@@ -2301,7 +2742,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   // Custom Food Order Form Card
-  Widget _buildOrderFormCard() {
+  Widget _buildOrderFormCard({BuildContext? sheetContext, StateSetter? setSheetState}) {
     return Container(
       key: _orderFormCardKey,
       padding: const EdgeInsets.all(20),
@@ -2347,7 +2788,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "Order Anything You Crave",
+                            "Let's Fell Your Order",
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -2359,7 +2800,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           ),
                           SizedBox(height: 2),
                           Text(
-                            "Enter food item & budget to order instantly",
+                            "Select quantity & confirm delivery address",
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
@@ -2370,38 +2811,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFFDE68A)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text("⚡", style: TextStyle(fontSize: 10)),
-                    SizedBox(width: 3),
-                    Text(
-                      "CUSTOM",
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFFB45309),
-                      ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text("🔥", style: TextStyle(fontSize: 10)),
+                        const SizedBox(width: 3),
+                        Text(
+                          "₹$_selectedOfferUnitPrice DEAL",
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFB45309),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (sheetContext != null) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 20),
+                      onPressed: () => Navigator.pop(sheetContext),
+                      tooltip: 'Close',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                   ],
-                ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 18),
-          _buildTextField('Item name (e.g. Chicken Biryani)', TextInputType.text, _itemController, Icons.fastfood_outlined),
+          _buildTextField('Item Name (Fixed)', TextInputType.text, _itemController, Icons.fastfood_outlined, readOnly: true),
           const SizedBox(height: 14),
-          _buildTextField('Budget (₹)', TextInputType.number, _budgetController, Icons.currency_rupee_rounded),
+          _buildTextField('Budget (₹) (Fixed)', TextInputType.number, _budgetController, Icons.currency_rupee_rounded, readOnly: true),
           const SizedBox(height: 14),
-          _buildDropdown(),
+          _buildQuantityField(setSheetState: setSheetState),
+          const SizedBox(height: 14),
+          _buildDropdown(setSheetState: setSheetState),
           const SizedBox(height: 20),
 
           // Order Now Button
@@ -2424,6 +2882,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 if (budgetText.isEmpty || budgetVal == null || budgetVal <= 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Enter your budget')),
+                  );
+                  return;
+                }
+
+                // 🛑 Quantity validation
+                final qtyText = _quantityController.text.trim();
+                final qtyVal = int.tryParse(qtyText);
+                if (qtyText.isEmpty || qtyVal == null || qtyVal <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a valid quantity (1 or more)')),
                   );
                   return;
                 }
@@ -2489,6 +2957,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   showDeliveryDetails = true;
                   isSearchingRider = true;
                   hasRiderAccepted = false;
+                  showCancelButtonContainer = true;
                   assignedPartnerName = "";
                   assignedPartnerPhone = "";
                   assignedPartnerProfileImage = null;
@@ -2520,6 +2989,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       'customer_phone': custPhone,
                       'delivery_address': custAddr,
                       'item_name': itemText,
+                      'quantity': qtyVal,
                       'budget': budgetVal,
                       'cod_otp': customerFixedOtp,
                       'customer_latitude': orderLat,
@@ -2599,6 +3069,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 await prefs.remove('has_notified_delivered_$newOrderId');
                 await prefs.setString('active_order_item', itemText);
                 await prefs.setString('active_order_budget', _budgetController.text.trim());
+                await prefs.setString('active_order_quantity', qtyVal.toString());
+                _orderSearchStartTime = DateTime.now();
+                _allBusyHitCount = 0;
                 await prefs.setString('active_order_customer_name', custName);
                 await prefs.setString('active_order_customer_phone', custPhone);
                 await prefs.setString('active_order_customer_address', custAddr);
@@ -2615,6 +3088,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 );
                 AlarmService.requestBatteryOptimizationExemption();
                 _startOrderPolling(newOrderId);
+                if (sheetContext != null && Navigator.canPop(sheetContext)) {
+                  Navigator.pop(sheetContext);
+                }
+                setState(() {
+                  showDeliveryDetails = true;
+                  showCancelButtonContainer = true;
+                  _showOrderForm = false;
+                });
                 scrollToBottom();
               },
               style: ElevatedButton.styleFrom(
@@ -2645,19 +3126,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildTextField(String label, TextInputType type, TextEditingController controller, IconData icon) {
+  Widget _buildTextField(String label, TextInputType type, TextEditingController controller, IconData icon, {bool readOnly = false}) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.background,
+        color: readOnly ? const Color(0xFFF1F5F9) : AppColors.background,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border, width: 1),
       ),
       child: TextField(
         controller: controller,
+        readOnly: readOnly,
         keyboardType: type,
-        style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 14,
+          color: readOnly ? const Color(0xFF334155) : AppColors.textPrimary,
+          fontWeight: FontWeight.w700,
+        ),
         decoration: InputDecoration(
           prefixIcon: Icon(icon, color: AppColors.primaryDark, size: 20),
+          suffixIcon: readOnly ? const Tooltip(message: "Fixed value", child: Icon(Icons.lock_outline_rounded, size: 18, color: Color(0xFF94A3B8))) : null,
           labelText: label,
           labelStyle: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
           border: InputBorder.none,
@@ -2670,7 +3157,83 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildDropdown() {
+  Widget _buildQuantityField({StateSetter? setSheetState}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border, width: 1),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _quantityController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+              onChanged: (val) {
+                final current = int.tryParse(val.trim());
+                if (current != null && current > 0) {
+                  setState(() {
+                    _budgetController.text = (_selectedOfferUnitPrice * current).toString();
+                  });
+                  if (setSheetState != null) {
+                    setSheetState(() {});
+                  }
+                }
+              },
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.format_list_numbered_rounded, color: AppColors.primaryDark, size: 20),
+                labelText: 'Quantity (tap or use +/-)',
+                labelStyle: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline_rounded, color: AppColors.primaryDark, size: 22),
+            onPressed: () {
+              final current = int.tryParse(_quantityController.text.trim()) ?? 1;
+              if (current > 1) {
+                final newQ = current - 1;
+                setState(() {
+                  _quantityController.text = newQ.toString();
+                  _budgetController.text = (_selectedOfferUnitPrice * newQ).toString();
+                });
+                if (setSheetState != null) {
+                  setSheetState(() {});
+                }
+              }
+            },
+            tooltip: "Decrease quantity",
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.primaryDark, size: 22),
+            onPressed: () {
+              final current = int.tryParse(_quantityController.text.trim()) ?? 1;
+              final newQ = current + 1;
+              setState(() {
+                _quantityController.text = newQ.toString();
+                _budgetController.text = (_selectedOfferUnitPrice * newQ).toString();
+              });
+              if (setSheetState != null) {
+                setSheetState(() {});
+              }
+            },
+            tooltip: "Increase quantity",
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdown({StateSetter? setSheetState}) {
     final displayAddress = _deliveryLocationController.text.trim().isNotEmpty
         ? _deliveryLocationController.text.trim()
         : (_currentAddressFull.isNotEmpty ? _currentAddressFull : "Detecting live GPS location...");
@@ -2687,7 +3250,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             context,
             MaterialPageRoute(builder: (_) => const AddressScreen()),
           );
-          _loadSavedLocation();
+          await _loadSavedLocation();
+          if (setSheetState != null) {
+            setSheetState(() {});
+          }
         },
         borderRadius: BorderRadius.circular(14),
         child: Padding(
@@ -2762,12 +3328,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildExpandedContainer() {
     if (!hasRiderAccepted || isSearchingRider) {
-      return const BikeRoadSearchingAnimation();
+      return BikeRoadSearchingAnimation(
+        onCancel: _showCancelConfirmationDialog,
+      );
     }
     return _buildAssignedPartnerContainer();
   }
 
   void _startOrderPolling(String orderId) {
+    _orderSearchStartTime ??= DateTime.now();
+    _allBusyHitCount = 0;
     _searchRiderTimer?.cancel();
     _searchRiderTimer = Timer.periodic(const Duration(milliseconds: 2500), (timer) async {
       if (_isPollingRider) return;
@@ -2816,6 +3386,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               AlarmService.stopCustomerOrderListeningService();
               final curOId = (order['order_id'] ?? orderId).toString();
               final p = await SharedPreferences.getInstance();
+
+              // Decrement biryani remaining stock count ONLY AFTER delivery is completed
+              final bool alreadyReduced = p.getBool('biryani_reduced_$curOId') ?? false;
+              if (!alreadyReduced) {
+                await p.setBool('biryani_reduced_$curOId', true);
+                final itemStr = (order['item_name'] ?? p.getString('active_order_item') ?? '').toString().toLowerCase();
+                if (itemStr.contains('biryani') || itemStr.contains('briyani')) {
+                  final int qty = int.tryParse(order['quantity']?.toString() ?? '') ??
+                                  int.tryParse(p.getString('active_order_quantity') ?? '') ?? 1;
+                  if (_remainingBiryaniCount > 1) {
+                    setState(() {
+                      _remainingBiryaniCount = max(1, _remainingBiryaniCount - qty);
+                    });
+                    await p.setInt('remaining_biryani_count', _remainingBiryaniCount);
+                  }
+                }
+              }
+
               final bool alreadyNotified = p.getBool('has_notified_delivered_$curOId') ?? false;
               if (!alreadyNotified) {
                 await p.setBool('has_notified_delivered_$curOId', true);
@@ -2998,18 +3586,73 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   _startOrderChatPolling();
                   _fetchTrackingRoadRoute();
                 }
+              }
+            } else {
+              // Partner has NOT accepted yet. Check delivery partner availability conditions:
+              // 1. All online delivery partners are busy on deliveries -> immediate alert & cancel
+              // 2. No delivery partner is online -> wait 45s, then alert & cancel
+              // 3. Online delivery partners exist but no one accepted -> wait 5 minutes (300s), then alert & cancel
 
-                final String pr = (order['price_range'] ?? '').toString().trim();
-                final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
-                if (pr.isNotEmpty && prStatus == 'pending') {
-                  _checkAndShowCustomerPriceRangeDialog(
-                    orderId: orderId,
-                    partnerName: pName,
-                    partnerPhone: pPhone,
-                    partnerPhoto: pPic,
-                    priceRange: pr,
-                  );
+              DateTime orderCreatedAt = DateTime.now();
+              if (order['created_at'] != null) {
+                final parsed = DateTime.tryParse(order['created_at'].toString());
+                if (parsed != null) orderCreatedAt = parsed.toLocal();
+              } else if (_orderSearchStartTime != null) {
+                orderCreatedAt = _orderSearchStartTime!;
+              }
+
+              final int elapsedSec = DateTime.now().difference(orderCreatedAt).inSeconds;
+
+              final partnerStats = (data['partner_stats'] as Map<String, dynamic>?) ?? {};
+              final bool zeroOnline = partnerStats['zero_online'] == true;
+              final bool allBusy = partnerStats['all_busy'] == true;
+              final String? assignedPartner = order['current_assigned_partner_id']?.toString().trim();
+              final bool hasAssignedPartner = assignedPartner != null && assignedPartner.isNotEmpty;
+
+              // 🛑 If order is actively offered to an assigned delivery partner, DO NOT cancel for allBusy or zeroOnline!
+              // The assigned delivery partner has their 2-minute acceptance window to accept the order!
+              if (!hasAssignedPartner) {
+                if (allBusy) {
+                  _allBusyHitCount++;
+                  if (_allBusyHitCount >= 6 && elapsedSec >= 20) {
+                    timer.cancel();
+                    await _handleNoDeliveryPartnerAvailable(
+                      orderId: orderId,
+                      reason: 'all_busy',
+                      title: 'All Delivery Partners Busy',
+                      message: 'All our delivery partners are currently busy with ongoing deliveries. Please try again in a little while.',
+                    );
+                    return;
+                  }
+                } else {
+                  _allBusyHitCount = 0;
                 }
+
+                if (zeroOnline) {
+                  if (elapsedSec >= 45) {
+                    timer.cancel();
+                    await _handleNoDeliveryPartnerAvailable(
+                      orderId: orderId,
+                      reason: 'zero_online',
+                      title: 'No Delivery Partners Online',
+                      message: 'No delivery partners are currently online in your area. Please try again in a little while.',
+                    );
+                    return;
+                  }
+                }
+              } else {
+                _allBusyHitCount = 0;
+              }
+
+              if (elapsedSec >= 300) {
+                timer.cancel();
+                await _handleNoDeliveryPartnerAvailable(
+                  orderId: orderId,
+                  reason: 'no_partner_accepted_5min',
+                  title: 'Delivery Partners Unavailable',
+                  message: 'None of our delivery partners were able to accept your order right now. Please try again in a little while.',
+                );
+                return;
               }
             }
           }
@@ -3020,6 +3663,191 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isPollingRider = false;
       }
     });
+  }
+
+  Future<void> _handleNoDeliveryPartnerAvailable({
+    required String orderId,
+    required String reason,
+    required String title,
+    required String message,
+  }) async {
+    _searchRiderTimer?.cancel();
+    AlarmService.stopCustomerOrderListeningService();
+
+    final prefs = await SharedPreferences.getInstance();
+    final String uId = prefs.getString('user_id') ?? prefs.getString('mobile_number') ?? '';
+    final String cName = prefs.getString('active_order_customer_name') ?? prefs.getString('user_name') ?? 'Customer';
+    final String cPhone = prefs.getString('active_order_customer_phone') ?? prefs.getString('mobile_number') ?? '';
+
+    // 1. Cancel active order in backend
+    try {
+      await http.post(
+        ApiConfig.orderCancel,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'order_id': orderId,
+          'cancel_reason': message,
+          'cancelled_by': 'system_no_partner',
+        }),
+      ).timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint("Auto cancel error: $e");
+    }
+
+    // 2. Register as waiting customer so they get notified when partner is available
+    try {
+      await http.post(
+        ApiConfig.orderWaitingCustomer,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': uId,
+          'customer_name': cName,
+          'customer_phone': cPhone,
+          'reason': reason,
+          'order_id': orderId,
+        }),
+      ).timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint("Register waiting customer error: $e");
+    }
+
+    // 3. Clear active order state in SharedPreferences
+    await prefs.setBool('has_active_order', false);
+    await prefs.setString('active_order_status', 'cancelled');
+    await prefs.setBool('active_order_partner_accepted', false);
+    await prefs.remove('active_order_id');
+
+    // 4. Update UI & show dialog
+    if (mounted) {
+      setState(() {
+        isSearchingRider = false;
+        hasRiderAccepted = false;
+        showDeliveryDetails = false;
+        showCancelButtonContainer = false;
+      });
+
+      _showPartnerUnavailableDialog(title: title, message: message);
+    }
+  }
+
+  void _showPartnerUnavailableDialog({
+    required String title,
+    required String message,
+  }) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFFB74D), width: 1.5),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.delivery_dining_outlined,
+                      color: Color(0xFFE65100),
+                      size: 34,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 13.5,
+                    height: 1.5,
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.notifications_active_outlined, size: 16, color: Color(0xFF2563EB)),
+                      SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          "We'll notify you automatically when a partner is available.",
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 11.5,
+                            color: Color(0xFF334155),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A8A),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "Okay, Got it",
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildAssignedPartnerAvatar() {
@@ -3874,6 +4702,92 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  Widget _buildWaitingHotelsShowcase() {
+    return Container(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF142B4A).withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFFEDD5)),
+                    ),
+                    child: const Icon(Icons.storefront_rounded, color: Color(0xFFEA580C), size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Partner Kitchens in Kumbakonam",
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      Text(
+                        "Orders are prepared fresh at certified spots",
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  "${_kPartnerHotels.length} SPOTS",
+                  style: const TextStyle(
+                    color: Color(0xFF475569),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Split-card carousel (Carousel 2)
+          const _WaitingHotelsCarousel(),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCancelOrderContainer() {
     return Container(
       margin: const EdgeInsets.only(top: 16),
@@ -4181,41 +5095,51 @@ class NextPage extends StatelessWidget {
   }
 }
 
-/// Animated Bike Riding on Road Loader
+/// Delivery Partner Searching Card with Partner Spotlight Carousel (Carousel 1)
 class BikeRoadSearchingAnimation extends StatefulWidget {
-  const BikeRoadSearchingAnimation({super.key});
+  final VoidCallback? onCancel;
+  const BikeRoadSearchingAnimation({super.key, this.onCancel});
 
   @override
   State<BikeRoadSearchingAnimation> createState() => _BikeRoadSearchingAnimationState();
 }
 
-class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _roadController;
+class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation> {
+  late PageController _spotlightController;
+  Timer? _spotlightTimer;
+  int _spotlightIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _roadController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat();
+    _spotlightController = PageController();
+    _spotlightTimer = Timer.periodic(const Duration(milliseconds: 3200), (_) {
+      if (!mounted) return;
+      if (_HomePageState._kPartnerHotels.isEmpty) return;
+      final next = (_spotlightIndex + 1) % _HomePageState._kPartnerHotels.length;
+      _spotlightController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
   }
 
   @override
   void dispose() {
-    _roadController.dispose();
+    _spotlightTimer?.cancel();
+    _spotlightController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(18),
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: AppColors.primary.withValues(alpha: 0.3), width: 1.5),
         boxShadow: [
           BoxShadow(
@@ -4228,144 +5152,247 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Animated Road & Bike Scene
+          // 1. Partner Spotlight Carousel (Replaces the bike scene)
           ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(16),
             child: Container(
               height: 165,
               width: double.infinity,
               decoration: const BoxDecoration(
-                color: Color(0xFF1E293B),
+                color: Color(0xFF0F172A),
               ),
-              child: AnimatedBuilder(
-                animation: _roadController,
-                builder: (context, child) {
-                  final progress = _roadController.value;
-                  final bikeBounce = sin(progress * 2 * pi * 3) * 2.0;
-
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // Full 3D Delivery Boy Bike Riding on Road
-                      Positioned.fill(
-                        child: Transform.translate(
-                          offset: Offset(0, bikeBounce),
-                          child: Image.asset(
-                            'assets/delivery_bike_road.png',
+              child: Stack(
+                children: [
+                  PageView.builder(
+                    controller: _spotlightController,
+                    itemCount: _HomePageState._kPartnerHotels.length,
+                    onPageChanged: (idx) => setState(() => _spotlightIndex = idx),
+                    itemBuilder: (context, index) {
+                      final hotel = _HomePageState._kPartnerHotels[index];
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.asset(
+                            hotel['image'] as String,
                             fit: BoxFit.cover,
-                            alignment: Alignment.center,
-                            errorBuilder: (ctx, err, stack) => Image.asset(
-                              'assets/delivery_boy_toon.png',
-                              fit: BoxFit.contain,
-                            ),
+                            filterQuality: FilterQuality.high,
                           ),
-                        ),
-                      ),
-
-                      // Gradient Overlay for badge contrast
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.5),
-                                Colors.transparent,
-                                Colors.black.withValues(alpha: 0.6),
-                              ],
-                              stops: const [0.0, 0.45, 1.0],
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      // Top Live Status Pill
-                      Positioned(
-                        top: 10,
-                        left: 12,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.7),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFF34D399), width: 1),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.radar_rounded, size: 13, color: Color(0xFF34D399)),
-                              SizedBox(width: 5),
-                              Text(
-                                "RADAR DISPATCHING • NEARBY",
-                                style: TextStyle(
-                                  color: Color(0xFF34D399),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.5,
-                                ),
+                          // Dual gradient overlay for text readability
+                          Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.black.withValues(alpha: 0.65),
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.88),
+                                ],
+                                stops: const [0.0, 0.35, 1.0],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-
-                      // Bottom Asphalt & Moving Lane Divider
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 24,
-                        child: Container(
-                          color: const Color(0xFF18181B).withValues(alpha: 0.9),
-                          child: CustomPaint(
-                            size: const Size(double.infinity, 4),
-                            painter: _RoadStripesPainter(progress: progress),
+                          // Top Live Radar Tag & Rating
+                          Positioned(
+                            top: 10,
+                            left: 12,
+                            right: 12,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: (hotel['color'] as Color).withValues(alpha: 0.90),
+                                    borderRadius: BorderRadius.circular(20),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.25),
+                                        blurRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.verified_rounded, color: Colors.white, size: 12),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        hotel['badge'] as String,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: 0.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.70),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: Colors.white24),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.star_rounded, color: Color(0xFFFBBF24), size: 12),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        "${hotel['rating']} ★",
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
+                          // Bottom Hotel Information
+                          Positioned(
+                            bottom: 12,
+                            left: 12,
+                            right: 12,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        hotel['name'] as String,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.3,
+                                          shadows: [
+                                            Shadow(
+                                              color: Colors.black,
+                                              blurRadius: 6,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.location_on_rounded, color: Color(0xFFFDE68A), size: 11),
+                                          const SizedBox(width: 3),
+                                          Expanded(
+                                            child: Text(
+                                              "${hotel['location']} • ${hotel['specialty']}",
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Color(0xFFF1F5F9),
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.22),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.white38),
+                                  ),
+                                  child: Text(
+                                    hotel['prepTime'] as String,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  // Dots indicator inside
+                  Positioned(
+                    bottom: 6,
+                    left: 0,
+                    right: 0,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_HomePageState._kPartnerHotels.length, (i) {
+                        final isActive = _spotlightIndex == i;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          height: 3,
+                          width: isActive ? 14 : 4,
+                          decoration: BoxDecoration(
+                            color: isActive ? Colors.white : Colors.white38,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // Status Heading
           const Text(
             "Matching Closest Delivery Partner...",
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 15.5,
               fontWeight: FontWeight.w900,
               color: AppColors.textPrimary,
               letterSpacing: -0.3,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           const Text(
             "Routing order to the closest delivery partner in Kumbakonam. Automatically forwards to the next closest partner if unanswered within 2 minutes.",
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.35),
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.3),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           // Linear loading indicator
           const SizedBox(
-            width: 150,
+            width: 140,
             child: LinearProgressIndicator(
               backgroundColor: AppColors.primaryLight,
               color: AppColors.primary,
-              minHeight: 4,
+              minHeight: 3.5,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
 
           // Live Waiting Status Badge
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
               color: AppColors.primarySubtle,
               borderRadius: BorderRadius.circular(16),
@@ -4374,55 +5401,272 @@ class _BikeRoadSearchingAnimationState extends State<BikeRoadSearchingAnimation>
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.wifi_tethering_rounded, color: AppColors.primary, size: 16),
-                SizedBox(width: 8),
+                Icon(Icons.wifi_tethering_rounded, color: AppColors.primary, size: 15),
+                SizedBox(width: 7),
                 Text(
                   "Waiting for Delivery Partner Acceptance",
                   style: TextStyle(
                     color: AppColors.primary,
                     fontWeight: FontWeight.w700,
-                    fontSize: 12,
+                    fontSize: 11.5,
                   ),
                 ),
               ],
             ),
           ),
+
+          // Quick Cancel Order button right inside the card
+          if (widget.onCancel != null) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: widget.onCancel,
+                icon: const Icon(Icons.cancel_outlined, size: 16, color: AppColors.danger),
+                label: const Text(
+                  "Cancel Order",
+                  style: TextStyle(
+                    color: AppColors.danger,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.2),
+                  backgroundColor: const Color(0xFFFEF2F2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _RoadStripesPainter extends CustomPainter {
-  final double progress;
-  _RoadStripesPainter({required this.progress});
+/// Split-card Waiting Hotels Carousel (Carousel 2)
+class _WaitingHotelsCarousel extends StatefulWidget {
+  const _WaitingHotelsCarousel();
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFFFBBF24) // Yellow road divider lines
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
+  State<_WaitingHotelsCarousel> createState() => _WaitingHotelsCarouselState();
+}
 
-    const dashWidth = 24.0;
-    const dashSpace = 16.0;
-    const totalCycle = dashWidth + dashSpace;
-    final offset = -progress * totalCycle;
+class _WaitingHotelsCarouselState extends State<_WaitingHotelsCarousel> {
+  late PageController _pageController;
+  Timer? _timer;
+  int _currentIndex = 0;
 
-    double startX = offset;
-    while (startX < size.width) {
-      final x1 = max(0.0, startX);
-      final x2 = min(size.width, startX + dashWidth);
-      if (x2 > 0 && x1 < size.width) {
-        canvas.drawLine(Offset(x1, size.height / 2), Offset(x2, size.height / 2), paint);
-      }
-      startX += totalCycle;
-    }
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _timer = Timer.periodic(const Duration(milliseconds: 3800), (_) {
+      if (!mounted) return;
+      if (_HomePageState._kPartnerHotels.isEmpty) return;
+      final next = (_currentIndex + 1) % _HomePageState._kPartnerHotels.length;
+      _pageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
   }
 
   @override
-  bool shouldRepaint(covariant _RoadStripesPainter oldDelegate) {
-    return oldDelegate.progress != progress;
+  void dispose() {
+    _timer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 114,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: _HomePageState._kPartnerHotels.length,
+            onPageChanged: (i) => setState(() => _currentIndex = i),
+            itemBuilder: (context, index) {
+              final hotel = _HomePageState._kPartnerHotels[index];
+              return Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+                ),
+                child: Row(
+                  children: [
+                    // Left: Food Photo with rating badge
+                    ClipRRect(
+                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(15)),
+                      child: Stack(
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            height: double.infinity,
+                            child: Image.asset(
+                              hotel['image'] as String,
+                              fit: BoxFit.cover,
+                              filterQuality: FilterQuality.high,
+                            ),
+                          ),
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.75),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star_rounded, color: Color(0xFFFBBF24), size: 11),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    hotel['rating'] as String,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Right: Hotel Information
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (hotel['color'] as Color).withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: (hotel['color'] as Color).withValues(alpha: 0.40),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    hotel['badge'] as String,
+                                    style: TextStyle(
+                                      color: hotel['color'] as Color,
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.3,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.flash_on_rounded, size: 11, color: Color(0xFFEA580C)),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      hotel['prepTime'] as String,
+                                      style: const TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              hotel['name'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF0F172A),
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              hotel['specialty'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFD97706),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on_rounded, size: 11, color: Color(0xFF64748B)),
+                                const SizedBox(width: 3),
+                                Expanded(
+                                  child: Text(
+                                    hotel['location'] as String,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      color: Color(0xFF64748B),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Dots
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(_HomePageState._kPartnerHotels.length, (idx) {
+            final isActive = _currentIndex == idx;
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              margin: const EdgeInsets.symmetric(horizontal: 2.5),
+              height: 3.5,
+              width: isActive ? 14 : 4,
+              decoration: BoxDecoration(
+                color: isActive ? const Color(0xFFEA580C) : const Color(0xFFCBD5E1),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
   }
 }
 
