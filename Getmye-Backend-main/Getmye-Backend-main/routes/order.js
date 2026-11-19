@@ -1253,6 +1253,78 @@ const handleGetOrderMessages = async (req, res) => {
 router.get('/details/:order_id/messages', handleGetOrderMessages);
 router.get('/:order_id/messages', handleGetOrderMessages);
 
+// GET /api/order/admin/all - Comprehensive orders list for Admin Portal
+router.get('/admin/all', async (req, res) => {
+  try {
+    const { status, limit = 100 } = req.query;
+    const filter = {};
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+    const orders = await Order.find(filter)
+      .sort({ created_at: -1 })
+      .limit(Number(limit))
+      .lean();
+
+    res.json({
+      success: true,
+      count: orders.length,
+      orders
+    });
+  } catch (err) {
+    console.error('Error fetching admin orders:', err);
+    res.status(500).json({ error: 'Failed to fetch orders', details: err.message });
+  }
+});
+
+// GET /api/order/admin/overview - Real-time statistics for Admin Dashboard
+router.get('/admin/overview', async (req, res) => {
+  try {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [
+      totalOrdersToday,
+      pendingOrders,
+      activeOrders,
+      completedOrders,
+      cancelledOrders,
+      onlinePartners,
+      pendingKYCCount
+    ] = await Promise.all([
+      Order.countDocuments({ created_at: { $gte: startOfToday } }),
+      Order.countDocuments({ status: 'pending' }),
+      Order.countDocuments({ status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } }),
+      Order.countDocuments({ status: 'delivered' }),
+      Order.countDocuments({ status: 'cancelled' }),
+      DeliveryPerson.countDocuments({ dp_status: 'online' }),
+      DeliveryPerson.countDocuments({ know_your_partner_status: 'pending' })
+    ]);
+
+    // Aggregate today's gross revenue
+    const revenueAgg = await Order.aggregate([
+      { $match: { created_at: { $gte: startOfToday }, status: { $ne: 'cancelled' } } },
+      { $group: { _id: null, total: { $sum: '$grand_total' } } }
+    ]);
+    const todayRevenue = (revenueAgg[0] && revenueAgg[0].total) ? revenueAgg[0].total : 0;
+
+    res.json({
+      success: true,
+      today_orders: totalOrdersToday,
+      pending_orders: pendingOrders,
+      active_orders: activeOrders,
+      completed_orders: completedOrders,
+      cancelled_orders: cancelledOrders,
+      today_revenue: todayRevenue,
+      online_partners: onlinePartners,
+      pending_kyc: pendingKYCCount
+    });
+  } catch (err) {
+    console.error('Error fetching admin overview:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/order/debug/list-all - Inspect all recent orders for diagnostics
 router.get('/debug/list-all', async (req, res) => {
   try {

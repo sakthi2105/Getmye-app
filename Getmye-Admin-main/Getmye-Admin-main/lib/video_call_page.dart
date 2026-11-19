@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'theme/admin_theme.dart';
+import 'config/api_config.dart';
 import 'package:http/http.dart' as http;
 
 class VideoCallPage extends StatefulWidget {
@@ -33,9 +34,9 @@ class _VideoCallPageState extends State<VideoCallPage> {
   }
 
   Future<void> fetchDpDetails() async {
-    final url = 'http://192.168.29.196:5000/api/getPendingKYC/${widget.dpId}';
+    final uri = AdminApiConfig.dpDetails(widget.dpId);
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(uri);
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
         if (mounted) {
@@ -98,10 +99,10 @@ class _VideoCallPageState extends State<VideoCallPage> {
 
     setState(() => isSubmitting = true);
 
-    final url = 'http://192.168.29.196:5000/api/getPendingKYC/updateKYCStatus';
+    final uri = AdminApiConfig.updateKYCStatus;
     try {
       final response = await http.post(
-        Uri.parse(url),
+        uri,
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'dpId': widget.dpId,

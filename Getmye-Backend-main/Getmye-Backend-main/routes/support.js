@@ -131,4 +131,61 @@ router.get('/feedbacks', async (req, res) => {
   }
 });
 
+// PUT /api/support/bug-report/:id/status - Admin updates bug status
+router.put('/bug-report/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const updated = await BugReport.findOneAndUpdate(
+      { $or: [{ report_id: id }, { _id: id }] },
+      { $set: { status: status || 'resolved' } },
+      { returnDocument: 'after' }
+    );
+    if (!updated) return res.status(404).json({ error: 'Bug report not found' });
+    res.json({ success: true, report: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/support/complaint/:id/status - Admin updates complaint status
+router.put('/complaint/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const updated = await Complaint.findOneAndUpdate(
+      { $or: [{ complaint_id: id }, { _id: id }] },
+      { $set: { status: status || 'resolved' } },
+      { returnDocument: 'after' }
+    );
+    if (!updated) return res.status(404).json({ error: 'Complaint not found' });
+    res.json({ success: true, complaint: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/support/stats - Support KPI overview
+router.get('/stats', async (req, res) => {
+  try {
+    const [openBugs, pendingComplaints, feedbacks] = await Promise.all([
+      BugReport.countDocuments({ status: { $ne: 'resolved' } }),
+      Complaint.countDocuments({ status: { $ne: 'resolved' } }),
+      Feedback.find().select('rating')
+    ]);
+    const avgRating = feedbacks.length > 0
+      ? (feedbacks.reduce((acc, f) => acc + (f.rating || 0), 0) / feedbacks.length).toFixed(1)
+      : '5.0';
+    res.json({
+      success: true,
+      open_bugs: openBugs,
+      pending_complaints: pendingComplaints,
+      total_feedbacks: feedbacks.length,
+      average_rating: avgRating
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

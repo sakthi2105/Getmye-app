@@ -292,6 +292,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _remainingBiryaniCount = 75;
   final int _totalBiryaniCount = 100;
   int _selectedOfferUnitPrice = 65;
+  String? _adminBannerBase64;
+  String? _adminBannerUrl;
+  String? _adminBannerTitle;
   DateTime? _orderSearchStartTime;
   int _allBusyHitCount = 0;
 
@@ -367,6 +370,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _shopAdPageController = PageController();
     _loadSavedLocation();
     _loadRemainingBiryaniStock();
+    _loadActiveOfferBanner();
     _startShopAdAutoSlide();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
@@ -711,6 +715,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         setState(() {
           _remainingBiryaniCount = count;
         });
+      }
+    } catch (_) {}
+  }
+
+  // 🏷️ Dynamic Offer Banner loaded from Admin Portal
+  Future<void> _loadActiveOfferBanner() async {
+    try {
+      final response = await http.get(ApiConfig.bannerActive).timeout(const Duration(seconds: 4));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic> && data['success'] == true && data['banner'] != null) {
+          final banner = data['banner'] as Map<String, dynamic>;
+          if (mounted) {
+            setState(() {
+              _adminBannerBase64 = banner['image_base64'] as String?;
+              _adminBannerUrl = banner['image_url'] as String?;
+              _adminBannerTitle = banner['title'] as String?;
+              if (banner['offer_price'] != null) {
+                _selectedOfferUnitPrice = int.tryParse(banner['offer_price'].toString()) ?? _selectedOfferUnitPrice;
+              }
+              if (banner['stock_remaining'] != null) {
+                _remainingBiryaniCount = int.tryParse(banner['stock_remaining'].toString()) ?? _remainingBiryaniCount;
+              }
+            });
+          }
+        }
       }
     } catch (_) {}
   }
@@ -2104,17 +2134,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   aspectRatio: 1.0, // 1:1 Aspect Ratio
                   child: InkWell(
                     onTap: _openOrderFormPopup,
-                    child: Image.asset(
-                      'assets/banner_biryani_65_4x5.jpg',
-                      fit: BoxFit.cover, // Cover full 1:1 square card
-                      alignment: Alignment.center,
-                      filterQuality: FilterQuality.high,
-                      errorBuilder: (_, __, ___) => Image.asset(
-                        'assets/banner_biryani_65.jpg',
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.high,
-                      ),
-                    ),
+                    child: _buildBannerImageWidget(),
                   ),
                 ),
               ),
@@ -2238,6 +2258,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBannerImageWidget() {
+    if (_adminBannerBase64 != null && _adminBannerBase64!.trim().isNotEmpty) {
+      try {
+        final clean = _adminBannerBase64!.contains(',')
+            ? _adminBannerBase64!.split(',')[1]
+            : _adminBannerBase64!;
+        final bytes = base64Decode(clean);
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (_, __, ___) => _buildDefaultBannerAsset(),
+        );
+      } catch (_) {}
+    }
+    if (_adminBannerUrl != null && _adminBannerUrl!.trim().isNotEmpty && _adminBannerUrl!.startsWith('http')) {
+      return Image.network(
+        _adminBannerUrl!,
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) => _buildDefaultBannerAsset(),
+      );
+    }
+    return _buildDefaultBannerAsset();
+  }
+
+  Widget _buildDefaultBannerAsset() {
+    return Image.asset(
+      'assets/banner_biryani_65_4x5.jpg',
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      filterQuality: FilterQuality.high,
+      errorBuilder: (_, __, ___) => Image.asset(
+        'assets/banner_biryani_65.jpg',
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+      ),
     );
   }
 

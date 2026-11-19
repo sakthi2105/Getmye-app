@@ -112,4 +112,8 @@ class ApiConfig {
   static Uri get supportBugReport => Uri.parse('$baseUrl/api/support/bug-report');
   static Uri get supportComplaint => Uri.parse('$baseUrl/api/support/complaint');
   static Uri get supportFeedback => Uri.parse('$baseUrl/api/support/feedback');
+
+  // Offer Banner Endpoints
+  static Uri get bannerActive => Uri.parse('$baseUrl/api/banner/active');
+  static Uri get bannerUpload => Uri.parse('$baseUrl/api/banner/upload');
 }
