@@ -1,8 +1,62 @@
-class AdminApiConfig {
-  // Default server base URL (LAN IP or Cloud)
-  static String _baseUrl = 'http://192.168.29.196:5000';
+import 'package:flutter/foundation.dart';
 
+enum AdminMode {
+  local,
+  lan,
+  live,
+  custom,
+}
+
+class AdminApiConfig {
+  // Preset Server URLs
+  static const String defaultLocalhostUrl = 'http://127.0.0.1:5000';
+  static const String defaultLanUrl = 'http://192.168.29.196:5000';
+  static const String defaultLiveRenderUrl = 'https://getmye-app.onrender.com';
+  static const String defaultLiveCustomDomain = 'https://api.getmye.com';
+
+  // Default mode starts as LOCAL so local testing works out of the box
+  static AdminMode _currentMode = AdminMode.local;
+  static String _baseUrl = defaultLocalhostUrl;
+
+  static final ValueNotifier<AdminMode> modeNotifier =
+      ValueNotifier<AdminMode>(_currentMode);
+
+  static AdminMode get currentMode => _currentMode;
   static String get baseUrl => _baseUrl;
+  static bool get isLocal => _currentMode == AdminMode.local || _currentMode == AdminMode.lan;
+  static bool get isLive => _currentMode == AdminMode.live;
+
+  static String get modeLabel {
+    switch (_currentMode) {
+      case AdminMode.local:
+        return 'LOCAL (127.0.0.1)';
+      case AdminMode.lan:
+        return 'LOCAL LAN (Wi-Fi)';
+      case AdminMode.live:
+        return 'LIVE CLOUD';
+      case AdminMode.custom:
+        return 'CUSTOM';
+    }
+  }
+
+  static void setMode(AdminMode mode, {String? customUrl}) {
+    _currentMode = mode;
+    switch (mode) {
+      case AdminMode.local:
+        _baseUrl = defaultLocalhostUrl;
+        break;
+      case AdminMode.lan:
+        _baseUrl = defaultLanUrl;
+        break;
+      case AdminMode.live:
+        _baseUrl = customUrl ?? defaultLiveRenderUrl;
+        break;
+      case AdminMode.custom:
+        if (customUrl != null) setBaseUrl(customUrl);
+        break;
+    }
+    modeNotifier.value = mode;
+  }
 
   static void setBaseUrl(String newUrl) {
     String trimmed = newUrl.trim();
@@ -13,6 +67,7 @@ class AdminApiConfig {
       trimmed = 'http://$trimmed';
     }
     _baseUrl = trimmed;
+    modeNotifier.value = _currentMode;
   }
 
   // Health Check
@@ -52,4 +107,3 @@ class AdminApiConfig {
   static Uri get ordersPending => Uri.parse('$_baseUrl/api/order/pending');
   static Uri orderById(String orderId) => Uri.parse('$_baseUrl/api/order/$orderId');
 }
-

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../config/api_config.dart';
 import '../theme/admin_theme.dart';
+import '../widgets/env_switcher_button.dart';
 
 class SupportManagementPage extends StatefulWidget {
   const SupportManagementPage({super.key});
@@ -179,6 +180,8 @@ class _SupportManagementPageState extends State<SupportManagementPage>
       appBar: AppBar(
         title: const Text('Support, Grievance & Feedback Hub'),
         actions: [
+          EnvSwitcherButton(onEnvironmentChanged: _fetchAllSupportData),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Refresh all support tickets',
             icon: const Icon(Icons.refresh_rounded),

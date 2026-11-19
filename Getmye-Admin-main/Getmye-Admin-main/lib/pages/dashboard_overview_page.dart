@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../services/admin_auth_service.dart';
 import '../theme/admin_theme.dart';
+import '../widgets/env_switcher_button.dart';
 
 class DashboardOverviewPage extends StatefulWidget {
   final Function(int) onNavigateToTab;
@@ -127,6 +128,8 @@ class _DashboardOverviewPageState extends State<DashboardOverviewPage> {
           ],
         ),
         actions: [
+          EnvSwitcherButton(onEnvironmentChanged: refreshDashboard),
+          const SizedBox(width: 6),
           // Server connectivity pill
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

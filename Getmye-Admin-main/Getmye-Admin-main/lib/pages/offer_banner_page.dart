@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../theme/admin_theme.dart';
+import '../widgets/env_switcher_button.dart';
 
 class OfferBannerPage extends StatefulWidget {
   const OfferBannerPage({super.key});
@@ -229,6 +230,13 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
       appBar: AppBar(
         title: const Text('Customer Home Offer Image & Banner Control'),
         actions: [
+          EnvSwitcherButton(
+            onEnvironmentChanged: () {
+              fetchActiveBanner();
+              fetchBannerHistory();
+            },
+          ),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh_rounded),

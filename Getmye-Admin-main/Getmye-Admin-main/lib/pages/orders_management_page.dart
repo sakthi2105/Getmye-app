@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../config/api_config.dart';
 import '../theme/admin_theme.dart';
+import '../widgets/env_switcher_button.dart';
 
 class OrdersManagementPage extends StatefulWidget {
   const OrdersManagementPage({super.key});
@@ -81,6 +82,8 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
       appBar: AppBar(
         title: const Text('Live Customer Orders Management'),
         actions: [
+          EnvSwitcherButton(onEnvironmentChanged: fetchOrders),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Refresh orders',
             icon: const Icon(Icons.refresh_rounded),

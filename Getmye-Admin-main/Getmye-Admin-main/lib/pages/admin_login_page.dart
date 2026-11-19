@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/admin_auth_service.dart';
 import '../theme/admin_theme.dart';
+import '../widgets/env_switcher_button.dart';
 import 'admin_shell_page.dart';
 
 class AdminLoginPage extends StatefulWidget {
@@ -157,23 +158,28 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                   ),
                   const SizedBox(height: 24),
 
-                  // Quick Auto-fill action chip
-                  Center(
-                    child: ActionChip(
-                      avatar: const Icon(Icons.key_rounded, size: 16, color: AdminColors.primaryDark),
-                      label: const Text(
-                        'Auto-Fill Admin Credentials',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: AdminColors.primaryDark,
+                  // Quick Auto-fill action chip & Environment Switcher
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(Icons.key_rounded, size: 16, color: AdminColors.primaryDark),
+                        label: const Text(
+                          'Auto-Fill Credentials',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AdminColors.primaryDark,
+                          ),
                         ),
+                        backgroundColor: AdminColors.primaryLight,
+                        side: const BorderSide(color: AdminColors.primarySubtle),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        onPressed: _fillCredentials,
                       ),
-                      backgroundColor: AdminColors.primaryLight,
-                      side: const BorderSide(color: AdminColors.primarySubtle),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      onPressed: _fillCredentials,
-                    ),
+                      const SizedBox(width: 8),
+                      const EnvSwitcherButton(),
+                    ],
                   ),
                   const SizedBox(height: 18),
 

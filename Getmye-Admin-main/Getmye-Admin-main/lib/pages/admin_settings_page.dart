@@ -255,29 +255,48 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                       ),
                       const SizedBox(height: 12),
 
-                      // Quick Presets
+                      // Quick Environment Mode Presets
                       Wrap(
                         spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          ActionChip(
-                            label: const Text('Local LAN (192.168.29.196:5000)', style: TextStyle(fontSize: 11)),
-                            onPressed: () {
-                              _urlController.text = 'http://192.168.29.196:5000';
-                              _testConnection();
+                          ChoiceChip(
+                            label: const Text('💻 Localhost (127.0.0.1:5000)'),
+                            selected: AdminApiConfig.currentMode == AdminMode.local,
+                            onSelected: (val) {
+                              if (val) {
+                                setState(() {
+                                  AdminApiConfig.setMode(AdminMode.local);
+                                  _urlController.text = AdminApiConfig.baseUrl;
+                                });
+                                _testConnection();
+                              }
                             },
                           ),
-                          ActionChip(
-                            label: const Text('Cloud Production (Render)', style: TextStyle(fontSize: 11)),
-                            onPressed: () {
-                              _urlController.text = 'https://getmye-app.onrender.com';
-                              _testConnection();
+                          ChoiceChip(
+                            label: const Text('📱 Local Wi-Fi (192.168.29.196:5000)'),
+                            selected: AdminApiConfig.currentMode == AdminMode.lan,
+                            onSelected: (val) {
+                              if (val) {
+                                setState(() {
+                                  AdminApiConfig.setMode(AdminMode.lan);
+                                  _urlController.text = AdminApiConfig.baseUrl;
+                                });
+                                _testConnection();
+                              }
                             },
                           ),
-                          ActionChip(
-                            label: const Text('Localhost (127.0.0.1:5000)', style: TextStyle(fontSize: 11)),
-                            onPressed: () {
-                              _urlController.text = 'http://127.0.0.1:5000';
-                              _testConnection();
+                          ChoiceChip(
+                            label: const Text('🌐 Cloud Production (Render)'),
+                            selected: AdminApiConfig.currentMode == AdminMode.live,
+                            onSelected: (val) {
+                              if (val) {
+                                setState(() {
+                                  AdminApiConfig.setMode(AdminMode.live);
+                                  _urlController.text = AdminApiConfig.baseUrl;
+                                });
+                                _testConnection();
+                              }
                             },
                           ),
                         ],

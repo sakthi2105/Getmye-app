@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../theme/admin_theme.dart';
 import '../video_call_page.dart';
+import '../widgets/env_switcher_button.dart';
 import 'candidate_details_dialog.dart';
 
 class KycVerificationPage extends StatefulWidget {
@@ -86,6 +87,8 @@ class _KycVerificationPageState extends State<KycVerificationPage> {
       appBar: AppBar(
         title: const Text('Partner Verification Queue'),
         actions: [
+          EnvSwitcherButton(onEnvironmentChanged: fetchDeliveryPersons),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Refresh candidate list',
             icon: const Icon(Icons.refresh_rounded),

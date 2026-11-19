@@ -15,11 +15,17 @@ class ApiConfig {
   static Uri cashfreeOrderStatus(String orderId) => Uri.parse('$baseUrl/api/payment/cashfree/status/$orderId');
   static Uri get cashfreeConfig => Uri.parse('$baseUrl/api/payment/cashfree/config');
 
-  // Base server URL loaded dynamically from .env (BACKEND_API_URL or API_BASE_URL)
+  // Base server URL loaded dynamically from .env (Supports LIVE and LOCAL switching)
   static String get baseUrl {
     try {
       if (dotenv.isInitialized) {
-        final url = dotenv.env['BACKEND_API_URL'] ?? dotenv.env['API_BASE_URL'];
+        final mode = (dotenv.env['APP_ENV'] ?? 'LIVE').trim().toUpperCase();
+        String? url;
+        if (mode == 'LOCAL') {
+          url = dotenv.env['LOCAL_API_URL'] ?? dotenv.env['BACKEND_API_URL'];
+        } else {
+          url = dotenv.env['BACKEND_API_URL'] ?? dotenv.env['API_BASE_URL'];
+        }
         if (url != null && url.trim().isNotEmpty) {
           String trimmed = url.trim();
           while (trimmed.endsWith('/')) {
