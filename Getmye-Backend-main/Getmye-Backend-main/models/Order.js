@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const OrderSchema = new mongoose.Schema({
   order_id: {
@@ -191,6 +191,25 @@ const OrderSchema = new mongoose.Schema({
   },
   delivered_at: {
     type: Date,
+    default: null
+  },
+
+  // Delivery Fee — locked at the moment customer clicks Proceed to Pay
+  // Calculated from partner's GPS at hotel → customer delivery location
+  delivery_fee_distance_km: {
+    type: Number,
+    default: null
+  },
+  delivery_fee_locked_at: {
+    type: Date,
+    default: null
+  },
+  partner_hotel_latitude: {
+    type: Number,
+    default: null
+  },
+  partner_hotel_longitude: {
+    type: Number,
     default: null
   },
   arrived_at_customer_at: {
