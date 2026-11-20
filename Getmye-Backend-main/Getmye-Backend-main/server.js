@@ -21,6 +21,7 @@ const paymentRoutes = require('./routes/payment');
 const trackingRoutes = require('./routes/tracking');
 const supportRoutes = require('./routes/support');
 const bannerRoutes = require('./routes/banner');
+const appScheduleRoutes = require('./routes/appSchedule');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -50,6 +51,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/banner', bannerRoutes);
+app.use('/api/app-schedule', appScheduleRoutes);
 
 // Serve Privacy Policy & Help (for Play Store & Web View)
 app.use(express.static(require('path').join(__dirname, 'public')));

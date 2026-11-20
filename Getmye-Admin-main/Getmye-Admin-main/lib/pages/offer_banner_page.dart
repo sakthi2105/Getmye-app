@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import '../config/api_config.dart';
 import '../theme/admin_theme.dart';
 import '../widgets/env_switcher_button.dart';
@@ -18,6 +21,11 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   bool isLoading = true;
   bool isUploading = false;
 
+  final ImagePicker _imagePicker = ImagePicker();
+  Uint8List? _pickedImageBytes;
+  String? _pickedBase64;
+  String? _pickedImageName;
+
   // Form Controllers
   final _titleController = TextEditingController(text: 'Special Dum Biriyani Deal');
   final _badgeController = TextEditingController(text: "TODAY'S SPECIAL");
@@ -28,8 +36,21 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   final _imageUrlController = TextEditingController();
   final _imageBase64Controller = TextEditingController();
 
-  String _selectedUploadTab = 'presets'; // 'presets', 'url', 'base64'
+  String _selectedUploadTab = 'device'; // 'device', 'presets', 'url', 'base64'
   String? _previewImage; // Can be URL or Base64 or preset asset
+
+  // App Operational Schedule States (Start & End Time Window)
+  TimeOfDay _startTime = const TimeOfDay(hour: 12, minute: 30);
+  TimeOfDay _endTime = const TimeOfDay(hour: 12, minute: 45);
+  bool _isScheduleEnabled = true;
+  String _manualOverride = 'auto'; // 'auto', 'always_online', 'always_offline'
+  bool _isStoreCurrentlyOnline = false;
+  String _serverCurrentTimeIst = '';
+  int _secondsUntilClose = 0;
+  int _secondsUntilOpen = 0;
+  bool _isSavingSchedule = false;
+  bool _isLoadingSchedule = true;
+  Timer? _schedulePollTimer;
 
   // Curated Preset Food & Biryani Deals for quick 1-click select
   final List<Map<String, String>> curatedPresets = [
@@ -68,10 +89,13 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     super.initState();
     fetchActiveBanner();
     fetchBannerHistory();
+    fetchScheduleStatus();
+    _startScheduleTimer();
   }
 
   @override
   void dispose() {
+    _schedulePollTimer?.cancel();
     _titleController.dispose();
     _badgeController.dispose();
     _offerPriceController.dispose();
@@ -115,13 +139,251 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     } catch (_) {}
   }
 
+  Future<void> fetchScheduleStatus() async {
+    setState(() => _isLoadingSchedule = true);
+    try {
+      final res = await http.get(AdminApiConfig.scheduleStatus);
+      if (res.statusCode == 200) {
+        final decoded = json.decode(res.body);
+        if (mounted && decoded is Map<String, dynamic> && decoded['success'] == true) {
+          setState(() {
+            _isStoreCurrentlyOnline = decoded['is_online'] == true;
+            _serverCurrentTimeIst = decoded['current_time_ist'] ?? '';
+            _secondsUntilClose = decoded['seconds_until_close'] ?? 0;
+            _secondsUntilOpen = decoded['seconds_until_open'] ?? 0;
+            _isScheduleEnabled = decoded['is_schedule_enabled'] ?? true;
+            _manualOverride = decoded['manual_override'] ?? 'auto';
+            if (decoded['start_time'] != null) {
+              _startTime = _parseTimeOfDay(decoded['start_time']);
+            }
+            if (decoded['end_time'] != null) {
+              _endTime = _parseTimeOfDay(decoded['end_time']);
+            }
+            _isLoadingSchedule = false;
+          });
+          return;
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _isLoadingSchedule = false);
+  }
+
+  void _startScheduleTimer() {
+    _schedulePollTimer?.cancel();
+    _schedulePollTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      if (_isStoreCurrentlyOnline) {
+        if (_secondsUntilClose > 0) {
+          setState(() => _secondsUntilClose--);
+          if (_secondsUntilClose == 0) {
+            _pollScheduleStatus();
+          }
+        } else {
+          if (timer.tick % 5 == 0) _pollScheduleStatus();
+        }
+      } else {
+        if (_secondsUntilOpen > 0) {
+          setState(() => _secondsUntilOpen--);
+          if (_secondsUntilOpen == 0) {
+            _pollScheduleStatus();
+          }
+        } else {
+          if (timer.tick % 5 == 0) _pollScheduleStatus();
+        }
+      }
+    });
+  }
+
+  Future<void> _pollScheduleStatus() async {
+    try {
+      final res = await http.get(AdminApiConfig.scheduleStatus);
+      if (res.statusCode == 200) {
+        final decoded = json.decode(res.body);
+        if (mounted && decoded is Map<String, dynamic> && decoded['success'] == true) {
+          setState(() {
+            _isStoreCurrentlyOnline = decoded['is_online'] == true;
+            _serverCurrentTimeIst = decoded['current_time_ist'] ?? '';
+            _secondsUntilClose = decoded['seconds_until_close'] ?? 0;
+            _secondsUntilOpen = decoded['seconds_until_open'] ?? 0;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  String _formatSeconds(int totalSec) {
+    if (totalSec <= 0) return "00:00";
+    final h = totalSec ~/ 3600;
+    final m = (totalSec % 3600) ~/ 60;
+    final s = totalSec % 60;
+    if (h > 0) {
+      return '${h}h ${m.toString().padLeft(2, '0')}m';
+    }
+    return '${m.toString().padLeft(2, '0')}m ${s.toString().padLeft(2, '0')}s';
+  }
+
+  Future<void> _saveSchedule() async {
+    setState(() => _isSavingSchedule = true);
+    try {
+      final startStr = '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
+      final endStr = '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
+
+      final res = await http.post(
+        AdminApiConfig.scheduleUpdate,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'start_time': startStr,
+          'end_time': endStr,
+          'is_schedule_enabled': _isScheduleEnabled,
+          'manual_override': _manualOverride,
+        }),
+      );
+
+      if (!mounted) return;
+      setState(() => _isSavingSchedule = false);
+
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Text('Store Operating Window saved: $startStr - $endStr!'),
+              ],
+            ),
+            backgroundColor: AdminColors.success,
+          ),
+        );
+        fetchScheduleStatus();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to update schedule on server.'),
+            backgroundColor: AdminColors.danger,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSavingSchedule = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving schedule: $e'),
+            backgroundColor: AdminColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  TimeOfDay _parseTimeOfDay(String timeStr) {
+    try {
+      final parts = timeStr.trim().split(':');
+      final h = int.parse(parts[0]);
+      final m = int.parse(parts[1]);
+      return TimeOfDay(hour: h, minute: m);
+    } catch (_) {
+      return const TimeOfDay(hour: 12, minute: 30);
+    }
+  }
+
+  String _formatTimeOfDay(TimeOfDay tod) {
+    final now = DateTime.now();
+    final dt = DateTime(now.year, now.month, now.day, tod.hour, tod.minute);
+    return TimeOfDay.fromDateTime(dt).format(context);
+  }
+
+  Future<void> _selectStartTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _startTime,
+      helpText: 'SELECT STORE OPEN START TIME',
+    );
+    if (picked != null && picked != _startTime) {
+      setState(() => _startTime = picked);
+    }
+  }
+
+  Future<void> _selectEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _endTime,
+      helpText: 'SELECT STORE CLOSE END TIME',
+    );
+    if (picked != null && picked != _endTime) {
+      setState(() => _endTime = picked);
+    }
+  }
+
+  static const int _maxAllowedImageBytes = 500 * 1024; // 500 KB size limit
+
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final XFile? file = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 600,
+        maxHeight: 600,
+        imageQuality: 75,
+      );
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        
+        // Strict file size limit validation (500 KB)
+        if (bytes.lengthInBytes > _maxAllowedImageBytes) {
+          final sizeKb = (bytes.lengthInBytes / 1024).toStringAsFixed(0);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Image is too large ($sizeKb KB). Maximum allowed size is 500 KB.'),
+                backgroundColor: AdminColors.danger,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+          return;
+        }
+
+        final base64Str = base64Encode(bytes);
+        setState(() {
+          _pickedImageBytes = bytes;
+          _pickedBase64 = 'data:image/jpeg;base64,$base64Str';
+          _pickedImageName = file.name;
+          _previewImage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error selecting image: $e'),
+            backgroundColor: AdminColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _publishOfferBanner() async {
     setState(() => isUploading = true);
 
     String? finalBase64;
     String? finalUrl;
 
-    if (_selectedUploadTab == 'base64' && _imageBase64Controller.text.trim().isNotEmpty) {
+    if (_selectedUploadTab == 'device') {
+      if (_pickedBase64 == null) {
+        if (!mounted) return;
+        setState(() => isUploading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select an image from your device first!'),
+            backgroundColor: AdminColors.danger,
+          ),
+        );
+        return;
+      }
+      finalBase64 = _pickedBase64;
+    } else if (_selectedUploadTab == 'base64' && _imageBase64Controller.text.trim().isNotEmpty) {
       finalBase64 = _imageBase64Controller.text.trim();
     } else if (_selectedUploadTab == 'url' && _imageUrlController.text.trim().isNotEmpty) {
       finalUrl = _imageUrlController.text.trim();
@@ -234,6 +496,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
             onEnvironmentChanged: () {
               fetchActiveBanner();
               fetchBannerHistory();
+              fetchScheduleStatus();
             },
           ),
           const SizedBox(width: 6),
@@ -243,6 +506,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
             onPressed: () {
               fetchActiveBanner();
               fetchBannerHistory();
+              fetchScheduleStatus();
             },
           ),
           const SizedBox(width: 8),
@@ -308,6 +572,10 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 ),
                 const SizedBox(height: 20),
 
+                // Store Operating Hours (Online/Offline Schedule Control)
+                _buildStoreScheduleSection(),
+                const SizedBox(height: 20),
+
                 // Layout: Two columns on wider screens, stacked on mobile
                 LayoutBuilder(
                   builder: (context, constraints) {
@@ -340,6 +608,302 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildStoreScheduleSection() {
+    final startFormatted = '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
+    final endFormatted = '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
+    final isOnline = _isStoreCurrentlyOnline;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isOnline ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
+          width: 1.5,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x06000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row with Live Status Badge
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isOnline ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.schedule_rounded,
+                      color: isOnline ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Store Operational Window (App Online/Offline)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AdminColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Server Time (IST): ${_serverCurrentTimeIst.isNotEmpty ? _serverCurrentTimeIst : "Syncing..."}  •  Active Window: $startFormatted – $endFormatted',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AdminColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isOnline ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 4,
+                      backgroundColor: isOnline ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isOnline
+                          ? (_secondsUntilClose > 0 ? 'APP ONLINE (${_formatSeconds(_secondsUntilClose)})' : 'APP ONLINE')
+                          : (_secondsUntilOpen > 0 ? 'APP OFFLINE (${_formatSeconds(_secondsUntilOpen)})' : 'APP OFFLINE'),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        color: isOnline ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Time Pickers Row
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AdminColors.border),
+            ),
+            child: Row(
+              children: [
+                // Start Time Card
+                Expanded(
+                  child: InkWell(
+                    onTap: _selectStartTime,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AdminColors.primary.withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.login_rounded, size: 14, color: AdminColors.primary),
+                              SizedBox(width: 5),
+                              Text(
+                                'OPEN TIME (START)',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: AdminColors.primaryDark,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatTimeOfDay(_startTime),
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  color: AdminColors.textPrimary,
+                                ),
+                              ),
+                              const Icon(Icons.edit_calendar_rounded, size: 18, color: AdminColors.primary),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: Icon(Icons.arrow_forward_rounded, color: AdminColors.textMuted, size: 20),
+                ),
+                // End Time Card
+                Expanded(
+                  child: InkWell(
+                    onTap: _selectEndTime,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFEA580C).withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.logout_rounded, size: 14, color: Color(0xFFEA580C)),
+                              SizedBox(width: 5),
+                              Text(
+                                'CLOSE TIME (END)',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF9A3412),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatTimeOfDay(_endTime),
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  color: AdminColors.textPrimary,
+                                ),
+                              ),
+                              const Icon(Icons.edit_calendar_rounded, size: 18, color: Color(0xFFEA580C)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Options & Save Button Row
+          Row(
+            children: [
+              // Switch: Enable Schedule
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Switch(
+                    value: _isScheduleEnabled,
+                    activeColor: AdminColors.primary,
+                    onChanged: (val) => setState(() => _isScheduleEnabled = val),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Enforce Schedule',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AdminColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 16),
+
+              // Manual Override Dropdown
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AdminColors.border),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _manualOverride,
+                    isDense: true,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AdminColors.textPrimary),
+                    items: const [
+                      DropdownMenuItem(value: 'auto', child: Text('Auto (By Schedule)')),
+                      DropdownMenuItem(value: 'always_online', child: Text('Force Online (Always Open)')),
+                      DropdownMenuItem(value: 'always_offline', child: Text('Force Offline (Emergency Closed)')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) setState(() => _manualOverride = val);
+                    },
+                  ),
+                ),
+              ),
+              const Spacer(),
+
+              // Save Schedule Button
+              ElevatedButton.icon(
+                onPressed: _isSavingSchedule ? null : _saveSchedule,
+                icon: _isSavingSchedule
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check_circle_rounded, size: 16),
+                label: const Text('Save Operating Hours'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AdminColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -549,6 +1113,13 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   }
 
   Widget _buildPreviewImage(String? base64String, String? url) {
+    if (_selectedUploadTab == 'device' && _pickedImageBytes != null) {
+      return Image.memory(
+        _pickedImageBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _defaultImage(),
+      );
+    }
     if (_previewImage != null && _previewImage!.startsWith('http')) {
       return Image.network(_previewImage!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _defaultImage());
     }
@@ -580,6 +1151,164 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     );
   }
 
+  Widget _buildDeviceImagePicker() {
+    if (_pickedImageBytes == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: AdminColors.primary.withOpacity(0.35),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: const BoxDecoration(
+                color: AdminColors.primaryLight,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.add_photo_alternate_rounded,
+                size: 32,
+                color: AdminColors.primary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upload Banner from Device',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: AdminColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Select a food or offer image from your gallery or take a photo (Max: 500 KB).',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: AdminColors.textSecondary),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_rounded, size: 16),
+                  label: const Text('Choose from Gallery'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AdminColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _pickImage(ImageSource.camera),
+                  icon: const Icon(Icons.camera_alt_rounded, size: 16),
+                  label: const Text('Take Photo'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AdminColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    side: const BorderSide(color: AdminColors.primary),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final sizeKb = (_pickedImageBytes!.lengthInBytes / 1024).toStringAsFixed(1);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF86EFAC)),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 64,
+              height: 64,
+              child: Image.memory(_pickedImageBytes!, fit: BoxFit.cover),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 16),
+                    SizedBox(width: 5),
+                    Text(
+                      'Ready to Upload',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF166534),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _pickedImageName ?? 'device_image.jpg',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AdminColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  'Size: $sizeKb KB • Auto-compressed',
+                  style: const TextStyle(fontSize: 11, color: AdminColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Pick different image',
+                icon: const Icon(Icons.edit_rounded, color: AdminColors.primary, size: 20),
+                onPressed: () => _pickImage(ImageSource.gallery),
+              ),
+              IconButton(
+                tooltip: 'Remove',
+                icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger, size: 20),
+                onPressed: () {
+                  setState(() {
+                    _pickedImageBytes = null;
+                    _pickedBase64 = null;
+                    _pickedImageName = null;
+                  });
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildUploadFormSection() {
     return Container(
       decoration: BoxDecoration(
@@ -601,22 +1330,32 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Choose a preset deal image, paste a photo URL, or upload Base64 data.',
+            'Upload an image from your device, choose a curated preset, or use an image URL.',
             style: TextStyle(fontSize: 12, color: AdminColors.textSecondary),
           ),
           const SizedBox(height: 14),
 
           // Upload Source Mode Selector
-          Row(
-            children: [
-              _buildTabPill('presets', 'Curated Library', Icons.photo_library_outlined),
-              const SizedBox(width: 8),
-              _buildTabPill('url', 'Image URL', Icons.link_rounded),
-              const SizedBox(width: 8),
-              _buildTabPill('base64', 'Base64 Data', Icons.data_object_rounded),
-            ],
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildTabPill('device', 'From Device', Icons.add_photo_alternate_rounded),
+                const SizedBox(width: 8),
+                _buildTabPill('presets', 'Curated Library', Icons.photo_library_outlined),
+                const SizedBox(width: 8),
+                _buildTabPill('url', 'Image URL', Icons.link_rounded),
+                const SizedBox(width: 8),
+                _buildTabPill('base64', 'Base64 Data', Icons.data_object_rounded),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
+
+          // Device Image Picker
+          if (_selectedUploadTab == 'device') ...[
+            _buildDeviceImagePicker(),
+          ],
 
           // Presets Grid
           if (_selectedUploadTab == 'presets') ...[
