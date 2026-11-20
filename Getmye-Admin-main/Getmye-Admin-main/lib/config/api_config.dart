@@ -10,7 +10,7 @@ enum AdminMode {
 class AdminApiConfig {
   // Preset Server URLs
   static const String defaultLocalhostUrl = 'http://127.0.0.1:5000';
-  static const String defaultLanUrl = 'http://192.168.29.196:5000';
+  static const String defaultLanUrl = 'http://192.168.29.164:5000';
   static const String defaultLiveRenderUrl = 'https://getmye-app.onrender.com';
   static const String defaultLiveCustomDomain = 'https://api.getmye.com';
 
@@ -106,4 +106,9 @@ class AdminApiConfig {
   static Uri get ordersOverview => Uri.parse('$_baseUrl/api/order/admin/overview');
   static Uri get ordersPending => Uri.parse('$_baseUrl/api/order/pending');
   static Uri orderById(String orderId) => Uri.parse('$_baseUrl/api/order/$orderId');
+
+  // App Operational Schedule Endpoints (Store Online / Offline Window)
+  static Uri get scheduleStatus => Uri.parse('$_baseUrl/api/app-schedule/status');
+  static Uri get scheduleConfig => Uri.parse('$_baseUrl/api/app-schedule/config');
+  static Uri get scheduleUpdate => Uri.parse('$_baseUrl/api/app-schedule/update');
 }
