@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const DeliveryPerson = require('../models/DeliveryPerson');
+const { RegisteredDeliveryPerson, RegisteredDeliveryPersonSnake } = require('../models/RegisteredDeliveryPerson');
 
 function toBase64(val) {
   if (!val) return '';
@@ -23,6 +24,20 @@ router.get('/pendingkyc', async (req, res) => {
       .sort({ dp_registered_time: -1 })
       .lean();
 
+    try {
+      const regList = await RegisteredDeliveryPerson.find({
+        know_your_partner_status: 'pending'
+      })
+        .select('DP_id name mobile_number email aadhar_number pancard_number dp_registered_time')
+        .sort({ dp_registered_time: -1 })
+        .lean();
+      for (const r of regList) {
+        if (!list.some(p => p.DP_id === r.DP_id)) {
+          list.push(r);
+        }
+      }
+    } catch (_) {}
+
     res.status(200).json(list);
   } catch (err) {
     console.error('Error fetching pending KYC:', err);
@@ -35,7 +50,10 @@ router.get('/:dp_id', async (req, res) => {
   const { dp_id } = req.params;
 
   try {
-    const person = await DeliveryPerson.findOne({ DP_id: dp_id }).lean();
+    let person = await DeliveryPerson.findOne({ DP_id: dp_id }).lean();
+    if (!person) {
+      person = await RegisteredDeliveryPerson.findOne({ DP_id: dp_id }).lean();
+    }
 
     if (!person) {
       return res.status(404).json({ error: 'Delivery person not found' });
@@ -89,8 +107,22 @@ router.post('/updateKYCStatus', async (req, res) => {
       { returnDocument: 'after' }
     );
 
+    try {
+      await RegisteredDeliveryPerson.findOneAndUpdate(
+        { DP_id: dpId },
+        { $set: updateData }
+      );
+      await RegisteredDeliveryPersonSnake.findOneAndUpdate(
+        { DP_id: dpId },
+        { $set: updateData }
+      );
+    } catch (_) {}
+
     if (!updated) {
-      return res.status(404).json({ error: 'Delivery person not found' });
+      const regUpdated = await RegisteredDeliveryPerson.findOne({ DP_id: dpId });
+      if (!regUpdated) {
+        return res.status(404).json({ error: 'Delivery person not found' });
+      }
     }
 
     res.json({ message: 'KYC status updated successfully' });

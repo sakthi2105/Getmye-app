@@ -102,6 +102,8 @@ class ApiConfig {
   static Uri get partnerRegister => Uri.parse('$baseUrl/api/deliveryperson/register');
   static Uri get partnerLogin => Uri.parse('$baseUrl/api/deliveryperson/login');
   static Uri get partnerAdd => Uri.parse('$baseUrl/api/deliveryperson/add');
+  static Uri get registeredDeliveryPersonAdd => Uri.parse('$baseUrl/api/deliveryperson/add');
+  static Uri get registeredDeliveryPersons => Uri.parse('$baseUrl/api/deliveryperson/registered/all');
   static Uri get partnerStatus => Uri.parse('$baseUrl/api/deliveryperson/status');
   static Uri partnerById(String id) => Uri.parse('$baseUrl/api/deliveryperson/$id');
   static Uri get partnerUpdate => Uri.parse('$baseUrl/api/deliveryperson/update');

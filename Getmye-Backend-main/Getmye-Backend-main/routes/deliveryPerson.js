@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const DeliveryPerson = require('../models/DeliveryPerson');
+const { RegisteredDeliveryPerson, RegisteredDeliveryPersonSnake } = require('../models/RegisteredDeliveryPerson');
 const { getNextSequence } = require('../models/Counter');
 
 const router = express.Router();
@@ -19,7 +20,8 @@ router.post('/add', upload.fields([
       mobile_number, name, email, address,
       aadhar_number, pancard_number, know_your_partner_status,
       dp_status, bank_name, branch_name, bank_account_number,
-      ifsc_code, micr_code, linked_number, password
+      ifsc_code, micr_code, linked_number, password,
+      verification_time_slot, time_slot
     } = req.body;
 
     if (!mobile_number) {
@@ -27,7 +29,8 @@ router.post('/add', upload.fields([
     }
 
     const cleanMobile = mobile_number.toString().trim();
-    const existing = await DeliveryPerson.findOne({ mobile_number: cleanMobile });
+    const existing = await DeliveryPerson.findOne({ mobile_number: cleanMobile }) ||
+      await RegisteredDeliveryPerson.findOne({ mobile_number: cleanMobile });
     if (existing) {
       return res.status(400).json({ message: 'Mobile number is already registered as partner. Please log in.' });
     }
@@ -38,11 +41,11 @@ router.post('/add', upload.fields([
 
     const dpId = await getNextSequence('dp_id', 'dp_', 3);
 
-    await DeliveryPerson.create({
+    const partnerData = {
       DP_id: dpId,
       mobile_number: cleanMobile,
       password: (password || '123456').toString().trim(),
-      name,
+      name: (name || 'Delivery Partner').trim(),
       email: email || '',
       address: address || '',
       profile_picture: personImage,
@@ -57,14 +60,47 @@ router.post('/add', upload.fields([
       bank_account_number: bank_account_number || '',
       ifsc_code: ifsc_code || '',
       micr_code: micr_code || '',
-      linked_number: linked_number || '',
-      dp_registered_time: new Date()
-    });
+      linked_number: linked_number || cleanMobile,
+      verification_time_slot: verification_time_slot || time_slot || '',
+      dp_registered_time: new Date(),
+      registered_time: new Date()
+    };
 
-    res.json({ message: '✅ Delivery person added successfully!', dp_id: dpId });
+    // Store in new table: "registered delivery person"
+    await RegisteredDeliveryPerson.create(partnerData);
+    // Also store in "registered_delivery_person" (snake_case)
+    await RegisteredDeliveryPersonSnake.create(partnerData);
+    // Also store in "delivery_person" for backwards-compatibility
+    await DeliveryPerson.create(partnerData);
+
+    console.log(`✅ [Registered Delivery Person] Partner ${dpId} (${name}) saved into "registered delivery person" table`);
+
+    res.json({
+      message: '✅ Delivery person registered successfully!',
+      dp_id: dpId,
+      table: 'registered delivery person'
+    });
   } catch (error) {
     console.error('❌ Insert delivery person error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ✅ GET /api/deliveryperson/registered/all — Fetch records from "registered delivery person" table
+router.get('/registered/all', async (req, res) => {
+  try {
+    const list = await RegisteredDeliveryPerson.find({})
+      .select('-profile_picture -aadhar_proof_picture -pancard_proof_picture')
+      .sort({ dp_registered_time: -1 })
+      .lean();
+    res.json({
+      success: true,
+      table: 'registered delivery person',
+      count: list.length,
+      data: list
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch registered delivery persons: ' + err.message });
   }
 });
 
