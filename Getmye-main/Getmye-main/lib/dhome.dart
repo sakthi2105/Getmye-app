@@ -290,7 +290,12 @@ class DeliveryPersonJoinPage extends StatelessWidget {
                   ),
                 ),
                 onPressed: () {
-                  _showPoliteRegistrationDialog(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const DeliveryPersonDetailsPage(),
+                    ),
+                  );
                 },
                 icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
                 label: const Text(

@@ -41,6 +41,8 @@ class _DeliveryPersonDetailsPageState
   File? pancardImage;
 
   final ImagePicker _picker = ImagePicker();
+  bool _isSubmitting = false;
+  String _selectedTimeSlot = "10:00 AM";
 
   Future<void> _pickImage(String type) async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
@@ -70,7 +72,8 @@ class _DeliveryPersonDetailsPageState
         pancardImage != null;
   }
 
-  Future<void> _submitToBackend() async {
+  Future<bool> _submitToBackend() async {
+    setState(() => _isSubmitting = true);
     var uri = ApiConfig.partnerAdd;
     var request = http.MultipartRequest('POST', uri);
 
@@ -90,6 +93,7 @@ class _DeliveryPersonDetailsPageState
     request.fields['ifsc_code'] = ifscController.text.trim();
     request.fields['micr_code'] = micrController.text.trim();
     request.fields['linked_number'] = phoneController.text.trim();
+    request.fields['verification_time_slot'] = _selectedTimeSlot;
 
     // Add files
     if (personImage != null) {
@@ -135,31 +139,38 @@ class _DeliveryPersonDetailsPageState
         }
 
         if (mounted) {
+          setState(() => _isSubmitting = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Registration successful! Welcome partner.'),
+              content: Text('Registration successful! Registered delivery person details saved.'),
               backgroundColor: AppColors.primaryDark,
             ),
           );
         }
+        return true;
       } else {
         String errMsg = 'Upload failed: ${response.statusCode}';
         try {
           final data = jsonDecode(response.body);
           if (data['message'] != null) errMsg = data['message'];
+          if (data['error'] != null) errMsg = data['error'];
         } catch (_) {}
         if (mounted) {
+          setState(() => _isSubmitting = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(errMsg), backgroundColor: AppColors.danger),
           );
         }
+        return false;
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isSubmitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
         );
       }
+      return false;
     }
   }
 
@@ -230,57 +241,81 @@ class _DeliveryPersonDetailsPageState
   void _showConfirmationDialog() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text("Confirm Details"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("Please select a time slot and read instructions before confirming.",
-                textAlign: TextAlign.center),
-            SizedBox(height: 15),
-            DropdownButtonFormField<String>(
-              decoration: InputDecoration(border: OutlineInputBorder()),
-              items: [
-                DropdownMenuItem(value: "10:00 AM", child: Text("10:00 AM")),
-                DropdownMenuItem(value: "12:00 PM", child: Text("12:00 PM")),
-                DropdownMenuItem(value: "3:00 PM", child: Text("3:00 PM")),
-                DropdownMenuItem(value: "6:00 PM", child: Text("6:00 PM")),
-              ],
-              onChanged: (_) {},
-              hint: Text("Select a Time Slot"),
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text("Confirm Details", style: TextStyle(fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Please select a time slot and read instructions before confirming.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 15),
+              DropdownButtonFormField<String>(
+                value: _selectedTimeSlot,
+                decoration: InputDecoration(
+                  labelText: "Select a Time Slot",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                items: const [
+                  DropdownMenuItem(value: "10:00 AM", child: Text("10:00 AM")),
+                  DropdownMenuItem(value: "12:00 PM", child: Text("12:00 PM")),
+                  DropdownMenuItem(value: "3:00 PM", child: Text("3:00 PM")),
+                  DropdownMenuItem(value: "6:00 PM", child: Text("6:00 PM")),
+                ],
+                onChanged: (val) {
+                  if (val != null) {
+                    setDialogState(() => _selectedTimeSlot = val);
+                    setState(() => _selectedTimeSlot = val);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Text(
+                  "Instructions:\n1. Ensure all details are correct.\n2. Carry Aadhaar & PAN card.\n3. Arrive on time for verification.",
+                  style: TextStyle(fontSize: 13, height: 1.4, color: AppColors.textPrimary),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () => Navigator.pop(dialogCtx),
             ),
-            SizedBox(height: 10),
-            Text(
-              "Instructions:\n1. Ensure all details are correct.\n2. Carry Aadhaar & PAN card.\n3. Arrive on time for verification.",
-              style: TextStyle(fontSize: 14),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text("Submit"),
+              onPressed: () async {
+                Navigator.pop(dialogCtx);
+                final success = await _submitToBackend();
+                if (success && mounted) {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+                    (route) => false,
+                  );
+                }
+              },
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            child: Text("Cancel"),
-            onPressed: () => Navigator.pop(context),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            child: const Text("Submit"),
-            onPressed: () async {
-              Navigator.pop(context);
-              await _submitToBackend();
-              if (mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
-                  (route) => false,
-                );
-              }
-            },
-          ),
-        ],
       ),
     );
   }
@@ -372,17 +407,23 @@ class _DeliveryPersonDetailsPageState
           ),
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: isFormValid() ? AppColors.primary : Colors.grey.shade300,
+              backgroundColor: isFormValid() && !_isSubmitting ? AppColors.primary : Colors.grey.shade300,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 15),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 0,
             ),
-            onPressed: isFormValid() ? _showConfirmationDialog : null,
-            child: const Text(
-              "Confirm",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-            ),
+            onPressed: isFormValid() && !_isSubmitting ? _showConfirmationDialog : null,
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text(
+                    "Confirm",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
           ),
         ),
       ),
