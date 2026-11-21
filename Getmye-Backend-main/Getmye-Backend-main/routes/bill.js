@@ -1,8 +1,10 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const Bill = require('../models/Bill');
 const Order = require('../models/Order');
+const LiveLocation = require('../models/LiveLocation');
 const { getNextSequence } = require('../models/Counter');
+const { calculateDistanceKm, calculateDeliveryFee } = require('../services/orderDispatchService');
 
 // POST /api/bill/submit - Delivery partner submits bill after buying food
 router.post('/submit', async (req, res) => {
@@ -49,12 +51,52 @@ router.post('/submit', async (req, res) => {
     }));
 
     const billId = await getNextSequence('bill_id', 'BILL-', 4);
-    const existingOrder = await Order.findOne({ order_id }).select('tip_amount').lean();
+
+    // ✅ Fetch the order for customer coordinates + existing tip
+    const existingOrder = await Order.findOne({ order_id }).lean();
     const effectiveTip = (Number(tip_amount) && Number(tip_amount) >= 10)
       ? Number(tip_amount)
       : (existingOrder && existingOrder.tip_amount && existingOrder.tip_amount >= 10 ? existingOrder.tip_amount : 10);
     const finalItemTotal = Number(item_total) || 0;
-    const finalDelFee = Number(delivery_fee) || 0;
+
+    // ✅ DELIVERY FEE: Auto-calculate from partner GPS (hotel) → customer location at Send Bill moment
+    // This is the accurate fee — partner is at the hotel when Send Bill is clicked
+    let finalDelFee = 20; // default minimum ₹20
+    let feeDistanceKm = null;
+    let partnerHotelLat = null;
+    let partnerHotelLng = null;
+
+    try {
+      const resolvedPartnerId = partner_id || (existingOrder && existingOrder.partner_id) || (existingOrder && existingOrder.current_assigned_partner_id);
+      const customerLat = existingOrder && existingOrder.customer_latitude ? Number(existingOrder.customer_latitude) : null;
+      const customerLng = existingOrder && existingOrder.customer_longitude ? Number(existingOrder.customer_longitude) : null;
+
+      if (resolvedPartnerId && customerLat && customerLng && !isNaN(customerLat) && !isNaN(customerLng)) {
+        // Fetch partner's current GPS (they are at the hotel right now)
+        const partnerLoc = await LiveLocation.findOne({ partner_id: resolvedPartnerId }).lean();
+
+        if (partnerLoc && partnerLoc.latitude != null && partnerLoc.longitude != null) {
+          const pLat = Number(partnerLoc.latitude);
+          const pLng = Number(partnerLoc.longitude);
+
+          if (!isNaN(pLat) && !isNaN(pLng) && (pLat !== 0 || pLng !== 0)) {
+            const distKm = calculateDistanceKm(pLat, pLng, customerLat, customerLng);
+            const calculatedFee = calculateDeliveryFee(distKm);
+            finalDelFee = calculatedFee;
+            feeDistanceKm = distKm;
+            partnerHotelLat = pLat;
+            partnerHotelLng = pLng;
+            console.log('[Bill Submit] Order ' + order_id + ': Hotel GPS (' + pLat + ',' + pLng + ') -> Customer (' + customerLat + ',' + customerLng + ') = ' + distKm + 'km, Fee: Rs.' + calculatedFee);
+          }
+        } else {
+          console.log(`[Bill Submit] Order ${order_id}: Partner GPS not found - applying minimum fee Rs.20`);
+        }
+      }
+    } catch (feeErr) {
+      console.error('[Bill Submit] Delivery fee calculation error:', feeErr.message);
+      // Don't block bill submit — use minimum ₹20
+    }
+
     const finalGrandTotal = finalItemTotal + finalDelFee + effectiveTip;
 
     const newBill = new Bill({
@@ -75,14 +117,15 @@ router.post('/submit', async (req, res) => {
 
     await newBill.save();
 
-    // Update order status to 'bill_sent' with bill_confirmed: true, updated items and bill image(s)
+    // ✅ Update order: status → bill_sent, lock delivery fee, store hotel GPS snapshot
     const orderUpdatePayload = {
       status: 'bill_sent',
       bill_confirmed: true,
       grand_total: finalGrandTotal,
       item_total: finalItemTotal,
       tip_amount: effectiveTip,
-      delivery_fee: finalDelFee,
+      delivery_fee: finalDelFee,              // ✅ Auto-calculated at Send Bill moment
+      delivery_fee_locked_at: new Date(),     // ✅ Fee lock timestamp
       bill_image_url: primaryBillImage,
       bill_images: imagesList,
       items: processedItems.map(it => ({
@@ -92,6 +135,14 @@ router.post('/submit', async (req, res) => {
         is_collected: true
       }))
     };
+
+    // ✅ Store hotel GPS snapshot + distance (if calculated)
+    if (feeDistanceKm !== null) {
+      orderUpdatePayload.delivery_fee_distance_km  = feeDistanceKm;
+      orderUpdatePayload.partner_hotel_latitude    = partnerHotelLat;
+      orderUpdatePayload.partner_hotel_longitude   = partnerHotelLng;
+    }
+
     if (partner_id) {
       orderUpdatePayload.partner_id = partner_id;
     }

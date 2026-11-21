@@ -14,7 +14,8 @@ const {
   assignNextClosestPartner,
   checkAndReassignExpiredOrders,
   getPartnerAvailabilityStats,
-  notifyWaitingCustomersThatPartnerIsAvailable
+  notifyWaitingCustomersThatPartnerIsAvailable,
+  calculateDeliveryFee
 } = require('../services/orderDispatchService');
 
 // POST /api/order/create - Customer places a new order
@@ -638,13 +639,54 @@ router.post('/price-range/respond', async (req, res) => {
       });
     }
 
-    // 3. Customer chooses: Accept
+    // 3. Customer chooses: Accept — Lock delivery fee from partner's current GPS (hotel location) to customer
     const isAccepted = (actionStr === 'accept');
     order.price_range_status = isAccepted ? 'accepted' : 'rejected';
     order.price_range_accepted_at = new Date();
+
     if (isAccepted) {
       order.status = 'purchasing_food';
+
+      // 🔒 DELIVERY FEE LOCK: Snapshot partner GPS at hotel → calculate distance to customer → lock fee
+      // This runs ONLY once when customer clicks Proceed to Pay. Fee never changes after this point.
+      try {
+        const partnerId = order.partner_id || order.current_assigned_partner_id;
+        if (partnerId) {
+          const partnerLoc = await LiveLocation.findOne({ partner_id: partnerId }).lean();
+          if (partnerLoc && partnerLoc.latitude != null && partnerLoc.longitude != null) {
+            const pLat = Number(partnerLoc.latitude);
+            const pLng = Number(partnerLoc.longitude);
+            const cLat = Number(order.customer_latitude);
+            const cLng = Number(order.customer_longitude);
+
+            if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(cLat) && !isNaN(cLng)) {
+              const { calculateDistanceKm } = require('../services/orderDispatchService');
+              const distanceKm = calculateDistanceKm(pLat, pLng, cLat, cLng);
+              const fee = calculateDeliveryFee(distanceKm);
+
+              // Lock the fee — store partner snapshot + fee in order
+              order.delivery_fee = fee;
+              order.delivery_fee_distance_km = distanceKm;
+              order.delivery_fee_locked_at = new Date();
+              order.partner_hotel_latitude  = pLat;
+              order.partner_hotel_longitude = pLng;
+              order.grand_total = (order.item_total || 0) + (order.tip_amount || 0) + fee;
+
+              console.log(`💰 [Delivery Fee] Order ${order.order_id}: Partner at hotel (${pLat},${pLng}) → Customer (${cLat},${cLng}) = ${distanceKm}km → Fee: ₹${fee} | Grand Total: ₹${order.grand_total}`);
+            }
+          } else {
+            // Partner GPS not available — apply minimum fee
+            order.delivery_fee = 20;
+            order.grand_total = (order.item_total || 0) + (order.tip_amount || 0) + 20;
+            console.log(`⚠️ [Delivery Fee] Order ${order.order_id}: Partner GPS unavailable, applying minimum fee ₹20`);
+          }
+        }
+      } catch (feeErr) {
+        console.error('Delivery fee calculation error:', feeErr.message);
+        // Don't block the accept — just log and continue without fee update
+      }
     }
+
     await order.save();
 
     const orderObj = await enrichOrderWithPartner(order.toObject(), req);

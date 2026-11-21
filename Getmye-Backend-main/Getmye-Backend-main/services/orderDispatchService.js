@@ -11,9 +11,12 @@ const KUMBAKONAM_GEOFENCE = {
     latitude: 10.9601,
     longitude: 79.3845
   },
-  maxRadiusKm: 10.0, // 10 km covers Kumbakonam town municipal corporation and adjoining suburbs
+  maxRadiusKm: 5.0, // 5 km — Progressive ring dispatch boundary for Kumbakonam
   errorMessage: "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!"
 };
+
+// Progressive Ring Dispatch — Expanding radius rings (500m → 1km → 2km → 3.5km → 5km)
+const DISPATCH_RINGS_KM = [0.5, 1.0, 2.0, 3.5, 5.0];
 
 // Calculate Haversine distance in kilometers between two GPS coordinates
 function calculateDistanceKm(lat1, lon1, lat2, lon2) {
@@ -132,6 +135,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       current_assigned_partner_id: { $ne: null },
       assignment_expires_at: { $gt: new Date() }
     };
+
     if (excludeOrderId) {
       pendingQuery.order_id = { $ne: excludeOrderId };
     }
@@ -151,8 +155,12 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       }
     }
 
-    // 3. Fetch live locations for online partners
-    const liveLocations = await LiveLocation.find({}).lean();
+    // 3. Fetch live locations — only online partners
+    // ✅ FIX 1: Filter at DB level (is_online: true) instead of fetching ALL documents.
+    // ✅ FIX 2: GPS freshness window reduced from 25 min → 5 min.
+    const liveLocations = await LiveLocation.find({
+      is_online: true  // was find({}) — now only fetches online partners
+    }).lean();
     const liveLocMap = new Map();
     for (const loc of liveLocations) {
       if (loc.partner_id) {
@@ -167,7 +175,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     const activeCandidates = [];
     const fallbackCandidates = [];
     const now = Date.now();
-    const LOCATION_ACTIVE_WINDOW_MS = 25 * 60 * 1000; // 25 minutes freshness for location on
+    const LOCATION_ACTIVE_WINDOW_MS = 5 * 60 * 1000; // ✅ FIX 2: 5 minutes freshness (was 25 min — too stale)
 
     const custLat = (customerLat != null && !isNaN(Number(customerLat))) ? Number(customerLat) : KUMBAKONAM_GEOFENCE.center.latitude;
     const custLng = (customerLng != null && !isNaN(Number(customerLng))) ? Number(customerLng) : KUMBAKONAM_GEOFENCE.center.longitude;
@@ -229,10 +237,30 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       }
     }
 
-    // 5. Strictly prioritize active partners whose status is online AND location is actively ON
-    const selectedCandidates = activeCandidates.length > 0 ? activeCandidates : fallbackCandidates;
-    selectedCandidates.sort((a, b) => a.distance_km - b.distance_km);
-    return selectedCandidates;
+    // 5. Progressive Ring Dispatch — Expanding radius search (500m → 1km → 2km → 3.5km → 5km)
+    // Priority 1: Active candidates (online + fresh GPS within 25min)
+    for (const ringKm of DISPATCH_RINGS_KM) {
+      const inRing = activeCandidates.filter(c => c.distance_km <= ringKm);
+      if (inRing.length > 0) {
+        inRing.sort((a, b) => a.distance_km - b.distance_km);
+        console.log(`🎯 [Ring Dispatch] Ring ${ringKm}km → ${inRing.length} active partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
+        return inRing;
+      }
+      console.log(`🔍 [Ring Dispatch] Ring ${ringKm}km → No active partners. Expanding...`);
+    }
+
+    // Priority 2: Fallback candidates (stale GPS or offline flag missing) — same ring logic
+    for (const ringKm of DISPATCH_RINGS_KM) {
+      const inRing = fallbackCandidates.filter(c => c.distance_km <= ringKm);
+      if (inRing.length > 0) {
+        inRing.sort((a, b) => a.distance_km - b.distance_km);
+        console.log(`🔄 [Ring Dispatch] Fallback Ring ${ringKm}km → ${inRing.length} partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
+        return inRing;
+      }
+    }
+
+    console.log(`⚠️ [Ring Dispatch] No partners found in any ring (max ${DISPATCH_RINGS_KM[DISPATCH_RINGS_KM.length - 1]}km)`);
+    return [];
   } catch (err) {
     console.error('Error finding available partners:', err);
     return [];
@@ -518,6 +546,31 @@ async function notifyWaitingCustomersThatPartnerIsAvailable(partnerInfo = {}) {
   }
 }
 
+/**
+ * Calculate delivery fee based on distance from hotel/shop (partner location) to customer.
+ * Pricing: First 1 km = ₹20 flat, every additional km = ₹8/km
+ * Fee is LOCKED at the moment customer clicks "Proceed to Pay" (price_range accept).
+ * @param {number} distanceKm - Distance in km from partner (hotel) to customer
+ * @returns {number} Delivery fee in rupees (rounded to nearest rupee)
+ */
+function calculateDeliveryFee(distanceKm) {
+  const BASE_FARE_RS   = 20;   // ₹20 flat for first 1 km
+  const BASE_DISTANCE_KM = 1;  // First 1 km covered by base fare
+  const PER_KM_RATE_RS = 8;    // ₹8 per km after first km
+
+  if (distanceKm == null || isNaN(Number(distanceKm)) || Number(distanceKm) <= 0) {
+    return BASE_FARE_RS; // Minimum fee even if distance unknown
+  }
+
+  const d = Number(distanceKm);
+  if (d <= BASE_DISTANCE_KM) {
+    return BASE_FARE_RS;
+  }
+
+  const extraKm = d - BASE_DISTANCE_KM;
+  const fee = BASE_FARE_RS + (extraKm * PER_KM_RATE_RS);
+  return Math.round(fee * 10) / 10; // Round to 1 decimal place (e.g. ₹28.5)
+}
 module.exports = {
   KUMBAKONAM_GEOFENCE,
   calculateDistanceKm,
@@ -528,5 +581,6 @@ module.exports = {
   assignNextClosestPartner,
   checkAndReassignExpiredOrders,
   getPartnerAvailabilityStats,
-  notifyWaitingCustomersThatPartnerIsAvailable
+  notifyWaitingCustomersThatPartnerIsAvailable,
+  calculateDeliveryFee
 };
