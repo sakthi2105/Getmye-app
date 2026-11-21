@@ -290,13 +290,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _currentShopAdIndex = 0;
   Timer? _shopAdTimer;
   int _remainingBiryaniCount = 75;
-  final int _totalBiryaniCount = 100;
+  int _totalBiryaniCount = 100;
   int _selectedOfferUnitPrice = 65;
+  int _selectedOfferOriginalPrice = 120;
   String? _adminBannerBase64;
+  Uint8List? _cachedAdminBannerBytes;
   String? _adminBannerUrl;
   String? _adminBannerTitle;
+  String? _adminBannerBadge;
   DateTime? _orderSearchStartTime;
   int _allBusyHitCount = 0;
+
+  // 🕒 App Operational Schedule States (Online/Offline Window)
+  bool _isStoreOnline = true; // Default true so it doesn't flash closed while checking
+  String _scheduleStartTime = "12:30";
+  String _scheduleEndTime = "12:45";
+  int _secondsUntilOpen = 0;
+  int _secondsUntilClose = 0;
+  String _offlineTitle = "Orders Opening Soon";
+  String _offlineMessage = "We are accepting today's orders strictly during our scheduled slot. Please check back when the timer reaches zero!";
+  Timer? _storeCountdownTimer;
+  bool _hasAutoShownClosedPopup = false;
+  bool _isClosedPopupOpen = false;
+  StateSetter? _closedPopupSetState;
 
   static const List<Map<String, dynamic>> _kPartnerHotels = [
     {
@@ -369,8 +385,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _shopAdPageController = PageController();
     _loadSavedLocation();
+    _loadCachedOfferBanner();
     _loadRemainingBiryaniStock();
     _loadActiveOfferBanner();
+    _checkAppScheduleStatus();
+    _startStoreCountdownTimer();
     _startShopAdAutoSlide();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
@@ -382,6 +401,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // Whenever customer returns to app from settings or background, check GPS & refresh exact location
       _checkAndPromptLocationService();
+      _loadActiveOfferBanner();
+      _checkAppScheduleStatus();
     }
   }
 
@@ -719,6 +740,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  // Load cached banner instantly from local storage (Zero flicker on startup)
+  Future<void> _loadCachedOfferBanner() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final base64 = prefs.getString('cached_banner_base64');
+      final url = prefs.getString('cached_banner_url');
+      final title = prefs.getString('cached_banner_title');
+      final badge = prefs.getString('cached_banner_badge');
+      final offerPrice = prefs.getInt('cached_banner_offer_price');
+      final origPrice = prefs.getInt('cached_banner_orig_price');
+      final remaining = prefs.getInt('cached_banner_stock_remaining');
+      final total = prefs.getInt('cached_banner_total_stock');
+
+      if (mounted && (base64 != null || url != null)) {
+        Uint8List? decodedBytes;
+        if (base64 != null && base64.isNotEmpty) {
+          try {
+            final clean = base64.contains(',') ? base64.split(',')[1] : base64;
+            decodedBytes = base64Decode(clean);
+          } catch (_) {}
+        }
+        setState(() {
+          _adminBannerBase64 = base64;
+          _cachedAdminBannerBytes = decodedBytes;
+          _adminBannerUrl = url;
+          _adminBannerTitle = title;
+          _adminBannerBadge = badge;
+          if (offerPrice != null) _selectedOfferUnitPrice = offerPrice;
+          if (origPrice != null) _selectedOfferOriginalPrice = origPrice;
+          if (remaining != null) _remainingBiryaniCount = remaining;
+          if (total != null) _totalBiryaniCount = total;
+        });
+      }
+    } catch (_) {}
+  }
+
   // 🏷️ Dynamic Offer Banner loaded from Admin Portal
   Future<void> _loadActiveOfferBanner() async {
     try {
@@ -727,22 +784,185 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final data = json.decode(response.body);
         if (data is Map<String, dynamic> && data['success'] == true && data['banner'] != null) {
           final banner = data['banner'] as Map<String, dynamic>;
+          final base64 = banner['image_base64'] as String?;
+          final url = banner['image_url'] as String?;
+          final title = banner['title'] as String?;
+          final badge = banner['badge'] as String?;
+          final offerPrice = banner['offer_price'] != null ? int.tryParse(banner['offer_price'].toString()) : null;
+          final origPrice = banner['original_price'] != null ? int.tryParse(banner['original_price'].toString()) : null;
+          final remaining = banner['stock_remaining'] != null ? int.tryParse(banner['stock_remaining'].toString()) : null;
+          final total = banner['total_stock'] != null ? int.tryParse(banner['total_stock'].toString()) : null;
+
+          Uint8List? decodedBytes;
+          if (base64 != null && base64.isNotEmpty) {
+            try {
+              final clean = base64.contains(',') ? base64.split(',')[1] : base64;
+              decodedBytes = base64Decode(clean);
+            } catch (_) {}
+          }
+
           if (mounted) {
             setState(() {
-              _adminBannerBase64 = banner['image_base64'] as String?;
-              _adminBannerUrl = banner['image_url'] as String?;
-              _adminBannerTitle = banner['title'] as String?;
-              if (banner['offer_price'] != null) {
-                _selectedOfferUnitPrice = int.tryParse(banner['offer_price'].toString()) ?? _selectedOfferUnitPrice;
-              }
-              if (banner['stock_remaining'] != null) {
-                _remainingBiryaniCount = int.tryParse(banner['stock_remaining'].toString()) ?? _remainingBiryaniCount;
-              }
+              _adminBannerBase64 = base64;
+              _cachedAdminBannerBytes = decodedBytes;
+              _adminBannerUrl = url;
+              _adminBannerTitle = title;
+              _adminBannerBadge = badge;
+              if (offerPrice != null) _selectedOfferUnitPrice = offerPrice;
+              if (origPrice != null) _selectedOfferOriginalPrice = origPrice;
+              if (remaining != null) _remainingBiryaniCount = remaining;
+              if (total != null) _totalBiryaniCount = total;
             });
+          }
+
+          // Cache in local storage for instant flicker-free load on next app launch
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            if (base64 != null && base64.isNotEmpty) {
+              await prefs.setString('cached_banner_base64', base64);
+            } else {
+              await prefs.remove('cached_banner_base64');
+            }
+            if (url != null && url.isNotEmpty) {
+              await prefs.setString('cached_banner_url', url);
+            } else {
+              await prefs.remove('cached_banner_url');
+            }
+            if (title != null) await prefs.setString('cached_banner_title', title);
+            if (badge != null) await prefs.setString('cached_banner_badge', badge);
+            if (offerPrice != null) await prefs.setInt('cached_banner_offer_price', offerPrice);
+            if (origPrice != null) await prefs.setInt('cached_banner_orig_price', origPrice);
+            if (remaining != null) await prefs.setInt('cached_banner_stock_remaining', remaining);
+            if (total != null) await prefs.setInt('cached_banner_total_stock', total);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 🕒 App Operational Schedule Check (Enforce Store Online/Offline Window)
+  Future<void> _checkAppScheduleStatus() async {
+    try {
+      final res = await http.get(ApiConfig.scheduleStatus).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        if (mounted && data is Map<String, dynamic> && data['success'] == true) {
+          final bool wasOnline = _isStoreOnline;
+          final bool newOnline = data['is_online'] == true;
+
+          setState(() {
+            _isStoreOnline = newOnline;
+            _scheduleStartTime = data['start_time'] ?? "12:30";
+            _scheduleEndTime = data['end_time'] ?? "12:45";
+            _secondsUntilOpen = data['seconds_until_open'] ?? 0;
+            _secondsUntilClose = data['seconds_until_close'] ?? 0;
+            if (data['offline_title'] != null && data['offline_title'].toString().trim().isNotEmpty) {
+              _offlineTitle = data['offline_title'];
+            }
+            if (data['offline_message'] != null && data['offline_message'].toString().trim().isNotEmpty) {
+              _offlineMessage = data['offline_message'];
+            }
+          });
+
+          // Sync countdown & status with popup if currently visible
+          _closedPopupSetState?.call(() {});
+
+          if (newOnline) {
+            _hasAutoShownClosedPopup = false;
+            // If closed popup is active, dismiss it automatically
+            if (_isClosedPopupOpen && Navigator.of(context, rootNavigator: true).canPop()) {
+              Navigator.of(context, rootNavigator: true).pop();
+            }
+          } else {
+            // Store is offline: show popup in front of homepage
+            if (!showDeliveryDetails) {
+              if (wasOnline && !newOnline) {
+                // Time ended while customer was browsing or creating order
+                if (_showOrderForm && Navigator.of(context, rootNavigator: true).canPop()) {
+                  Navigator.of(context, rootNavigator: true).pop();
+                  _showOrderForm = false;
+                }
+                _hasAutoShownClosedPopup = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && !_isStoreOnline && !_isClosedPopupOpen) {
+                    _showStoreClosedPopup();
+                  }
+                });
+              } else if (!_hasAutoShownClosedPopup) {
+                // First launch while closed
+                _hasAutoShownClosedPopup = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && !_isStoreOnline && !_isClosedPopupOpen) {
+                    _showStoreClosedPopup();
+                  }
+                });
+              }
+            }
           }
         }
       }
     } catch (_) {}
+  }
+
+  void _startStoreCountdownTimer() {
+    _storeCountdownTimer?.cancel();
+    _storeCountdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      if (_isStoreOnline) {
+        if (_secondsUntilClose > 0) {
+          setState(() => _secondsUntilClose--);
+          if (_secondsUntilClose == 0) {
+            _checkAppScheduleStatus();
+          }
+        } else {
+          if (t.tick % 5 == 0) {
+            _checkAppScheduleStatus();
+          }
+        }
+      } else {
+        if (_secondsUntilOpen > 0) {
+          setState(() => _secondsUntilOpen--);
+          _closedPopupSetState?.call(() {});
+          if (_secondsUntilOpen == 0) {
+            _checkAppScheduleStatus();
+            _loadActiveOfferBanner();
+          }
+        } else {
+          if (t.tick % 5 == 0) {
+            _checkAppScheduleStatus();
+            _loadActiveOfferBanner();
+          }
+        }
+      }
+    });
+  }
+
+  String _format24to12(String timeStr) {
+    try {
+      final parts = timeStr.trim().split(':');
+      int h = int.parse(parts[0]);
+      final m = parts[1].padLeft(2, '0');
+      final period = h >= 12 ? 'PM' : 'AM';
+      if (h == 0) {
+        h = 12;
+      } else if (h > 12) {
+        h -= 12;
+      }
+      return '$h:$m $period';
+    } catch (_) {
+      return timeStr;
+    }
+  }
+
+  String _formatSeconds(int totalSec) {
+    if (totalSec <= 0) return "00:00";
+    final h = totalSec ~/ 3600;
+    final m = (totalSec % 3600) ~/ 60;
+    final s = totalSec % 60;
+    if (h > 0) {
+      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   Future<void> _requestLiveLocation({bool silent = false, bool forceOverrideAddress = true}) async {
@@ -1280,6 +1500,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _storeCountdownTimer?.cancel();
     _searchRiderTimer?.cancel();
     _riderTrackingTimer?.cancel();
     _shopAdTimer?.cancel();
@@ -1893,7 +2114,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   // 1. Blue background header ONLY for the Location area
                   _buildWineHeader(context),
 
-                  // 2. Biriyani Offer (1:1 Ratio), Stock, Shop Ads & Button (NO SCROLL VIEW)
+                  // 2. Biriyani Offer (1:1 Ratio), Stock, Shop Ads & Button (Always visible on Homepage)
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
@@ -2036,13 +2257,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _openOrderFormPopup() {
+    if (!_isStoreOnline) {
+      _showStoreClosedPopup();
+      return;
+    }
     setState(() {
       _showOrderForm = true;
-      _itemController.text = "Biriyani 65";
+      _itemController.text = _adminBannerTitle?.isNotEmpty == true ? _adminBannerTitle! : "Biriyani 65";
       final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
       _quantityController.text = qty.toString();
-      _selectedOfferUnitPrice = 65;
-      _budgetController.text = (65 * qty).toString();
+      _budgetController.text = (_selectedOfferUnitPrice * qty).toString();
     });
 
     showModalBottomSheet<void>(
@@ -2109,6 +2333,59 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget _buildOffersCarouselBanner() {
     return Column(
       children: [
+        if (_isStoreOnline && _secondsUntilClose > 0)
+          Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFA7F3D0)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircleAvatar(radius: 3.5, backgroundColor: Color(0xFF10B981)),
+                const SizedBox(width: 6),
+                Text(
+                  "Orders Live until ${_format24to12(_scheduleEndTime)} • Closes in ${_formatSeconds(_secondsUntilClose)}",
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF065F46),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else if (!_isStoreOnline)
+          GestureDetector(
+            onTap: _showStoreClosedPopup,
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircleAvatar(radius: 3.5, backgroundColor: Color(0xFFDC2626)),
+                  const SizedBox(width: 6),
+                  Text(
+                    "Service Closed • Opens at ${_format24to12(_scheduleStartTime)} (Tap for details)",
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF991B1B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         // 1. Biriyani Offer Image - 1:1 Aspect Ratio (Dynamically fitted, NEVER overflows, NO SCROLL)
         Expanded(
           child: Center(
@@ -2134,7 +2411,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   aspectRatio: 1.0, // 1:1 Aspect Ratio
                   child: InkWell(
                     onTap: _openOrderFormPopup,
-                    child: _buildBannerImageWidget(),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _buildBannerImageWidget(),
+                        if (_adminBannerBadge != null && _adminBannerBadge!.trim().isNotEmpty)
+                          Positioned(
+                            top: 10,
+                            left: 10,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEA580C),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: const [
+                                  BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
+                                ],
+                              ),
+                              child: Text(
+                                _adminBannerBadge!.trim().toUpperCase(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -2165,6 +2471,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_adminBannerTitle != null && _adminBannerTitle!.trim().isNotEmpty) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _adminBannerTitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      "₹$_selectedOfferUnitPrice",
+                      style: const TextStyle(
+                        color: Color(0xFFEA580C),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (_selectedOfferOriginalPrice > _selectedOfferUnitPrice) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        "₹$_selectedOfferOriginalPrice",
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 11,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+              ],
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -2191,7 +2537,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       border: Border.all(color: const Color(0xFFFDE68A)),
                     ),
                     child: Text(
-                      "${((_remainingBiryaniCount / _totalBiryaniCount) * 100).toInt()}% LEFT",
+                      "${_totalBiryaniCount > 0 ? ((_remainingBiryaniCount / _totalBiryaniCount) * 100).toInt() : 0}% LEFT",
                       style: const TextStyle(
                         color: Color(0xFFB45309),
                         fontSize: 8.5,
@@ -2205,7 +2551,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ClipRRect(
                 borderRadius: BorderRadius.circular(5),
                 child: LinearProgressIndicator(
-                  value: (_remainingBiryaniCount / _totalBiryaniCount).clamp(0.0, 1.0),
+                  value: _totalBiryaniCount > 0 ? (_remainingBiryaniCount / _totalBiryaniCount).clamp(0.0, 1.0) : 0.0,
                   minHeight: 5,
                   backgroundColor: const Color(0xFFF1F5F9),
                   valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEA580C)),
@@ -2238,21 +2584,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
               padding: const EdgeInsets.symmetric(horizontal: 18),
             ),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.local_offer_rounded, size: 19, color: Colors.white),
-                SizedBox(width: 8),
+                const Icon(Icons.local_offer_rounded, size: 19, color: Colors.white),
+                const SizedBox(width: 8),
                 Text(
-                  "Get This Offer • ₹65",
-                  style: TextStyle(
+                  "Get This Offer • ₹$_selectedOfferUnitPrice",
+                  style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.2,
                   ),
                 ),
-                SizedBox(width: 6),
-                Icon(Icons.arrow_forward_rounded, size: 17, color: Colors.white),
+                const SizedBox(width: 6),
+                const Icon(Icons.arrow_forward_rounded, size: 17, color: Colors.white),
               ],
             ),
           ),
@@ -2261,21 +2607,274 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildBannerImageWidget() {
-    if (_adminBannerBase64 != null && _adminBannerBase64!.trim().isNotEmpty) {
-      try {
-        final clean = _adminBannerBase64!.contains(',')
-            ? _adminBannerBase64!.split(',')[1]
-            : _adminBannerBase64!;
-        final bytes = base64Decode(clean);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
-          alignment: Alignment.center,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) => _buildDefaultBannerAsset(),
+  // 🕒 Store Closed Popup (Dialog shown in front of homepage when closed or when attempting to order)
+  void _showStoreClosedPopup() {
+    if (_isClosedPopupOpen) return;
+    _isClosedPopupOpen = true;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setPopupState) {
+            _closedPopupSetState = setPopupState;
+            final startFormatted = _format24to12(_scheduleStartTime);
+            final endFormatted = _format24to12(_scheduleEndTime);
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 400),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.16),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Top Row: (X) Close Button
+                          Align(
+                            alignment: Alignment.topRight,
+                            child: InkWell(
+                              onTap: () => Navigator.of(dialogCtx).pop(),
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF1F5F9),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF64748B)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+
+                          // Big Clock / Store Closed Icon
+                          Container(
+                            width: 80,
+                            height: 80,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFFFDE68A), width: 2.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFEA580C).withValues(alpha: 0.12),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.access_time_filled_rounded,
+                              size: 46,
+                              color: Color(0xFFEA580C),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Closed Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEE2E2),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: const Color(0xFFFCA5A5)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircleAvatar(radius: 3.5, backgroundColor: Color(0xFFDC2626)),
+                                SizedBox(width: 6),
+                                Text(
+                                  "SERVICE CURRENTLY CLOSED",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFB91C1C),
+                                    letterSpacing: 0.4,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Title
+                          Text(
+                            _offlineTitle,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+
+                          // Description / Offline Message
+                          Text(
+                            _offlineMessage,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Operating Hours Slot Card
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  "TODAY'S ORDERING WINDOW",
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF64748B),
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.alarm_on_rounded, color: Color(0xFFEA580C), size: 18),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      "$startFormatted – $endFormatted",
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                        color: Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                                const SizedBox(height: 10),
+
+                                // Countdown Timer
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Text(
+                                      "Orders Open in: ",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF475569),
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEF3C7),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: const Color(0xFFFDE68A)),
+                                      ),
+                                      child: Text(
+                                        _formatSeconds(_secondsUntilOpen),
+                                        style: const TextStyle(
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w900,
+                                          color: Color(0xFF9A3412),
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Refresh Status Button
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await _checkAppScheduleStatus();
+                                await _loadActiveOfferBanner();
+                                if (_isStoreOnline && dialogCtx.mounted) {
+                                  Navigator.of(dialogCtx).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('🎉 Store is now OPEN for orders!'),
+                                      backgroundColor: Color(0xFF16A34A),
+                                    ),
+                                  );
+                                } else {
+                                  setPopupState(() {});
+                                }
+                              },
+                              icon: const Icon(Icons.refresh_rounded, size: 15),
+                              label: const Text('Check Status Again', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF142B4A),
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.2),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         );
-      } catch (_) {}
+      },
+    ).then((_) {
+      _isClosedPopupOpen = false;
+      _closedPopupSetState = null;
+    });
+  }
+
+  Widget _buildStoreClosedView() {
+    return _buildOffersCarouselBanner();
+  }
+
+  Widget _buildBannerImageWidget() {
+    if (_cachedAdminBannerBytes != null) {
+      return Image.memory(
+        _cachedAdminBannerBytes!,
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) => _buildBannerPlaceholder(),
+      );
     }
     if (_adminBannerUrl != null && _adminBannerUrl!.trim().isNotEmpty && _adminBannerUrl!.startsWith('http')) {
       return Image.network(
@@ -2283,22 +2882,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         fit: BoxFit.cover,
         alignment: Alignment.center,
         filterQuality: FilterQuality.high,
-        errorBuilder: (_, __, ___) => _buildDefaultBannerAsset(),
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return _buildBannerPlaceholder();
+        },
+        errorBuilder: (_, __, ___) => _buildBannerPlaceholder(),
       );
     }
-    return _buildDefaultBannerAsset();
+    return _buildBannerPlaceholder();
   }
 
-  Widget _buildDefaultBannerAsset() {
-    return Image.asset(
-      'assets/banner_biryani_65_4x5.jpg',
-      fit: BoxFit.cover,
-      alignment: Alignment.center,
-      filterQuality: FilterQuality.high,
-      errorBuilder: (_, __, ___) => Image.asset(
-        'assets/banner_biryani_65.jpg',
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.high,
+  Widget _buildBannerPlaceholder() {
+    return Container(
+      color: const Color(0xFFF8FAFC),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 26,
+              height: 26,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  const Color(0xFFEA580C).withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Loading Offer...",
+              style: TextStyle(
+                color: Colors.grey.shade400,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
