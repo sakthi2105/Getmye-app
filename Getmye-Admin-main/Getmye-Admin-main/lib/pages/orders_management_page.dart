@@ -15,10 +15,18 @@ class OrdersManagementPage extends StatefulWidget {
 
 class _OrdersManagementPageState extends State<OrdersManagementPage> {
   List<dynamic> orders = [];
+  Map<String, dynamic>? overviewStats;
   bool isLoading = true;
-  String selectedFilter = 'all'; // 'all', 'pending', 'active', 'delivered', 'cancelled'
+  String selectedSide = 'today'; // 'today' (Side 1) or 'total' (Side 2)
+  String selectedFilter = 'all';
   String searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+
+  int get todayOrdersCount => overviewStats?['today_orders'] ?? 0;
+  int get todayRemainingCount => overviewStats?['today_remaining_orders'] ?? 0;
+  int get todayDeliveredCount => overviewStats?['today_delivered_orders'] ?? 0;
+  int get todayCancelledCount => overviewStats?['today_cancelled_orders'] ?? 0;
+  int get totalOrdersAllTimeCount => overviewStats?['total_orders_all_time'] ?? 0;
 
   @override
   void initState() {
@@ -35,19 +43,30 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
   Future<void> fetchOrders() async {
     setState(() => isLoading = true);
     try {
-      final res = await http.get(AdminApiConfig.ordersAll(status: selectedFilter));
-      if (res.statusCode == 200) {
-        final decoded = json.decode(res.body);
+      final timeframe = selectedSide == 'today' ? 'today' : null;
+      final results = await Future.wait([
+        http.get(AdminApiConfig.ordersAll(status: selectedFilter, timeframe: timeframe)),
+        http.get(AdminApiConfig.ordersOverview),
+      ]);
+
+      final ordersRes = results[0];
+      final overviewRes = results[1];
+
+      if (ordersRes.statusCode == 200) {
+        final decoded = json.decode(ordersRes.body);
         if (mounted && decoded is Map<String, dynamic> && decoded['orders'] is List) {
-          setState(() {
-            orders = decoded['orders'] as List;
-            isLoading = false;
-          });
+          orders = decoded['orders'] as List;
         }
-      } else {
-        if (mounted) setState(() => isLoading = false);
+      }
+
+      if (overviewRes.statusCode == 200) {
+        final decodedOverview = json.decode(overviewRes.body);
+        if (mounted && decodedOverview is Map<String, dynamic>) {
+          overviewStats = decodedOverview;
+        }
       }
     } catch (_) {
+    } finally {
       if (mounted) setState(() => isLoading = false);
     }
   }
@@ -108,7 +127,271 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Search Bar
+                  // 1. Two-Sided Tab Switcher (Today's Orders vs Total Orders)
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AdminColors.border),
+                    ),
+                    padding: const EdgeInsets.all(4),
+                    child: Row(
+                      children: [
+                        // Side 1: Today's Orders
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              if (selectedSide != 'today') {
+                                setState(() {
+                                  selectedSide = 'today';
+                                  selectedFilter = 'all';
+                                });
+                                fetchOrders();
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: selectedSide == 'today' ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: selectedSide == 'today'
+                                    ? [const BoxShadow(color: Color(0x0A000000), blurRadius: 6, offset: Offset(0, 2))]
+                                    : null,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.today_rounded,
+                                    size: 18,
+                                    color: selectedSide == 'today' ? AdminColors.primaryDark : AdminColors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Today's Orders",
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      color: selectedSide == 'today' ? AdminColors.primaryDark : AdminColors.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: selectedSide == 'today' ? AdminColors.primaryLight : const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$todayOrdersCount',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: selectedSide == 'today' ? AdminColors.primaryDark : AdminColors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                  if (todayRemainingCount > 0) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEF3C7),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        '$todayRemainingCount left',
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          color: Color(0xFFB45309),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Side 2: Total Orders (All-Time)
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              if (selectedSide != 'total') {
+                                setState(() {
+                                  selectedSide = 'total';
+                                  selectedFilter = 'all';
+                                });
+                                fetchOrders();
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: selectedSide == 'total' ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: selectedSide == 'total'
+                                    ? [const BoxShadow(color: Color(0x0A000000), blurRadius: 6, offset: Offset(0, 2))]
+                                    : null,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.inventory_2_rounded,
+                                    size: 18,
+                                    color: selectedSide == 'total' ? const Color(0xFF6D28D9) : AdminColors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Total Orders (All-Time)',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      color: selectedSide == 'total' ? const Color(0xFF6D28D9) : AdminColors.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: selectedSide == 'total' ? const Color(0xFFF5F3FF) : const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$totalOrdersAllTimeCount',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: selectedSide == 'total' ? const Color(0xFF6D28D9) : AdminColors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 2. Today's Orders Summary Bar with "Remaining Orders" Showcase
+                  if (selectedSide == 'today') ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AdminColors.border),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x04000000), blurRadius: 8, offset: Offset(0, 3)),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(7),
+                                    decoration: BoxDecoration(
+                                      color: AdminColors.primaryLight,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.speed_rounded, color: AdminColors.primaryDark, size: 18),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    "Today's Live Order Pipeline",
+                                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AdminColors.textPrimary),
+                                  ),
+                                ],
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: todayRemainingCount > 0 ? const Color(0xFFFEF3C7) : const Color(0xFFDCFCE7),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: todayRemainingCount > 0 ? const Color(0xFFFCD34D) : const Color(0xFF86EFAC),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 4,
+                                      backgroundColor: todayRemainingCount > 0 ? const Color(0xFFD97706) : const Color(0xFF16A34A),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      todayRemainingCount > 0
+                                          ? '$todayRemainingCount Orders Remaining'
+                                          : 'All Orders Delivered',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: todayRemainingCount > 0 ? const Color(0xFFB45309) : const Color(0xFF15803D),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              _buildMiniMetric(
+                                title: "Today Placed",
+                                value: '$todayOrdersCount',
+                                icon: Icons.receipt_long_rounded,
+                                color: AdminColors.primaryDark,
+                                bgColor: AdminColors.primaryLight,
+                              ),
+                              const SizedBox(width: 10),
+                              _buildMiniMetric(
+                                title: "Remaining Active",
+                                value: '$todayRemainingCount',
+                                icon: Icons.pending_actions_rounded,
+                                color: const Color(0xFFB45309),
+                                bgColor: const Color(0xFFFEF3C7),
+                                isHighlighted: true,
+                              ),
+                              const SizedBox(width: 10),
+                              _buildMiniMetric(
+                                title: "Delivered",
+                                value: '$todayDeliveredCount',
+                                icon: Icons.check_circle_rounded,
+                                color: const Color(0xFF047857),
+                                bgColor: const Color(0xFFDCFCE7),
+                              ),
+                              const SizedBox(width: 10),
+                              _buildMiniMetric(
+                                title: "Cancelled",
+                                value: '$todayCancelledCount',
+                                icon: Icons.cancel_rounded,
+                                color: AdminColors.danger,
+                                bgColor: AdminColors.dangerLight,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // 3. Search Bar
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -120,7 +403,9 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
                       onChanged: (val) => setState(() => searchQuery = val),
                       style: const TextStyle(fontSize: 14, color: AdminColors.textPrimary),
                       decoration: InputDecoration(
-                        hintText: 'Search by Order ID, Customer Name, Mobile, Item...',
+                        hintText: selectedSide == 'today'
+                            ? "Search today's orders by ID, Customer Name, Mobile, Item..."
+                            : 'Search all-time orders by ID, Customer, Mobile, Partner...',
                         hintStyle: const TextStyle(color: AdminColors.textMuted, fontSize: 13),
                         prefixIcon: const Icon(Icons.search_rounded, color: AdminColors.primaryDark, size: 20),
                         suffixIcon: searchQuery.isNotEmpty
@@ -141,21 +426,31 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
                   ),
                   const SizedBox(height: 14),
 
-                  // Filter Chips
+                  // 4. Filter Chips
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
-                      children: [
-                        _buildFilterChip('all', 'All Orders'),
-                        const SizedBox(width: 8),
-                        _buildFilterChip('pending', 'Pending Dispatch'),
-                        const SizedBox(width: 8),
-                        _buildFilterChip('accepted', 'Accepted / In Transit'),
-                        const SizedBox(width: 8),
-                        _buildFilterChip('delivered', 'Delivered'),
-                        const SizedBox(width: 8),
-                        _buildFilterChip('cancelled', 'Cancelled'),
-                      ],
+                      children: selectedSide == 'today'
+                          ? [
+                              _buildFilterChip('all', 'All Today ($todayOrdersCount)'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('remaining', '⏳ Remaining Orders ($todayRemainingCount)'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('delivered', '✅ Delivered ($todayDeliveredCount)'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('cancelled', '❌ Cancelled ($todayCancelledCount)'),
+                            ]
+                          : [
+                              _buildFilterChip('all', 'All Orders ($totalOrdersAllTimeCount)'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('pending', 'Pending Dispatch'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('accepted', 'Accepted / In Transit'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('delivered', 'Delivered'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip('cancelled', 'Cancelled'),
+                            ],
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -165,7 +460,9 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Orders Queue (${filteredOrders.length})',
+                        selectedSide == 'today'
+                            ? "Today's Orders List (${filteredOrders.length})"
+                            : 'All-Time Orders Archive (${filteredOrders.length})',
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w800,
@@ -202,17 +499,19 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
                         ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.inventory_2_outlined, size: 36, color: AdminColors.textMuted),
-                            SizedBox(height: 10),
+                          children: [
+                            const Icon(Icons.inventory_2_outlined, size: 36, color: AdminColors.textMuted),
+                            const SizedBox(height: 10),
                             Text(
-                              'No Orders Found',
-                              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                              selectedSide == 'today' ? "No Orders Placed Today" : 'No Orders Found',
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                             ),
-                            SizedBox(height: 4),
+                            const SizedBox(height: 4),
                             Text(
-                              'No customer orders match this filter or search criteria.',
-                              style: TextStyle(fontSize: 12, color: AdminColors.textSecondary),
+                              selectedSide == 'today'
+                                  ? 'New orders received today will automatically appear here.'
+                                  : 'No customer orders match this filter or search criteria.',
+                              style: const TextStyle(fontSize: 12, color: AdminColors.textSecondary),
                             ),
                           ],
                         ),
@@ -233,6 +532,61 @@ class _OrdersManagementPageState extends State<OrdersManagementPage> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniMetric({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+    required Color bgColor,
+    bool isHighlighted = false,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isHighlighted ? bgColor : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isHighlighted ? color.withValues(alpha: 0.35) : AdminColors.border,
+            width: isHighlighted ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 13, color: color),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: isHighlighted ? color : AdminColors.textSecondary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                color: isHighlighted ? color : AdminColors.textPrimary,
+              ),
+            ),
+          ],
         ),
       ),
     );

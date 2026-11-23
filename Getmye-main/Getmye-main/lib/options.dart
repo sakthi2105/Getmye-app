@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'api_config.dart';
 import 'dhome.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
@@ -206,6 +208,24 @@ class _ReportBugPageState extends State<ReportBugPage> {
   final _descController = TextEditingController();
   bool _isSubmitting = false;
 
+  Future<String> _getRealDeviceInfo() async {
+    try {
+      final deviceInfo = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        final android = await deviceInfo.androidInfo;
+        final brand = android.brand.trim();
+        final model = android.model.trim();
+        final version = android.version.release;
+        final sdk = android.version.sdkInt;
+        return '${brand.toUpperCase()} $model (Android $version, SDK $sdk)';
+      } else if (Platform.isIOS) {
+        final ios = await deviceInfo.iosInfo;
+        return 'Apple ${ios.utsname.machine} (iOS ${ios.systemVersion})';
+      }
+    } catch (_) {}
+    return 'Android Device (${Platform.operatingSystemVersion})';
+  }
+
   Future<void> _submitBug() async {
     final title = _titleController.text.trim();
     final desc = _descController.text.trim();
@@ -223,6 +243,7 @@ class _ReportBugPageState extends State<ReportBugPage> {
     final name = prefs.getString('user_name') ?? 'Customer';
 
     try {
+      final realDevice = await _getRealDeviceInfo();
       final res = await http.post(
         ApiConfig.supportBugReport,
         headers: {'Content-Type': 'application/json'},
@@ -232,7 +253,7 @@ class _ReportBugPageState extends State<ReportBugPage> {
           'user_phone': mobile,
           'title': title.isNotEmpty ? title : 'Mobile App Bug Report',
           'description': desc,
-          'device_info': 'Flutter Android Client',
+          'device_info': realDevice,
         }),
       );
 
@@ -444,9 +465,10 @@ class _RaiseComplaintPageState extends State<RaiseComplaintPage> {
       final data = jsonDecode(res.body);
       if (res.statusCode == 201 && data['success'] == true) {
         if (!mounted) return;
+        final phoneInfo = mobile.isNotEmpty ? " at $mobile" : "";
         _showSuccessDialog(
           "Complaint Registered",
-          data['message'] ?? "Your complaint has been logged in our system. A support manager will review it.",
+          "${data['message'] ?? 'Your complaint has been registered successfully.'}\n\nOur support team will review this and contact you$phoneInfo shortly.",
         );
         _complaintController.clear();
       } else {

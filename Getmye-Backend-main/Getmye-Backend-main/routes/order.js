@@ -1298,11 +1298,23 @@ router.get('/:order_id/messages', handleGetOrderMessages);
 // GET /api/order/admin/all - Comprehensive orders list for Admin Portal
 router.get('/admin/all', async (req, res) => {
   try {
-    const { status, limit = 100 } = req.query;
+    const { status, limit = 200, timeframe } = req.query;
     const filter = {};
-    if (status && status !== 'all') {
-      filter.status = status;
+
+    if (timeframe === 'today') {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      filter.created_at = { $gte: startOfToday };
     }
+
+    if (status && status !== 'all') {
+      if (status === 'remaining' || status === 'active_pending') {
+        filter.status = { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] };
+      } else {
+        filter.status = status;
+      }
+    }
+
     const orders = await Order.find(filter)
       .sort({ created_at: -1 })
       .limit(Number(limit))
@@ -1325,23 +1337,54 @@ router.get('/admin/overview', async (req, res) => {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
+    // Active fleet heartbeat cutoff: 30 minutes
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+
     const [
       totalOrdersToday,
+      todayRemainingOrders,
+      todayDeliveredOrders,
+      todayCancelledOrders,
+      totalOrdersAllTime,
       pendingOrders,
       activeOrders,
       completedOrders,
       cancelledOrders,
-      onlinePartners,
-      pendingKYCCount
+      pendingKYCCount,
+      liveOnlineLocations
     ] = await Promise.all([
       Order.countDocuments({ created_at: { $gte: startOfToday } }),
+      Order.countDocuments({
+        created_at: { $gte: startOfToday },
+        status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+      }),
+      Order.countDocuments({ created_at: { $gte: startOfToday }, status: 'delivered' }),
+      Order.countDocuments({ created_at: { $gte: startOfToday }, status: 'cancelled' }),
+      Order.countDocuments({ status: { $ne: 'cancelled' } }),
       Order.countDocuments({ status: 'pending' }),
       Order.countDocuments({ status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] } }),
       Order.countDocuments({ status: 'delivered' }),
       Order.countDocuments({ status: 'cancelled' }),
-      DeliveryPerson.countDocuments({ dp_status: 'online' }),
-      DeliveryPerson.countDocuments({ know_your_partner_status: 'pending' })
+      DeliveryPerson.countDocuments({ know_your_partner_status: 'pending' }),
+      LiveLocation.find({
+        is_online: true,
+        last_updated: { $gte: thirtyMinutesAgo }
+      }).select('partner_id').lean()
     ]);
+
+    // Accurate active fleet: ONLY count partners who sent a live heartbeat AND have approved KYC
+    const activePartnerIds = (liveOnlineLocations || []).map(l => l.partner_id).filter(Boolean);
+    let onlinePartners = 0;
+    if (activePartnerIds.length > 0) {
+      onlinePartners = await DeliveryPerson.countDocuments({
+        know_your_partner_status: { $in: ['approved', 'completed'] },
+        dp_status: { $regex: /^online$/i },
+        $or: [
+          { DP_id: { $in: activePartnerIds } },
+          { mobile_number: { $in: activePartnerIds } }
+        ]
+      });
+    }
 
     // Aggregate today's gross revenue
     const revenueAgg = await Order.aggregate([
@@ -1350,19 +1393,74 @@ router.get('/admin/overview', async (req, res) => {
     ]);
     const todayRevenue = (revenueAgg[0] && revenueAgg[0].total) ? revenueAgg[0].total : 0;
 
+    // Aggregate all-time gross revenue
+    const totalRevenueAgg = await Order.aggregate([
+      { $match: { status: { $ne: 'cancelled' } } },
+      { $group: { _id: null, total: { $sum: '$grand_total' } } }
+    ]);
+    const totalRevenueAllTime = (totalRevenueAgg[0] && totalRevenueAgg[0].total) ? totalRevenueAgg[0].total : 0;
+
     res.json({
       success: true,
       today_orders: totalOrdersToday,
+      today_remaining_orders: todayRemainingOrders,
+      today_delivered_orders: todayDeliveredOrders,
+      today_cancelled_orders: todayCancelledOrders,
+      total_orders_all_time: totalOrdersAllTime,
       pending_orders: pendingOrders,
       active_orders: activeOrders,
       completed_orders: completedOrders,
       cancelled_orders: cancelledOrders,
       today_revenue: todayRevenue,
+      total_revenue_all_time: totalRevenueAllTime,
       online_partners: onlinePartners,
       pending_kyc: pendingKYCCount
     });
   } catch (err) {
     console.error('Error fetching admin overview:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/order/admin/active-fleet - Real-time list of verified online delivery partners
+router.get('/admin/active-fleet', async (req, res) => {
+  try {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const liveOnlineLocations = await LiveLocation.find({
+      is_online: true,
+      last_updated: { $gte: thirtyMinutesAgo }
+    }).select('partner_id status last_updated latitude longitude').lean();
+
+    const activePartnerIds = (liveOnlineLocations || []).map(l => l.partner_id).filter(Boolean);
+    if (activePartnerIds.length === 0) {
+      return res.json({ success: true, count: 0, fleet: [] });
+    }
+
+    const verifiedPartners = await DeliveryPerson.find({
+      know_your_partner_status: { $in: ['approved', 'completed'] },
+      dp_status: { $regex: /^online$/i },
+      $or: [
+        { DP_id: { $in: activePartnerIds } },
+        { mobile_number: { $in: activePartnerIds } }
+      ]
+    }).select('DP_id name mobile_number email dp_status know_your_partner_status').lean();
+
+    const fleet = verifiedPartners.map(p => {
+      const loc = liveOnlineLocations.find(l => l.partner_id === p.DP_id || l.partner_id === p.mobile_number);
+      return {
+        dp_id: p.DP_id,
+        name: p.name,
+        mobile_number: p.mobile_number,
+        live_status: loc?.status || 'idle',
+        last_updated: loc?.last_updated || null,
+        latitude: loc?.latitude || null,
+        longitude: loc?.longitude || null
+      };
+    });
+
+    res.json({ success: true, count: fleet.length, fleet });
+  } catch (err) {
+    console.error('Error fetching active fleet:', err);
     res.status(500).json({ error: err.message });
   }
 });
