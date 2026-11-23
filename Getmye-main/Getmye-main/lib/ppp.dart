@@ -4078,19 +4078,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 2),
-
-                          // 4. Cuisine / Category
-                          Text(
-                            dish['cuisine'] as String,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: Color(0xFF64748B),
-                            ),
-                          ),
                         ],
                       ),
                     ),
