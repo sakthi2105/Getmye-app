@@ -94,16 +94,20 @@ class AdminApiConfig {
   static Uri updateComplaintStatus(String id) => Uri.parse('$_baseUrl/api/support/complaint/$id/status');
 
   // Orders Management Endpoints
-  static Uri ordersAll({String? status, int limit = 100}) {
+  static Uri ordersAll({String? status, String? timeframe, int limit = 200}) {
     final query = <String, String>{
       'limit': limit.toString(),
     };
     if (status != null && status.isNotEmpty && status != 'all') {
       query['status'] = status;
     }
+    if (timeframe != null && timeframe.isNotEmpty && timeframe != 'all') {
+      query['timeframe'] = timeframe;
+    }
     return Uri.parse('$_baseUrl/api/order/admin/all').replace(queryParameters: query);
   }
   static Uri get ordersOverview => Uri.parse('$_baseUrl/api/order/admin/overview');
+  static Uri get activeFleet => Uri.parse('$_baseUrl/api/order/admin/active-fleet');
   static Uri get ordersPending => Uri.parse('$_baseUrl/api/order/pending');
   static Uri orderById(String orderId) => Uri.parse('$_baseUrl/api/order/$orderId');
 

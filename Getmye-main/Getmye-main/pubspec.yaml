@@ -49,6 +49,7 @@ dependencies:
   url_launcher: ^6.3.3
   flutter_dotenv: ^6.0.1
   flutter_cashfree_pg_sdk: ^2.4.0+52
+  device_info_plus: ^10.1.2
 
   
 dev_dependencies:
