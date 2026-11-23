@@ -8,6 +8,7 @@ const { getNextSequence } = require('../models/Counter');
 const WaitingCustomer = require('../models/WaitingCustomer');
 const {
   KUMBAKONAM_GEOFENCE,
+  MAHAMAHAM_KULAM_CENTER,
   isWithinKumbakonam,
   partnerIdsMatch,
   isPartnerInList,
@@ -21,10 +22,27 @@ const {
 // POST /api/order/create - Customer places a new order
 router.post('/create', async (req, res) => {
   try {
-    const { user_id, customer_name, customer_phone, delivery_address, item_name, quantity, budget, cod_otp, customer_latitude, customer_longitude } = req.body;
+    const {
+      user_id,
+      customer_name,
+      customer_phone,
+      delivery_address,
+      item_name,
+      quantity,
+      budget,
+      cod_otp,
+      customer_latitude,
+      customer_longitude,
+      is_welcome_offer,
+      order_type
+    } = req.body;
     if (!user_id || !delivery_address || !item_name) {
       return res.status(400).json({ error: 'user_id, delivery_address, and item_name are required' });
     }
+
+    const isWelcomeOffer = is_welcome_offer === true ||
+      order_type === 'welcome_offer' ||
+      (item_name && /welcome\s*offer|crushing\s*offer/i.test(item_name));
 
     // 1. Location-Based Geo-Fencing: Exclusively in Kumbakonam Town
     let finalLat = customer_latitude != null ? Number(customer_latitude) : null;
@@ -68,6 +86,8 @@ router.post('/create', async (req, res) => {
       grand_total: finalBudget + finalTip,
       customer_latitude: finalLat,
       customer_longitude: finalLng,
+      is_welcome_offer: isWelcomeOffer,
+      order_type: isWelcomeOffer ? 'welcome_offer' : (order_type || 'regular'),
       status: 'pending',
       items: [
         {
@@ -86,8 +106,12 @@ router.post('/create', async (req, res) => {
       assignment_history: []
     });
 
-    // 2. Proximity-Based Delivery Partner Assignment: Route first to closest available partner relative to customer coordinates
-    const assignedPartner = await assignNextClosestPartner(newOrder, newOrder.customer_latitude, newOrder.customer_longitude);
+    // 2. Proximity-Based Delivery Partner Assignment:
+    // For Welcome Offer: Algorithm searches around Kumbakonam Mahamaham Kulam Center (500m -> 1km -> 2km)
+    // For Regular Orders: Algorithm searches relative to customer delivery coordinates
+    const originLat = isWelcomeOffer ? MAHAMAHAM_KULAM_CENTER.latitude : newOrder.customer_latitude;
+    const originLng = isWelcomeOffer ? MAHAMAHAM_KULAM_CENTER.longitude : newOrder.customer_longitude;
+    const assignedPartner = await assignNextClosestPartner(newOrder, originLat, originLng);
 
     await newOrder.save();
     const stats = await getPartnerAvailabilityStats();
