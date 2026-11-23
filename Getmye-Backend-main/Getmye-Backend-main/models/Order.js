@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 
 const OrderSchema = new mongoose.Schema({
   order_id: {
@@ -43,6 +43,16 @@ const OrderSchema = new mongoose.Schema({
   quantity: {
     type: Number,
     default: 1
+  },
+  is_welcome_offer: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  order_type: {
+    type: String,
+    enum: ['regular', 'welcome_offer', 'custom'],
+    default: 'regular'
   },
   partner_id: {
     type: String,

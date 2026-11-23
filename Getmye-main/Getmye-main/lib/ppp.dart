@@ -284,6 +284,281 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isLocationDialogShowing = false;
   bool _isCheckingLocation = false;
   bool _showOrderForm = false;
+  bool _hasClaimedFirstOffer = false;
+
+  // Promotional Banner Carousel Controller & Timer (Regular User Home Page)
+  late PageController _bannerPageController;
+  int _currentBannerIndex = 0;
+  Timer? _bannerTimer;
+
+  final List<Map<String, dynamic>> _carouselBanners = [
+    {
+      'image': 'assets/banner_biryani_crushing.jpg',
+      'fallback': 'assets/banner_biryani_crushing.jpg',
+      'title': 'Chicken Biryani',
+      'tag': 'CRUSHING OFFER',
+      'originalPrice': '150',
+      'offerPrice': '49',
+      'item': 'Chicken Biryani',
+      'budget': '49',
+      'isAnyDeal': false,
+      'icon': Icons.restaurant_rounded,
+      'color': Color(0xFFEA580C),
+    },
+    {
+      'image': 'assets/banner_shawarma_crushing.jpg',
+      'fallback': 'assets/banner_shawarma_crushing.jpg',
+      'title': 'Hot & Spicy Chicken Shawarma',
+      'tag': 'CRUSHING OFFER',
+      'originalPrice': '110',
+      'offerPrice': '30',
+      'item': 'Chicken Shawarma',
+      'budget': '30',
+      'isAnyDeal': false,
+      'icon': Icons.fastfood_rounded,
+      'color': Color(0xFFDC2626),
+    },
+    {
+      'image': 'assets/banner_momos_crushing.jpg',
+      'fallback': 'assets/banner_momos_crushing.jpg',
+      'title': 'Hot & Steamy Momos',
+      'tag': 'CRUSHING OFFER',
+      'originalPrice': '120',
+      'offerPrice': '39',
+      'item': 'Hot & Steamy Momos',
+      'budget': '39',
+      'isAnyDeal': false,
+      'icon': Icons.soup_kitchen_rounded,
+      'color': Color(0xFFD97706),
+    },
+  ];
+
+  final List<Map<String, dynamic>> _quickCravings = [
+    {
+      'name': 'Chicken Biryani',
+      'budget': '49',
+      'image': 'assets/banner_biryani_crushing.jpg',
+      'icon': '🍗',
+      'isVeg': false,
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'Biryani • North Indian',
+    },
+    {
+      'name': 'Chicken Shawarma',
+      'budget': '30',
+      'image': 'assets/banner_shawarma_crushing.jpg',
+      'icon': '🌯',
+      'isVeg': false,
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Rolls & Fast Food',
+    },
+    {
+      'name': 'Hot Momos',
+      'budget': '39',
+      'image': 'assets/banner_momos_crushing.jpg',
+      'icon': '🥟',
+      'isVeg': false,
+      'rating': '4.4',
+      'time': '15-20 mins',
+      'cuisine': 'Chinese • Street Food',
+    },
+    {
+      'name': 'Dosa with Sambar',
+      'budget': '60',
+      'image': 'assets/craving_dosa.jpg',
+      'icon': '🥞',
+      'isVeg': true,
+      'rating': '4.7',
+      'time': '10-15 mins',
+      'cuisine': 'South Indian • Tiffin',
+    },
+    {
+      'name': 'Paneer Butter Masala',
+      'budget': '120',
+      'image': 'assets/craving_paneer.jpg',
+      'icon': '🍛',
+      'isVeg': true,
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'North Indian • Curry',
+    },
+    {
+      'name': 'Chicken 65',
+      'budget': '110',
+      'image': 'assets/craving_chicken65.jpg',
+      'icon': '🍗',
+      'isVeg': false,
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Starters • Appetizers',
+    },
+    {
+      'name': 'Chicken Fried Rice',
+      'budget': '110',
+      'image': 'assets/banner_chicken_fried_rice.png',
+      'icon': '🍚',
+      'isVeg': false,
+      'rating': '4.3',
+      'time': '20-25 mins',
+      'cuisine': 'Chinese • Fast Food',
+    },
+    {
+      'name': 'Fresh Mango Juice',
+      'budget': '50',
+      'image': 'assets/craving_mango_juice.jpg',
+      'icon': '🥭',
+      'isVeg': true,
+      'rating': '4.8',
+      'time': '5-10 mins',
+      'cuisine': 'Beverages • Fresh Juices',
+    },
+  ];
+
+  List<Map<String, dynamic>> get _filteredCravings {
+    return _quickCravings.where((dish) {
+      if (isVegOnly && dish['isVeg'] != true) return false;
+      return true;
+    }).toList();
+  }
+
+  void _startRegularBannerAutoSlide() {
+    _bannerTimer?.cancel();
+    _bannerTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (_bannerPageController.hasClients) {
+        int nextPage = (_currentBannerIndex + 1) % _carouselBanners.length;
+        _bannerPageController.animateToPage(
+          nextPage,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
+  }
+
+  Future<void> _checkFirstTimeOfferStatus({bool forceServerCheck = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      bool claimed = prefs.getBool('has_claimed_first_offer') ?? false;
+      final userId = prefs.getString('user_id') ?? '';
+      final mobile = prefs.getString('mobile_number') ?? prefs.getString('user_mobile') ?? '';
+      final queryId = (userId.isNotEmpty && userId != 'usr_001' && userId != 'guest') ? userId : mobile;
+
+      if ((!claimed || forceServerCheck) && queryId.isNotEmpty) {
+        try {
+          final res = await http.get(ApiConfig.orderUser(queryId))
+              .timeout(const Duration(seconds: 4));
+          if (res.statusCode == 200) {
+            final data = jsonDecode(res.body);
+            final List orders = (data['orders'] is List) ? (data['orders'] as List) : [];
+            final bool hasCompletedOrder = orders.any((o) {
+              final st = (o['status'] ?? '').toString().toLowerCase();
+              return st == 'delivered' || st == 'completed';
+            });
+            if (hasCompletedOrder) {
+              claimed = true;
+              await prefs.setBool('has_claimed_first_offer', true);
+            } else if (forceServerCheck) {
+              claimed = false;
+              await prefs.setBool('has_claimed_first_offer', false);
+            }
+          }
+        } catch (_) {}
+      }
+      if (mounted) {
+        setState(() {
+          _hasClaimedFirstOffer = claimed;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _toggleFirstTimeOfferForTesting() async {
+    final prefs = await SharedPreferences.getInstance();
+    final newStatus = !_hasClaimedFirstOffer;
+    await prefs.setBool('has_claimed_first_offer', newStatus);
+    if (mounted) {
+      setState(() {
+        _hasClaimedFirstOffer = newStatus;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newStatus
+                ? "Switched to: REGULAR USER PAGE (Backup Design)"
+                : "Switched to: FIRST-TIME USER OFFER PAGE",
+          ),
+          backgroundColor: newStatus ? const Color(0xFF142B4A) : const Color(0xFFEA580C),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _applyBannerOffer(Map<String, dynamic> banner) {
+    if (showDeliveryDetails) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("You already have an active order in progress!"),
+          backgroundColor: Color(0xFFD97706),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _itemController.text = banner['item'] as String;
+      _budgetController.text = banner['budget'] as String;
+    });
+    final origPrice = banner['originalPrice'] as String? ?? '';
+    final String priceText = origPrice.isNotEmpty
+        ? "Original: ₹$origPrice → Offer: ₹${banner['offerPrice']}"
+        : "Offer: ₹${banner['offerPrice']}";
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "Selected: ${banner['title']} ($priceText)",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF16A34A),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    _scrollToOrderForm();
+  }
+
+  void _scrollToOrderForm() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _orderFormCardKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOutCubic,
+          alignment: 0.06,
+        );
+      } else if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          380.0,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
 
   // Shop Advertisements Carousel Controller & Timer
   late PageController _shopAdPageController;
@@ -383,6 +658,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _bannerPageController = PageController();
     _shopAdPageController = PageController();
     _loadSavedLocation();
     _loadCachedOfferBanner();
@@ -391,6 +667,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _checkAppScheduleStatus();
     _startStoreCountdownTimer();
     _startShopAdAutoSlide();
+    _startRegularBannerAutoSlide();
+    _checkFirstTimeOfferStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndPromptLocationService();
     });
@@ -403,6 +681,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _checkAndPromptLocationService();
       _loadActiveOfferBanner();
       _checkAppScheduleStatus();
+      _checkFirstTimeOfferStatus();
     }
   }
 
@@ -1282,70 +1561,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  void _applyBannerOffer(Map<String, dynamic> banner) {
-    if (showDeliveryDetails) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("You already have an active order in progress!"),
-          backgroundColor: Color(0xFFD97706),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-    setState(() {
-      _showOrderForm = true;
-      _itemController.text = banner['item'] as String;
-      final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
-      _quantityController.text = qty.toString();
-      _selectedOfferUnitPrice = int.tryParse(banner['offerPrice'] as String? ?? '65') ?? 65;
-      _budgetController.text = (_selectedOfferUnitPrice * qty).toString();
-    });
-    final origPrice = banner['originalPrice'] as String? ?? '';
-    final String priceText = origPrice.isNotEmpty
-        ? "Original: ₹$origPrice → Offer: ₹${banner['offerPrice']}"
-        : "Offer: ₹${banner['offerPrice']}";
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text("${banner['title']} deal applied! $priceText"),
-            ),
-          ],
-        ),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 3),
-      ),
-    );
-    _scrollToOrderForm();
-  }
-
-  void _scrollToOrderForm() {
-    Future.delayed(const Duration(milliseconds: 150), () {
-      final ctx = _orderFormCardKey.currentContext;
-      if (ctx != null) {
-        Scrollable.ensureVisible(
-          ctx,
-          duration: const Duration(milliseconds: 450),
-          curve: Curves.easeInOutCubic,
-          alignment: 0.05,
-        );
-      } else if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 450),
-          curve: Curves.easeInOutCubic,
-        );
-      }
-    });
-  }
-
   Future<void> _callDeliveryPartner([String? phone]) async {
     final targetPhone = phone ?? assignedPartnerPhone;
     if (targetPhone.trim().isEmpty) {
@@ -1387,116 +1602,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  final List<Map<String, dynamic>> _quickCravings = [
-    {
-      'name': 'Chicken Biryani',
-      'budget': '49',
-      'image': 'assets/banner_biryani_crushing.jpg',
-      'icon': '🍗',
-      'isVeg': false,
-      'rating': '4.5',
-      'time': '20-25 mins',
-      'cuisine': 'Biryani • North Indian',
-    },
-    {
-      'name': 'Chicken Shawarma',
-      'budget': '30',
-      'image': 'assets/banner_shawarma_crushing.jpg',
-      'icon': '🌯',
-      'isVeg': false,
-      'rating': '4.6',
-      'time': '15-20 mins',
-      'cuisine': 'Rolls & Fast Food',
-    },
-    {
-      'name': 'Hot Momos',
-      'budget': '39',
-      'image': 'assets/banner_momos_crushing.jpg',
-      'icon': '🥟',
-      'isVeg': false,
-      'rating': '4.4',
-      'time': '15-20 mins',
-      'cuisine': 'Chinese • Street Food',
-    },
-    {
-      'name': 'Dosa with Sambar',
-      'budget': '60',
-      'image': 'assets/craving_dosa.jpg',
-      'icon': '🥞',
-      'isVeg': true,
-      'rating': '4.7',
-      'time': '10-15 mins',
-      'cuisine': 'South Indian • Tiffin',
-    },
-    {
-      'name': 'Paneer Butter Masala',
-      'budget': '120',
-      'image': 'assets/craving_paneer.jpg',
-      'icon': '🍛',
-      'isVeg': true,
-      'rating': '4.5',
-      'time': '20-25 mins',
-      'cuisine': 'North Indian • Curry',
-    },
-    {
-      'name': 'Chicken 65',
-      'budget': '110',
-      'image': 'assets/craving_chicken65.jpg',
-      'icon': '🍗',
-      'isVeg': false,
-      'rating': '4.6',
-      'time': '15-20 mins',
-      'cuisine': 'Starters • Appetizers',
-    },
-    {
-      'name': 'Chicken Fried Rice',
-      'budget': '110',
-      'image': 'assets/banner_chicken_fried_rice.png',
-      'icon': '🍚',
-      'isVeg': false,
-      'rating': '4.3',
-      'time': '20-25 mins',
-      'cuisine': 'Chinese • Fast Food',
-    },
-    {
-      'name': 'Fresh Mango Juice',
-      'budget': '50',
-      'image': 'assets/craving_mango_juice.jpg',
-      'icon': '🥤',
-      'isVeg': true,
-      'rating': '4.8',
-      'time': '10-15 mins',
-      'cuisine': 'Beverages • Juices',
-    },
-    {
-      'name': 'Veg Hakka Noodles',
-      'budget': '80',
-      'image': 'assets/banner_chicken_noodles.png',
-      'icon': '🍜',
-      'isVeg': true,
-      'rating': '4.4',
-      'time': '15-20 mins',
-      'cuisine': 'Chinese • Noodles',
-    },
-    {
-      'name': 'Mushroom Biryani',
-      'budget': '95',
-      'image': 'assets/craving_mushroom_biryani.jpg',
-      'icon': '🍄',
-      'isVeg': true,
-      'rating': '4.5',
-      'time': '20-25 mins',
-      'cuisine': 'Biryani • Pure Veg',
-    },
-  ];
-
-  List<Map<String, dynamic>> get _filteredCravings {
-    return _quickCravings.where((dish) {
-      if (isVegOnly && dish['isVeg'] != true) return false;
-      return true;
-    }).toList();
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -1504,8 +1609,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _searchRiderTimer?.cancel();
     _riderTrackingTimer?.cancel();
     _shopAdTimer?.cancel();
+    _bannerTimer?.cancel();
     _inOrderChatTimer?.cancel();
     _shopAdPageController.dispose();
+    _bannerPageController.dispose();
     _itemController.dispose();
     _budgetController.dispose();
     _quantityController.dispose();
@@ -2071,7 +2178,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Top Blue Location Bar Header (for active order tracking)
-                        _buildWineHeader(context),
+                        _buildWineHeader(context, isCompact: true),
 
                         // Main Body Content
                         Padding(
@@ -2108,34 +2215,71 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
                   ))
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 1. Blue background header ONLY for the Location area
-                  _buildWineHeader(context),
+            : (!_hasClaimedFirstOffer
+                // -----------------------------------------------------------
+                // 1. FIRST-TIME USER OFFER PAGE (Current UI)
+                // -----------------------------------------------------------
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Blue background header ONLY for the Location area
+                      _buildWineHeader(context, isCompact: true),
 
-                  // 2. Biriyani Offer (1:1 Ratio), Stock, Shop Ads & Button (Always visible on Homepage)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 520),
-                          child: _buildOffersCarouselBanner(),
+                      // Biriyani Offer (1:1 Ratio), Stock, Shop Ads & Button
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              child: _buildOffersCarouselBanner(),
+                            ),
+                          ),
                         ),
                       ),
+                    ],
+                  )
+                // -----------------------------------------------------------
+                // 2. REGULAR USER PAGE (Design from images / backup)
+                // -----------------------------------------------------------
+                : SingleChildScrollView(
+                    controller: _scrollController,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header with Location + Auto-sliding Crushing Offers Carousel
+                        _buildWineHeader(context, isCompact: false),
+
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Quick Cravings Suggestions Food Image Buttons
+                                  _buildQuickCravings(),
+                                  const SizedBox(height: 20),
+                                  // Custom Food Order Form Card
+                                  _buildRegularOrderFormCard(),
+                                  const SizedBox(height: 30),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+                  )),
         bottomNavigationBar: const CustomerBottomNavBar(currentIndex: 0),
       ),
     ),
   );
 }
 
-  // Top Blue Header (Location & Profile bar only)
-  Widget _buildWineHeader(BuildContext context) {
+  // Top Blue Header (Location & Profile bar, and regular carousel when not compact)
+  Widget _buildWineHeader(BuildContext context, {bool isCompact = false}) {
     final topPadding = MediaQuery.of(context).padding.top;
     return Container(
       width: double.infinity,
@@ -2146,6 +2290,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           colors: [
             Color(0xFF0C1B30), // Deep Midnight Navy
             Color(0xFF142B4A), // Primary Navy Blue (#142B4A)
+            Color(0xFF19355C), // Rich Navy
           ],
         ),
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
@@ -2161,12 +2306,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         top: topPadding + 6,
         left: 16,
         right: 16,
-        bottom: 12,
+        bottom: isCompact ? 12 : 18,
       ),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
-          child: _buildLocationAndProfileRow(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildLocationAndProfileRow(),
+              if (!isCompact) ...[
+                const SizedBox(height: 14),
+                _buildRegularOffersCarouselBanner(),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -2175,27 +2329,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget _buildLocationAndProfileRow() {
     return Row(
       children: [
-        // Brand Logo
-        Container(
-          height: 38,
-          width: 38,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(11),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+        // Brand Logo (Long press toggles First-Time / Regular view for easy testing)
+        GestureDetector(
+          onLongPress: _toggleFirstTimeOfferForTesting,
+          child: Container(
+            height: 38,
+            width: 38,
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(11),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/G_LOGO.PNG',
+                fit: BoxFit.contain,
               ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.asset(
-              'assets/G_LOGO.PNG',
-              fit: BoxFit.contain,
             ),
           ),
         ),
@@ -2330,6 +2487,579 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // FIRST-TIME USER OFFER CONFIRMATION FLOW
+  // "first time users offer page ku order now click pannathuku aparam
+  //  address maatum confrim panitu order a confrim pannidanum."
+  // --------------------------------------------------------------------------
+  void _openFirstTimeOfferAddressConfirmSheet(BuildContext context) async {
+    if (!_isStoreOnline) {
+      _showStoreClosedPopup();
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final hasActive = prefs.getBool('has_active_order') ?? false;
+    final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
+    final existingOrderId = prefs.getString('active_order_id') ?? '';
+    if (hasActive && activeStatus != 'delivered' && activeStatus != 'cancelled' && existingOrderId.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.info_outline_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "You already have active order #$existingOrderId in progress! Please wait until it is delivered or cancelled before ordering again.",
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.primaryDark,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      setState(() {
+        showDeliveryDetails = true;
+      });
+      scrollToBottom();
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final offerTitle = _adminBannerTitle?.trim().isNotEmpty == true
+                ? _adminBannerTitle!.trim()
+                : "Chicken Biryani (Welcome Offer)";
+            final offerPrice = _selectedOfferUnitPrice;
+            final displayAddress = (_deliveryLocationController.text.trim().isNotEmpty &&
+                    !_deliveryLocationController.text.trim().toLowerCase().contains('live gps') &&
+                    _deliveryLocationController.text.trim() != 'Detecting...')
+                ? _deliveryLocationController.text.trim()
+                : (_currentAddressFull.isNotEmpty && !_currentAddressFull.toLowerCase().contains('live gps')
+                    ? _currentAddressFull
+                    : "Detecting exact live GPS location...");
+
+            return Container(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -4)),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Grab handle
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Header
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF3C7),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.local_offer_rounded, color: Color(0xFFEA580C), size: 20),
+                              ),
+                              const SizedBox(width: 10),
+                              const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Confirm Your Offer",
+                                    style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.textPrimary,
+                                      letterSpacing: -0.2,
+                                    ),
+                                  ),
+                                  SizedBox(height: 2),
+                                  Text(
+                                    "Exclusive First Time User Special",
+                                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                            onPressed: () => Navigator.pop(sheetContext),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Offer Details Card
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFFED7AA), width: 1.2),
+                        ),
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: SizedBox(
+                                width: 60,
+                                height: 60,
+                                child: _buildBannerImageWidget(),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEA580C),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text(
+                                      "FIRST ORDER DEAL",
+                                      style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    offerTitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        "₹$offerPrice",
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          color: Color(0xFFEA580C),
+                                        ),
+                                      ),
+                                      if (_selectedOfferOriginalPrice > offerPrice) ...[
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          "₹$_selectedOfferOriginalPrice",
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey,
+                                            decoration: TextDecoration.lineThrough,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        "• Qty: 1",
+                                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Delivery Address Confirmation Card
+                      const Text(
+                        "Delivery Address",
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEFF6FF),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(Icons.location_on_rounded, color: Color(0xFF2563EB), size: 20),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              _currentAddressShort.isNotEmpty ? _currentAddressShort : "Delivery Address",
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w800,
+                                                color: AppColors.textPrimary,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFDCFCE7),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(color: const Color(0xFF86EFAC)),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                CircleAvatar(radius: 2.5, backgroundColor: Color(0xFF16A34A)),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  "Live GPS",
+                                                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        displayAddress,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.3),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    await _requestLiveLocation(forceOverrideAddress: true);
+                                    setSheetState(() {});
+                                  },
+                                  icon: const Icon(Icons.my_location_rounded, size: 16, color: Color(0xFF2563EB)),
+                                  label: const Text("Refresh GPS", style: TextStyle(fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
+                                  style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                                ),
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => const AddressScreen()),
+                                    );
+                                    await _loadSavedLocation();
+                                    setSheetState(() {});
+                                  },
+                                  icon: const Icon(Icons.edit_location_alt_rounded, size: 16, color: Color(0xFFEA580C)),
+                                  label: const Text("Change Address", style: TextStyle(fontSize: 12, color: Color(0xFFEA580C), fontWeight: FontWeight.w700)),
+                                  style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Payment Note
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.payments_outlined, size: 18, color: Color(0xFF475569)),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                "Payment: Cash on Delivery (COD) / Pay on Delivery",
+                                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+
+                      // Big Confirm Order Button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            final custAddrRaw = displayAddress;
+                            final custAddr = custAddrRaw
+                                .replaceAll(RegExp(r'\bmatthi,?\s*', caseSensitive: false), '')
+                                .replaceAll(RegExp(r'\bmathi,?\s*', caseSensitive: false), '')
+                                .trim();
+
+                            final orderLat = _customerLocation.latitude;
+                            final orderLng = _customerLocation.longitude;
+
+                            if (!_isLocationInKumbakonam(orderLat, orderLng)) {
+                              Navigator.pop(sheetContext);
+                              _showGeofenceRestrictionDialog();
+                              return;
+                            }
+
+                            await _executeConfirmFirstTimeOfferOrder(
+                              offerTitle: offerTitle,
+                              offerPrice: offerPrice.toDouble(),
+                              custAddr: custAddr,
+                              orderLat: orderLat,
+                              orderLng: orderLng,
+                              sheetContext: sheetContext,
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF142B4A),
+                            foregroundColor: Colors.white,
+                            elevation: 3,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.check_circle_rounded, color: Color(0xFF4ADE80), size: 22),
+                              const SizedBox(width: 10),
+                              Text(
+                                "Confirm Order • ₹$offerPrice",
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.3),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _executeConfirmFirstTimeOfferOrder({
+    required String offerTitle,
+    required double offerPrice,
+    required String custAddr,
+    required double orderLat,
+    required double orderLng,
+    required BuildContext sheetContext,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('user_id') ?? 'usr_001';
+    final custName = prefs.getString('user_name') ?? 'Customer';
+    final custPhone = prefs.getString('mobile_number') ?? '+91 98765 43210';
+
+    String customerFixedOtp = prefs.getString('customer_fixed_order_otp') ?? '';
+    if (customerFixedOtp.isEmpty) {
+      final digits = custPhone.replaceAll(RegExp(r'\D'), '');
+      if (digits.length >= 4) {
+        customerFixedOtp = digits.substring(digits.length - 4);
+      } else {
+        customerFixedOtp = (1000 + Random().nextInt(9000)).toString();
+      }
+      await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
+    }
+
+    String newOrderId = "ORD-${1000 + Random().nextInt(9000)}";
+
+    final safeLat = (orderLat != 0.0)
+        ? orderLat
+        : (_customerLocation.latitude != 0.0
+            ? _customerLocation.latitude
+            : 10.9585);
+    final safeLng = (orderLng != 0.0)
+        ? orderLng
+        : (_customerLocation.longitude != 0.0
+            ? _customerLocation.longitude
+            : 79.3820);
+
+    try {
+      final res = await http.post(
+        ApiConfig.orderCreate,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': userId,
+          'customer_name': custName,
+          'customer_phone': custPhone,
+          'delivery_address': custAddr,
+          'item_name': offerTitle,
+          'quantity': 1,
+          'budget': offerPrice,
+          'cod_otp': customerFixedOtp,
+          'customer_latitude': safeLat,
+          'customer_longitude': safeLng,
+          'is_welcome_offer': true,
+          'order_type': 'welcome_offer',
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        if (data['order'] != null) {
+          if (data['order']['order_id'] != null) {
+            newOrderId = data['order']['order_id'];
+          }
+          if (data['order']['cod_otp'] != null) {
+            customerFixedOtp = data['order']['cod_otp'].toString();
+            await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
+          }
+        }
+      } else {
+        final data = jsonDecode(res.body);
+        final isGeofenceErr = data['error'] == 'GEOFENCE_RESTRICTION' ||
+            (data['message'] != null && data['message'].toString().contains('unavailable in your location'));
+        if (mounted) {
+          if (Navigator.canPop(sheetContext)) Navigator.pop(sheetContext);
+          if (isGeofenceErr) {
+            _showGeofenceRestrictionDialog();
+          } else {
+            final errMsg = data['error'] ?? data['message'] ?? 'Failed to create order on server';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(errMsg), backgroundColor: AppColors.danger, behavior: SnackBarBehavior.floating),
+            );
+          }
+        }
+        return;
+      }
+    } catch (e) {
+      debugPrint("Backend order creation error: $e");
+      if (mounted) {
+        if (Navigator.canPop(sheetContext)) Navigator.pop(sheetContext);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot connect to server: $e'), backgroundColor: AppColors.danger, behavior: SnackBarBehavior.floating),
+        );
+      }
+      return;
+    }
+
+    // Mark offer as claimed!
+    await prefs.setBool('has_claimed_first_offer', true);
+
+    await prefs.setString('active_order_id', newOrderId);
+    await prefs.setString('active_cod_otp', customerFixedOtp);
+    await prefs.setBool('has_active_order', true);
+    await prefs.remove('active_order_bill_images');
+    await prefs.remove('active_order_bill_image');
+    await prefs.remove('order_${newOrderId}_bill_images');
+    await prefs.remove('order_${newOrderId}_bill_image');
+    if (mounted) {
+      setState(() {
+        _orderBillImages = [];
+      });
+    }
+    await prefs.remove('order_${newOrderId}_chat_messages');
+    await prefs.remove('has_notified_partner_accepted_$newOrderId');
+    await prefs.remove('order_${newOrderId}_notified_collected_items');
+    await prefs.remove('has_notified_bill_ack_$newOrderId');
+    await prefs.remove('has_notified_payment_success_$newOrderId');
+    await prefs.remove('has_notified_delivered_$newOrderId');
+    await prefs.setString('active_order_item', offerTitle);
+    await prefs.setString('active_order_budget', offerPrice.toString());
+    await prefs.setString('active_order_quantity', '1');
+    _orderSearchStartTime = DateTime.now();
+    _allBusyHitCount = 0;
+    await prefs.setString('active_order_customer_name', custName);
+    await prefs.setString('active_order_customer_phone', custPhone);
+    await prefs.setString('active_order_customer_address', custAddr);
+    await prefs.setString('active_order_status', 'pending');
+    await prefs.setBool('active_order_partner_accepted', false);
+    await prefs.setBool('active_order_bill_sent', false);
+    await prefs.remove('active_order_partner_name');
+    await prefs.remove('active_order_partner_phone');
+    await prefs.remove('active_order_partner_id');
+    await prefs.remove('active_order_partner_image');
+
+    AlarmService.startCustomerOrderListeningService(
+      baseUrl: ApiConfig.baseUrl,
+      orderId: newOrderId,
+    );
+    AlarmService.requestBatteryOptimizationExemption();
+    _startOrderPolling(newOrderId);
+
+    if (Navigator.canPop(sheetContext)) {
+      Navigator.pop(sheetContext);
+    }
+
+    setState(() {
+      _hasClaimedFirstOffer = true;
+      showDeliveryDetails = true;
+      isSearchingRider = true;
+      hasRiderAccepted = false;
+      showCancelButtonContainer = true;
+      assignedPartnerName = "";
+      assignedPartnerPhone = "";
+      assignedPartnerProfileImage = null;
+      _showOrderForm = false;
+    });
+    scrollToBottom();
+  }
+
   Widget _buildOffersCarouselBanner() {
     return Column(
       children: [
@@ -2410,7 +3140,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 child: AspectRatio(
                   aspectRatio: 1.0, // 1:1 Aspect Ratio
                   child: InkWell(
-                    onTap: _openOrderFormPopup,
+                    onTap: () => _openFirstTimeOfferAddressConfirmSheet(context),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
@@ -2573,7 +3303,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           width: double.infinity,
           height: 46,
           child: ElevatedButton(
-            onPressed: _openOrderFormPopup,
+            onPressed: () => _openFirstTimeOfferAddressConfirmSheet(context),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFEA580C),
               foregroundColor: Colors.white,
@@ -2590,7 +3320,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 const Icon(Icons.local_offer_rounded, size: 19, color: Colors.white),
                 const SizedBox(width: 8),
                 Text(
-                  "Get This Offer • ₹$_selectedOfferUnitPrice",
+                  "Order Now • ₹$_selectedOfferUnitPrice",
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -3260,22 +3990,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                       ),
                                     ),
                                   ),
-                                  // Gradient Overlay at bottom for readable text
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        stops: const [0.0, 0.4, 0.72, 1.0],
-                                        colors: [
-                                          Colors.transparent,
-                                          Colors.black.withValues(alpha: 0.0),
-                                          Colors.black.withValues(alpha: 0.65),
-                                          Colors.black.withValues(alpha: 0.95),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
                                   // Top-Right: Heart Outline Icon
                                   Positioned(
                                     top: 10,
@@ -3316,39 +4030,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                       ),
                                     ),
                                   ),
-                                  // Bottom: ITEMS AT ₹Price
-                                  Positioned(
-                                    left: 12,
-                                    right: 12,
-                                    bottom: 10,
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          "ITEMS",
-                                          style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.92),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: 0.5,
-                                            height: 1.0,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          "AT ₹${dish['budget']}",
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 17,
-                                            fontWeight: FontWeight.w900,
-                                            letterSpacing: -0.3,
-                                            height: 1.1,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
                                 ],
                               ),
                             ),
@@ -3369,7 +4050,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 3),
 
-                          // 3. Star Rating & Delivery Time Row
+                          // 3. Star Rating
                           Row(
                             children: [
                               Container(
@@ -3385,16 +4066,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 ),
                               ),
                               const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(
-                                  "${dish['rating']} • ${dish['time']}",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF334155),
-                                  ),
+                              Text(
+                                "${dish['rating']}",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF334155),
                                 ),
                               ),
                             ],
@@ -3916,6 +4595,428 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // REGULAR HOME PAGE WIDGETS (Matching user's images / backup design)
+  // --------------------------------------------------------------------------
+
+  // 1. Promotional Auto-Sliding Offers Carousel
+  Widget _buildRegularOffersCarouselBanner() {
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: AspectRatio(
+              aspectRatio: 1024 / 571,
+              child: PageView.builder(
+                controller: _bannerPageController,
+                itemCount: _carouselBanners.length,
+                onPageChanged: (idx) {
+                  setState(() => _currentBannerIndex = idx);
+                },
+                itemBuilder: (context, index) {
+                  final banner = _carouselBanners[index];
+                  return InkWell(
+                    onTap: () => _applyBannerOffer(banner),
+                    child: Image.asset(
+                      banner['image'] as String,
+                      fit: BoxFit.fill,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        banner['fallback'] as String,
+                        fit: BoxFit.fill,
+                        filterQuality: FilterQuality.high,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        // Dots Indicator
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(_carouselBanners.length, (idx) {
+            final isActive = _currentBannerIndex == idx;
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              margin: const EdgeInsets.symmetric(horizontal: 2.5),
+              height: 4,
+              width: isActive ? 16 : 5,
+              decoration: BoxDecoration(
+                color: isActive ? const Color(0xFFFFD700) : Colors.white30,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+
+  // 3. Custom Food Order Form Card (Regular Page inline card)
+  Widget _buildRegularOrderFormCard() {
+    return Container(
+      key: _orderFormCardKey,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF142B4A).withValues(alpha: 0.10),
+            blurRadius: 28,
+            spreadRadius: 2,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBFDBFE).withValues(alpha: 0.6)),
+                      ),
+                      child: const Icon(Icons.restaurant_rounded, color: AppColors.primary, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Order Anything You Crave",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            "Enter food item & budget to order instantly",
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.only(left: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("⚡", style: TextStyle(fontSize: 10)),
+                    SizedBox(width: 3),
+                    Text(
+                      "CUSTOM",
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFB45309),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _buildTextField('Item name (e.g. Chicken Biryani)', TextInputType.text, _itemController, Icons.fastfood_outlined),
+          const SizedBox(height: 14),
+          _buildTextField('Budget (₹)', TextInputType.number, _budgetController, Icons.currency_rupee_rounded),
+          const SizedBox(height: 14),
+          _buildDropdown(),
+          const SizedBox(height: 20),
+
+          // Order Now Button
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _handleRegularOrderSubmit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryDark,
+                foregroundColor: Colors.white,
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline_rounded, color: Colors.white, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'Order Now',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 4. Regular Custom Order Submission Handler
+  Future<void> _handleRegularOrderSubmit() async {
+    if (!_isStoreOnline) {
+      _showStoreClosedPopup();
+      return;
+    }
+
+    final itemText = _itemController.text.trim();
+    if (itemText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter an item name')),
+      );
+      return;
+    }
+
+    final budgetText = _budgetController.text.trim();
+    final budgetVal = double.tryParse(budgetText);
+    if (budgetText.isEmpty || budgetVal == null || budgetVal <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your budget')),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+
+    final hasActive = prefs.getBool('has_active_order') ?? false;
+    final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
+    final existingOrderId = prefs.getString('active_order_id') ?? '';
+    if (hasActive && activeStatus != 'delivered' && activeStatus != 'cancelled' && existingOrderId.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.info_outline_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "You already have active order #$existingOrderId in progress! Please wait until it is delivered or cancelled before ordering again.",
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.primaryDark,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      setState(() {
+        showDeliveryDetails = true;
+      });
+      scrollToBottom();
+      return;
+    }
+
+    final userId = prefs.getString('user_id') ?? 'usr_001';
+    final custName = prefs.getString('user_name') ?? 'Customer';
+    final custPhone = prefs.getString('mobile_number') ?? '+91 98765 43210';
+    final custAddrRaw = (_deliveryLocationController.text.trim().isNotEmpty &&
+            !_deliveryLocationController.text.trim().toLowerCase().contains('live gps') &&
+            _deliveryLocationController.text.trim() != 'Detecting...')
+        ? _deliveryLocationController.text.trim()
+        : (_currentAddressFull.isNotEmpty && !_currentAddressFull.toLowerCase().contains('live gps')
+            ? _currentAddressFull
+            : "Kumbakonam, Thanjavur District, Tamil Nadu 612001");
+    final custAddr = custAddrRaw
+        .replaceAll(RegExp(r'\bmatthi,?\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\bmathi,?\s*', caseSensitive: false), '')
+        .trim();
+
+    final orderLat = _customerLocation.latitude;
+    final orderLng = _customerLocation.longitude;
+
+    if (!_isLocationInKumbakonam(orderLat, orderLng)) {
+      _showGeofenceRestrictionDialog();
+      return;
+    }
+
+    setState(() {
+      showDeliveryDetails = true;
+      isSearchingRider = true;
+      hasRiderAccepted = false;
+      showCancelButtonContainer = true;
+      assignedPartnerName = "";
+      assignedPartnerPhone = "";
+      assignedPartnerProfileImage = null;
+    });
+    scrollToBottom();
+
+    String newOrderId = "ORD-${1000 + Random().nextInt(9000)}";
+
+    String customerFixedOtp = prefs.getString('customer_fixed_order_otp') ?? '';
+    if (customerFixedOtp.isEmpty) {
+      final digits = custPhone.replaceAll(RegExp(r'\D'), '');
+      if (digits.length >= 4) {
+        customerFixedOtp = digits.substring(digits.length - 4);
+      } else {
+        customerFixedOtp = (1000 + Random().nextInt(9000)).toString();
+      }
+      await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
+    }
+
+    try {
+      final res = await http.post(
+        ApiConfig.orderCreate,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': userId,
+          'customer_name': custName,
+          'customer_phone': custPhone,
+          'delivery_address': custAddr,
+          'item_name': itemText,
+          'quantity': 1,
+          'budget': budgetVal,
+          'cod_otp': customerFixedOtp,
+          'customer_latitude': orderLat,
+          'customer_longitude': orderLng,
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        if (data['order'] != null) {
+          if (data['order']['order_id'] != null) {
+            newOrderId = data['order']['order_id'];
+          }
+          if (data['order']['cod_otp'] != null) {
+            customerFixedOtp = data['order']['cod_otp'].toString();
+            await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
+          }
+        }
+      } else {
+        final data = jsonDecode(res.body);
+        final isGeofenceErr = data['error'] == 'GEOFENCE_RESTRICTION' ||
+            (data['message'] != null && data['message'].toString().contains('unavailable in your location'));
+        if (mounted) {
+          setState(() {
+            isSearchingRider = false;
+            showDeliveryDetails = false;
+          });
+          if (isGeofenceErr) {
+            _showGeofenceRestrictionDialog();
+          } else {
+            final errMsg = data['error'] ?? data['message'] ?? 'Failed to create order on server';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(errMsg), backgroundColor: AppColors.danger, behavior: SnackBarBehavior.floating),
+            );
+          }
+        }
+        return;
+      }
+    } catch (e) {
+      debugPrint("Backend order creation error: $e");
+      if (mounted) {
+        setState(() {
+          isSearchingRider = false;
+          showDeliveryDetails = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot connect to server: $e'), backgroundColor: AppColors.danger, behavior: SnackBarBehavior.floating),
+        );
+      }
+      return;
+    }
+
+    await prefs.setString('active_order_id', newOrderId);
+    await prefs.setString('active_cod_otp', customerFixedOtp);
+    await prefs.setBool('has_active_order', true);
+    await prefs.remove('active_order_bill_images');
+    await prefs.remove('active_order_bill_image');
+    await prefs.remove('order_${newOrderId}_bill_images');
+    await prefs.remove('order_${newOrderId}_bill_image');
+    if (mounted) {
+      setState(() {
+        _orderBillImages = [];
+      });
+    }
+    await prefs.remove('order_${newOrderId}_chat_messages');
+    await prefs.remove('has_notified_partner_accepted_$newOrderId');
+    await prefs.remove('order_${newOrderId}_notified_collected_items');
+    await prefs.remove('has_notified_bill_ack_$newOrderId');
+    await prefs.remove('has_notified_payment_success_$newOrderId');
+    await prefs.remove('has_notified_delivered_$newOrderId');
+    await prefs.setString('active_order_item', itemText);
+    await prefs.setString('active_order_budget', _budgetController.text.trim());
+    await prefs.setString('active_order_quantity', '1');
+    _orderSearchStartTime = DateTime.now();
+    _allBusyHitCount = 0;
+    await prefs.setString('active_order_customer_name', custName);
+    await prefs.setString('active_order_customer_phone', custPhone);
+    await prefs.setString('active_order_customer_address', custAddr);
+    await prefs.setString('active_order_status', 'pending');
+    await prefs.setBool('active_order_partner_accepted', false);
+    await prefs.setBool('active_order_bill_sent', false);
+    await prefs.remove('active_order_partner_name');
+    await prefs.remove('active_order_partner_phone');
+    await prefs.remove('active_order_partner_id');
+    await prefs.remove('active_order_partner_image');
+
+    AlarmService.startCustomerOrderListeningService(
+      baseUrl: ApiConfig.baseUrl,
+      orderId: newOrderId,
+    );
+    AlarmService.requestBatteryOptimizationExemption();
+    _startOrderPolling(newOrderId);
+
+    setState(() {
+      showDeliveryDetails = true;
+      showCancelButtonContainer = true;
+      _showOrderForm = false;
+    });
+    scrollToBottom();
+  }
+
   Widget _buildDropdown({StateSetter? setSheetState}) {
     final displayAddress = _deliveryLocationController.text.trim().isNotEmpty
         ? _deliveryLocationController.text.trim()
@@ -4101,8 +5202,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               await p.setBool('has_active_order', false);
               await p.remove('active_order_id');
               await p.setString('active_order_status', 'delivered');
+              await p.setBool('has_claimed_first_offer', true);
               if (mounted) {
                 setState(() {
+                  _hasClaimedFirstOffer = true;
                   isSearchingRider = false;
                   hasRiderAccepted = false;
                   showDeliveryDetails = false;
@@ -4399,6 +5502,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await prefs.setString('active_order_status', 'cancelled');
     await prefs.setBool('active_order_partner_accepted', false);
     await prefs.remove('active_order_id');
+    await _checkFirstTimeOfferStatus(forceServerCheck: true);
 
     // 4. Update UI & show dialog
     if (mounted) {
@@ -5687,6 +6791,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   await prefs.remove('active_order_id');
 
                   _searchRiderTimer?.cancel();
+                  await _checkFirstTimeOfferStatus(forceServerCheck: true);
 
                   if (mounted) {
                     setState(() {
