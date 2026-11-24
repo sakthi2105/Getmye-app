@@ -85,6 +85,22 @@ class AdminApiConfig {
   static Uri get bannerStock => Uri.parse('$_baseUrl/api/banner/stock');
   static Uri bannerToggle(String id) => Uri.parse('$_baseUrl/api/banner/toggle/$id');
 
+  // Regular Sliding Banners Endpoints (Homepage Carousel)
+  static Uri get bannerSlidingActive => Uri.parse('$_baseUrl/api/banner/sliding/active');
+  static Uri get bannerSlidingAll => Uri.parse('$_baseUrl/api/banner/sliding/all');
+  static Uri get bannerSlidingUpload => Uri.parse('$_baseUrl/api/banner/sliding/upload');
+  static Uri bannerSlidingUpdate(String id) => Uri.parse('$_baseUrl/api/banner/sliding/$id');
+  static Uri bannerSlidingDelete(String id) => Uri.parse('$_baseUrl/api/banner/sliding/$id');
+  static Uri bannerSlidingToggle(String id) => Uri.parse('$_baseUrl/api/banner/sliding/toggle/$id');
+
+  // Quick Cravings Endpoints (Homepage Food Suggestions)
+  static Uri get quickCravingsActive => Uri.parse('$_baseUrl/api/quick-cravings/active');
+  static Uri get quickCravingsAll => Uri.parse('$_baseUrl/api/quick-cravings/all');
+  static Uri get quickCravingsUpload => Uri.parse('$_baseUrl/api/quick-cravings/upload');
+  static Uri quickCravingsUpdate(String id) => Uri.parse('$_baseUrl/api/quick-cravings/$id');
+  static Uri quickCravingsDelete(String id) => Uri.parse('$_baseUrl/api/quick-cravings/$id');
+  static Uri quickCravingsToggle(String id) => Uri.parse('$_baseUrl/api/quick-cravings/toggle/$id');
+
   // Support Endpoints (Bug Reports, Complaints, Feedback)
   static Uri get supportBugReports => Uri.parse('$_baseUrl/api/support/bug-reports');
   static Uri get supportComplaints => Uri.parse('$_baseUrl/api/support/complaints');
