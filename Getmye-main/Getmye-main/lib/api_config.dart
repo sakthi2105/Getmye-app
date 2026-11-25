@@ -67,7 +67,10 @@ class ApiConfig {
   static Uri get orderUpdateChecklist => Uri.parse('$baseUrl/api/order/checklist/update');
   static Uri get orderWaitingCustomer => Uri.parse('$baseUrl/api/order/waiting-customer');
   static Uri orderNotifications(String userId) => Uri.parse('$baseUrl/api/order/notifications/$userId');
+  static Uri orderNotificationsAll(String userId) => Uri.parse('$baseUrl/api/order/notifications/$userId?all=true');
   static Uri get orderNotificationsMarkRead => Uri.parse('$baseUrl/api/order/notifications/mark-read');
+  static Uri orderNotificationsClear(String userId) => Uri.parse('$baseUrl/api/order/notifications/clear/$userId');
+  static Uri orderNotificationDelete(String notificationId) => Uri.parse('$baseUrl/api/order/notifications/item/$notificationId');
 
   // Bill Endpoints
   static Uri get billSubmit => Uri.parse('$baseUrl/api/bill/submit');
@@ -126,6 +129,7 @@ class ApiConfig {
   static Uri get bannerUpload => Uri.parse('$baseUrl/api/banner/upload');
   static Uri get bannerSlidingActive => Uri.parse('$baseUrl/api/banner/sliding/active');
   static Uri get quickCravingsActive => Uri.parse('$baseUrl/api/quick-cravings/active');
+  static Uri get preferredHotelsActive => Uri.parse('$baseUrl/api/preferred-hotels/active');
 
   // App Operational Schedule Endpoint (Store Online / Offline Window)
   static Uri get scheduleStatus => Uri.parse('$baseUrl/api/app-schedule/status');

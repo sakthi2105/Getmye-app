@@ -22,6 +22,7 @@ const trackingRoutes = require('./routes/tracking');
 const supportRoutes = require('./routes/support');
 const bannerRoutes = require('./routes/banner');
 const quickCravingRoutes = require('./routes/quickCraving');
+const preferredHotelRoutes = require('./routes/preferredHotel');
 const appScheduleRoutes = require('./routes/appSchedule');
 
 const app = express();
@@ -54,6 +55,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/banner', bannerRoutes);
 app.use('/api/quick-cravings', quickCravingRoutes);
 app.use('/api/banner/cravings', quickCravingRoutes);
+app.use('/api/preferred-hotels', preferredHotelRoutes);
 app.use('/api/app-schedule', appScheduleRoutes);
 
 // Serve Privacy Policy & Help (for Play Store & Web View)

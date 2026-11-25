@@ -23,6 +23,7 @@ import 'services/alarm_service.dart';
 import 'widgets/customer_bottom_nav_bar.dart';
 import 'widgets/price_range_dialogs.dart';
 import 'theme/app_theme.dart';
+import 'notifications_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -279,6 +280,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final TextEditingController _chatMsgController = TextEditingController();
   final TextEditingController _customLocationTextController = TextEditingController();
   final TextEditingController _deliveryLocationController = TextEditingController();
+  final TextEditingController _preferredShopController = TextEditingController();
+  final FocusNode _foodFocusNode = FocusNode();
+  final FocusNode _budgetFocusNode = FocusNode();
   final GlobalKey _orderFormCardKey = GlobalKey();
 
   bool _isLocationDialogShowing = false;
@@ -293,6 +297,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   List<Map<String, dynamic>> _carouselBanners = [];
   bool _isLoadingSlidingBanners = true;
+  List<Map<String, dynamic>> _preferredHotels = [];
+  String? _selectedPreferredHotel;
+  int _unreadNotificationCount = 0;
 
   List<Map<String, dynamic>> _quickCravings = [
     {
@@ -622,6 +629,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _bannerPageController = PageController();
     _shopAdPageController = PageController();
+    _foodFocusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _budgetFocusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
     _loadSavedLocation();
     _loadCachedOfferBanner();
     _loadCachedSlidingBanners();
@@ -630,6 +643,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _loadActiveOfferBanner();
     _loadActiveSlidingBanners();
     _loadActiveQuickCravings();
+    _loadPreferredHotels();
+    _loadUnreadNotificationCount();
     _checkAppScheduleStatus();
     _startStoreCountdownTimer();
     _startShopAdAutoSlide();
@@ -648,6 +663,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _loadActiveOfferBanner();
       _loadActiveSlidingBanners();
       _loadActiveQuickCravings();
+      _loadPreferredHotels();
+      _loadUnreadNotificationCount();
       _checkAppScheduleStatus();
       _checkFirstTimeOfferStatus();
     }
@@ -1111,6 +1128,68 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _isLoadingSlidingBanners = false;
           });
           _startRegularBannerAutoSlide();
+        } else if (mounted) {
+          setState(() {
+            _carouselBanners = [];
+            _isLoadingSlidingBanners = false;
+          });
+        }
+      } else if (mounted) {
+        setState(() {
+          _carouselBanners = [];
+          _isLoadingSlidingBanners = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _carouselBanners = [];
+          _isLoadingSlidingBanners = false;
+        });
+      }
+    }
+  }
+
+  // 🏨 Load Preferred Hotels from Admin Portal
+  Future<void> _loadPreferredHotels() async {
+    try {
+      final response = await http.get(ApiConfig.preferredHotelsActive).timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic> && data['success'] == true && data['hotels'] is List) {
+          final List incoming = data['hotels'] as List;
+          final parsed = incoming
+              .whereType<Map>()
+              .map((h) => Map<String, dynamic>.from(h))
+              .toList();
+          if (mounted) {
+            setState(() {
+              _preferredHotels = parsed;
+              if (_selectedPreferredHotel != null &&
+                  !parsed.any((h) => (h['name'] ?? '').toString() == _selectedPreferredHotel)) {
+                _selectedPreferredHotel = null;
+                _preferredShopController.clear();
+              }
+            });
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 🔔 Load unread customer notification count for Bell badge
+  Future<void> _loadUnreadNotificationCount() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = prefs.getString('user_id') ?? '';
+      if (uid.isEmpty) return;
+      final res = await http.get(ApiConfig.orderNotificationsAll(uid)).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        final count = (data['unread_count'] as num?)?.toInt() ??
+            ((data['notifications'] as List?)?.where((n) => n['is_read'] != true).length ?? 0);
+        if (mounted) {
+          setState(() => _unreadNotificationCount = count);
         }
       }
     } catch (_) {}
@@ -1124,6 +1203,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final data = json.decode(response.body);
         if (data is Map<String, dynamic> && data['success'] == true && data['banners'] is List) {
           final List incoming = data['banners'] as List;
+          if (incoming.isEmpty) {
+            _bannerTimer?.cancel();
+            if (mounted) {
+              setState(() {
+                _carouselBanners = [];
+                _isLoadingSlidingBanners = false;
+                _currentBannerIndex = 0;
+              });
+            }
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('cached_sliding_banners_json', '[]');
+            } catch (_) {}
+            return;
+          }
+
           if (incoming.isNotEmpty) {
             final List<Map<String, dynamic>> parsedBanners = [];
             for (var b in incoming) {
@@ -1809,6 +1904,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _quantityController.dispose();
     _chatMsgController.dispose();
     _deliveryLocationController.dispose();
+    _preferredShopController.dispose();
+    _foodFocusNode.dispose();
+    _budgetFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -2438,23 +2536,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Header with Location + Auto-sliding Crushing Offers Carousel
-                        _buildWineHeader(context, isCompact: false),
+                        // Header with Location (Compact: Location & Profile Bar only)
+                        _buildWineHeader(context, isCompact: true),
 
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                           child: Center(
                             child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 520),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // Quick Cravings Suggestions Food Image Buttons
-                                  _buildQuickCravings(),
-                                  const SizedBox(height: 20),
-                                  // Custom Food Order Form Card
                                   _buildRegularOrderFormCard(),
-                                  const SizedBox(height: 30),
+                                  if (_carouselBanners.isNotEmpty) ...[
+                                    const SizedBox(height: 16),
+                                    _buildRegularOffersCarouselBanner(),
+                                  ],
                                 ],
                               ),
                             ),
@@ -2594,7 +2691,47 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
+        // Notification Bell Icon with Unread Badge -> Opens NotificationsPage
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 24),
+              tooltip: "Notifications",
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NotificationsPage()),
+                );
+                _loadUnreadNotificationCount();
+              },
+            ),
+            if (_unreadNotificationCount > 0)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: AppColors.danger,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.primaryDark, width: 1.2),
+                  ),
+                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  child: Text(
+                    _unreadNotificationCount > 99 ? '99+' : '$_unreadNotificationCount',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
         IconButton(
           icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 22),
           onPressed: _showTopMenu,
@@ -4880,25 +5017,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // 1. Promotional Auto-Sliding Offers Carousel
   Widget _buildRegularOffersCarouselBanner() {
-    if (_isLoadingSlidingBanners || _carouselBanners.isEmpty) {
-      return const _SlidingBannerLazyLoader();
+    if (_carouselBanners.isEmpty) {
+      return const SizedBox.shrink();
     }
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(15),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(15),
             child: AspectRatio(
               aspectRatio: 1024 / 571,
               child: PageView.builder(
@@ -4918,7 +5056,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         // Dots Indicator
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -4930,7 +5068,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               height: 4,
               width: isActive ? 16 : 5,
               decoration: BoxDecoration(
-                color: isActive ? const Color(0xFFFFD700) : Colors.white30,
+                color: isActive ? const Color(0xFFF59E0B) : const Color(0xFFCBD5E1),
                 borderRadius: BorderRadius.circular(2),
               ),
             );
@@ -4940,134 +5078,747 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  // 3. Custom Food Order Form Card (Regular Page inline card)
+  // Suggestion chips for Craving items
+  Widget _buildItemSuggestionChips() {
+    final chips = [
+      {'name': 'Biryani', 'icon': '🍗'},
+      {'name': 'Shawarma', 'icon': '🌯'},
+      {'name': 'Dosa', 'icon': '🥞'},
+      {'name': 'Fried Rice', 'icon': '🍚'},
+      {'name': 'Momos', 'icon': '🥟'},
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: chips.map((chip) {
+          final isSelected = _itemController.text.trim().toLowerCase().contains((chip['name'] as String).toLowerCase());
+          return Padding(
+            padding: const EdgeInsets.only(right: 7),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                setState(() {
+                  _itemController.text = chip['name'] as String;
+                });
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFFEFF6FF) : Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected ? const Color(0xFF3B82F6) : const Color(0xFFCBD5E1),
+                    width: isSelected ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(chip['icon'] as String, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(width: 4),
+                    Text(
+                      chip['name'] as String,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                        color: isSelected ? const Color(0xFF1D4ED8) : const Color(0xFF475569),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // Suggestion pills for Budget amounts
+  Widget _buildBudgetSuggestionPills() {
+    final pills = ['50', '100', '150', '200', '300'];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: pills.map((p) {
+          final isSelected = _budgetController.text.trim() == p;
+          return Padding(
+            padding: const EdgeInsets.only(right: 7),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                setState(() {
+                  _budgetController.text = p;
+                });
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFFFFF7ED) : const Color(0xFFFFF7ED).withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected ? const Color(0xFFEA580C) : const Color(0xFFFED7AA),
+                    width: isSelected ? 1.5 : 1,
+                  ),
+                ),
+                child: Text(
+                  '₹$p',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w700,
+                    color: const Color(0xFFC2410C),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // Dropdown helpers for Food Name, Budget, and Admin-managed Preferred Hotels
+  void _showFoodSuggestionsSheet() {
+    final foods = [
+      {'name': 'Biryani', 'icon': '🍗'},
+      {'name': 'Pizza', 'icon': '🍕'},
+      {'name': 'Dosa', 'icon': '🥞'},
+      {'name': 'Burger', 'icon': '🍔'},
+      {'name': 'Fried Rice', 'icon': '🍚'},
+      {'name': 'Chicken Shawarma', 'icon': '🌯'},
+      {'name': 'Hot Momos', 'icon': '🥟'},
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Select Food Item',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 10),
+              ...foods.map((f) => ListTile(
+                    dense: true,
+                    leading: Text(f['icon']!, style: const TextStyle(fontSize: 20)),
+                    title: Text(
+                      f['name']!,
+                      style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                    ),
+                    trailing: _itemController.text.trim().toLowerCase() == f['name']!.toLowerCase()
+                        ? const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20)
+                        : null,
+                    onTap: () {
+                      setState(() => _itemController.text = f['name']!);
+                      Navigator.pop(ctx);
+                    },
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showBudgetSuggestionsSheet() {
+    final amounts = ['50', '100', '150', '200', '300', '500'];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Select Budget Range',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 10),
+              ...amounts.map((amt) => ListTile(
+                    dense: true,
+                    leading: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.currency_rupee_rounded, color: AppColors.primary, size: 18),
+                    ),
+                    title: Text(
+                      '₹$amt',
+                      style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                    trailing: _budgetController.text.trim() == amt
+                        ? const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20)
+                        : null,
+                    onTap: () {
+                      setState(() => _budgetController.text = amt);
+                      Navigator.pop(ctx);
+                    },
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showPreferredHotelsDropdownSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Select Preferred Hotel',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, color: AppColors.primary, size: 20),
+                    onPressed: () async {
+                      await _loadPreferredHotels();
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (mounted) _showPreferredHotelsDropdownSheet();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.auto_awesome_rounded, color: AppColors.primary, size: 20),
+                title: const Text(
+                  'Any Best Hotel (No preference)',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+                trailing: _selectedPreferredHotel == null
+                    ? const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20)
+                    : null,
+                onTap: () {
+                  setState(() {
+                    _selectedPreferredHotel = null;
+                    _preferredShopController.clear();
+                  });
+                  Navigator.pop(ctx);
+                },
+              ),
+              const Divider(height: 8),
+              if (_preferredHotels.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Center(
+                    child: Text(
+                      'No hotels configured by Admin yet.',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 280),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _preferredHotels.length,
+                    itemBuilder: (_, index) {
+                      final h = _preferredHotels[index];
+                      final hotelName = (h['name'] ?? '').toString();
+                      final area = (h['area'] ?? '').toString();
+                      final isSelected = _selectedPreferredHotel == hotelName;
+                      return ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.apartment_rounded, color: AppColors.primary, size: 20),
+                        title: Text(
+                          hotelName,
+                          style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                        ),
+                        subtitle: area.isNotEmpty
+                            ? Text(area, style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary))
+                            : null,
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20)
+                            : null,
+                        onTap: () {
+                          setState(() {
+                            _selectedPreferredHotel = hotelName;
+                            _preferredShopController.text = hotelName;
+                          });
+                          Navigator.pop(ctx);
+                        },
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static const List<Map<String, String>> _kSouthIndianFoods = [
+    {'name': 'Appam with Stew', 'icon': '🥞'},
+    {'name': 'Biryani (Chicken)', 'icon': '🍗'},
+    {'name': 'Biryani (Mutton)', 'icon': '🍖'},
+    {'name': 'Biryani (Veg)', 'icon': '🍛'},
+    {'name': 'Bisi Bele Bath', 'icon': '🍲'},
+    {'name': 'Bajji (Chilli / Vazhakkai)', 'icon': '🥟'},
+    {'name': 'Bonda (Mysore / Aloo)', 'icon': '🧆'},
+    {'name': 'Bun Parotta', 'icon': '🫓'},
+    {'name': 'Butter Naan & Gravy', 'icon': '🫓'},
+    {'name': 'Badam Milk', 'icon': '🥛'},
+    {'name': 'Chicken 65', 'icon': '🍗'},
+    {'name': 'Chicken Fried Rice', 'icon': '🍚'},
+    {'name': 'Chicken Shawarma', 'icon': '🌯'},
+    {'name': 'Chilli Parotta', 'icon': '🫓'},
+    {'name': 'Curd Rice', 'icon': '🍚'},
+    {'name': 'Dosa (Plain / Roast)', 'icon': '🥞'},
+    {'name': 'Egg Fried Rice', 'icon': '🍚'},
+    {'name': 'Filter Coffee', 'icon': '☕'},
+    {'name': 'Ghee Roast Dosa', 'icon': '🥞'},
+    {'name': 'Hot Momos', 'icon': '🥟'},
+    {'name': 'Idli & Sambar', 'icon': '⚪'},
+    {'name': 'Idiyappam & Kurma', 'icon': '🍜'},
+    {'name': 'Kothu Parotta', 'icon': '🥘'},
+    {'name': 'Lemon Rice', 'icon': '🍋'},
+    {'name': 'Masala Dosa', 'icon': '🥞'},
+    {'name': 'Medu Vada', 'icon': '🍩'},
+    {'name': 'Onion Uttapam', 'icon': '🥞'},
+    {'name': 'Paneer Butter Masala', 'icon': '🍛'},
+    {'name': 'Parotta & Salna', 'icon': '🫓'},
+    {'name': 'Pongal & Vada', 'icon': '🍲'},
+    {'name': 'Poori Masala', 'icon': '🫓'},
+    {'name': 'Rava Dosa', 'icon': '🥞'},
+    {'name': 'Sambar Rice', 'icon': '🍛'},
+    {'name': 'Tomato Rice', 'icon': '🍅'},
+    {'name': 'Veg Meals (Full)', 'icon': '🍱'},
+  ];
+
+  static const List<String> _kBudgetOptions = ['50', '100', '120', '150', '200', '250', '300', '500'];
+
+  List<Map<String, String>> _filteredFoodSuggestions() {
+    final query = _itemController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return _kSouthIndianFoods.take(6).toList();
+    }
+    final startsWith = _kSouthIndianFoods
+        .where((f) => f['name']!.toLowerCase().startsWith(query))
+        .toList();
+    final contains = _kSouthIndianFoods
+        .where((f) =>
+            !f['name']!.toLowerCase().startsWith(query) &&
+            f['name']!.toLowerCase().contains(query))
+        .toList();
+    return [...startsWith, ...contains].take(6).toList();
+  }
+
+  List<String> _filteredBudgetSuggestions() {
+    final query = _budgetController.text.trim();
+    if (query.isEmpty) return _kBudgetOptions;
+    final matches = _kBudgetOptions.where((b) => b.startsWith(query) || b.contains(query)).toList();
+    return matches.isNotEmpty ? matches : _kBudgetOptions;
+  }
+
+  Widget _buildSeamlessAutocompleteField({
+    required IconData icon,
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required FocusNode focusNode,
+    required TextInputType keyboardType,
+    required Widget? dropdownOverlay,
+  }) {
+    final isFocused = focusNode.hasFocus;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => focusNode.requestFocus(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: isFocused ? AppColors.primary : AppColors.border,
+                width: isFocused ? 1.5 : 1.1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: AppColors.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        keyboardType: keyboardType,
+                        onChanged: (_) => setState(() {}),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: hint,
+                          hintStyle: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w400,
+                          ),
+                          filled: false,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 2),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (dropdownOverlay != null) dropdownOverlay,
+      ],
+    );
+  }
+
+  Widget _buildSelectorOnlyField({
+    required IconData icon,
+    required String label,
+    required String valueText,
+    required bool isPlaceholder,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border, width: 1.1),
+        ),
+        child: Row(
+          children: [
+            Container(
+              height: 38,
+              width: 38,
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: AppColors.primary, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    valueText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: isPlaceholder ? 13 : 14,
+                      fontWeight: isPlaceholder ? FontWeight.w400 : FontWeight.w600,
+                      color: isPlaceholder ? AppColors.textSecondary : AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 3. Custom Food Order Form Card (Reference-inspired layout with Brand Colors)
   Widget _buildRegularOrderFormCard() {
+    final displayAddress = _deliveryLocationController.text.trim().isNotEmpty
+        ? _deliveryLocationController.text.trim()
+        : (_currentAddressFull.isNotEmpty ? _currentAddressFull : 'Enter delivery address');
+    final hasAddress = _deliveryLocationController.text.trim().isNotEmpty || _currentAddressFull.isNotEmpty;
+
+    final foodMatches = _foodFocusNode.hasFocus ? _filteredFoodSuggestions() : <Map<String, String>>[];
+    final budgetMatches = _budgetFocusNode.hasFocus ? _filteredBudgetSuggestions() : <String>[];
+
     return Container(
       key: _orderFormCardKey,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+        border: Border.all(color: AppColors.border, width: 1.4),
         boxShadow: [
+          // Crisp 3D bottom lip
+          const BoxShadow(
+            color: Color(0xFFB6C6DB),
+            blurRadius: 0,
+            spreadRadius: 0,
+            offset: Offset(0, 6),
+          ),
+          // Near contact shadow
           BoxShadow(
-            color: const Color(0xFF142B4A).withValues(alpha: 0.10),
-            blurRadius: 28,
-            spreadRadius: 2,
+            color: AppColors.primary.withValues(alpha: 0.22),
+            blurRadius: 14,
+            spreadRadius: 0,
             offset: const Offset(0, 8),
           ),
+          // Deep 3D floating drop shadow
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: AppColors.primaryDark.withValues(alpha: 0.28),
+            blurRadius: 36,
+            spreadRadius: 1,
+            offset: const Offset(0, 22),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(9),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryLight,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFBFDBFE).withValues(alpha: 0.6)),
-                      ),
-                      child: const Icon(Icons.restaurant_rounded, color: AppColors.primary, size: 22),
+          const Text(
+            'Order Anything You Crave For',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.2,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 1. Food Name (Seamless full TextField + Live South Indian food autocomplete dropdown)
+          _buildSeamlessAutocompleteField(
+            icon: Icons.restaurant_rounded,
+            label: 'Food Name',
+            hint: 'e.g. Biryani, Dosa, Idli...',
+            controller: _itemController,
+            focusNode: _foodFocusNode,
+            keyboardType: TextInputType.text,
+            dropdownOverlay: foodMatches.isNotEmpty
+                ? Container(
+                    margin: const EdgeInsets.only(top: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                      boxShadow: AppColors.subtleShadow,
                     ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Order Anything You Crave",
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.textPrimary,
-                              letterSpacing: -0.2,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: foodMatches.map((f) {
+                        return InkWell(
+                          onTap: () {
+                            setState(() {
+                              _itemController.text = f['name']!;
+                            });
+                            _foodFocusNode.unfocus();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            child: Row(
+                              children: [
+                                Text(f['icon']!, style: const TextStyle(fontSize: 18)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    f['name']!,
+                                    style: const TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          SizedBox(height: 2),
-                          Text(
-                            "Enter food item & budget to order instantly",
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        );
+                      }).toList(),
+                    ),
+                  )
+                : null,
+          ),
+          const SizedBox(height: 12),
+
+          // 2. Budget (Seamless full TextField + Live budget autocomplete dropdown)
+          _buildSeamlessAutocompleteField(
+            icon: Icons.account_balance_wallet_rounded,
+            label: 'Budget (₹)',
+            hint: 'Select or type budget',
+            controller: _budgetController,
+            focusNode: _budgetFocusNode,
+            keyboardType: TextInputType.number,
+            dropdownOverlay: budgetMatches.isNotEmpty
+                ? Container(
+                    margin: const EdgeInsets.only(top: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                      boxShadow: AppColors.subtleShadow,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: budgetMatches.map((amt) {
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            setState(() {
+                              _budgetController.text = amt;
+                            });
+                            _budgetFocusNode.unfocus();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            margin: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryLight,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '₹$amt',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
                           ),
-                        ],
-                      ),
+                        );
+                      }).toList(),
                     ),
-                  ],
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFFDE68A)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text("⚡", style: TextStyle(fontSize: 10)),
-                    SizedBox(width: 3),
-                    Text(
-                      "CUSTOM",
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFFB45309),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  )
+                : null,
+          ),
+          const SizedBox(height: 12),
+
+          // 3. Address (Selector without right-side arrow)
+          _buildSelectorOnlyField(
+            icon: Icons.location_on_rounded,
+            label: 'Address',
+            valueText: displayAddress,
+            isPlaceholder: !hasAddress,
+            onTap: () async {
+              _foodFocusNode.unfocus();
+              _budgetFocusNode.unfocus();
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AddressScreen()),
+              );
+              await _loadSavedLocation();
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // 4. Preferred Hotels (Dropdown ONLY from Admin Portal, without right-side arrow)
+          _buildSelectorOnlyField(
+            icon: Icons.apartment_rounded,
+            label: 'Preferred Hotels',
+            valueText: _selectedPreferredHotel ?? 'Select hotel (optional)',
+            isPlaceholder: _selectedPreferredHotel == null,
+            onTap: () {
+              _foodFocusNode.unfocus();
+              _budgetFocusNode.unfocus();
+              _showPreferredHotelsDropdownSheet();
+            },
           ),
           const SizedBox(height: 18),
-          _buildTextField('Item name (e.g. Chicken Biryani)', TextInputType.text, _itemController, Icons.fastfood_outlined),
-          const SizedBox(height: 14),
-          _buildTextField('Budget (₹)', TextInputType.number, _budgetController, Icons.currency_rupee_rounded),
-          const SizedBox(height: 14),
-          _buildDropdown(),
-          const SizedBox(height: 20),
 
-          // Order Now Button
+          // Action Button (Brand Navy Pill Button)
           SizedBox(
             width: double.infinity,
-            height: 52,
+            height: 50,
             child: ElevatedButton(
               onPressed: _handleRegularOrderSubmit,
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryDark,
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                elevation: 3,
+                elevation: 2,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(25),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.check_circle_outline_rounded, color: Colors.white, size: 20),
-                  SizedBox(width: 8),
                   Text(
                     'Order Now',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.3),
                   ),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
                 ],
               ),
             ),
@@ -5179,6 +5930,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await prefs.setString('customer_fixed_order_otp', customerFixedOtp);
     }
 
+    final shopPref = _preferredShopController.text.trim();
+    final effectiveItemName = shopPref.isNotEmpty ? "$itemText (Shop: $shopPref)" : itemText;
+
     try {
       final res = await http.post(
         ApiConfig.orderCreate,
@@ -5188,7 +5942,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'customer_name': custName,
           'customer_phone': custPhone,
           'delivery_address': custAddr,
-          'item_name': itemText,
+          'item_name': effectiveItemName,
+          'preferred_shop': shopPref,
           'quantity': 1,
           'budget': budgetVal,
           'cod_otp': customerFixedOtp,
