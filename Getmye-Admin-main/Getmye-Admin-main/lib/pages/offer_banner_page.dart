@@ -1636,12 +1636,24 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   }
 
   Widget _buildLivePreviewSection() {
-    final title = activeBanner?['title'] ?? _titleController.text;
-    final badge = activeBanner?['badge'] ?? _badgeController.text;
-    final offerPrice = activeBanner?['offer_price'] ?? _offerPriceController.text;
-    final origPrice = activeBanner?['original_price'] ?? _originalPriceController.text;
-    final remainingStock = activeBanner?['stock_remaining'] ?? _stockRemainingController.text;
-    final totalStock = activeBanner?['total_stock'] ?? _totalStockController.text;
+    final title = _titleController.text.trim().isNotEmpty
+        ? _titleController.text.trim()
+        : (activeBanner?['title'] ?? 'Special Dum Biriyani Deal');
+    final badge = _badgeController.text.trim().isNotEmpty
+        ? _badgeController.text.trim()
+        : (activeBanner?['badge'] ?? "TODAY'S SPECIAL");
+    final offerPrice = _offerPriceController.text.trim().isNotEmpty
+        ? _offerPriceController.text.trim()
+        : (activeBanner?['offer_price'] ?? '65');
+    final origPrice = _originalPriceController.text.trim().isNotEmpty
+        ? _originalPriceController.text.trim()
+        : (activeBanner?['original_price'] ?? '120');
+    final remainingStock = _stockRemainingController.text.trim().isNotEmpty
+        ? _stockRemainingController.text.trim()
+        : (activeBanner?['stock_remaining'] ?? '75');
+    final totalStock = _totalStockController.text.trim().isNotEmpty
+        ? _totalStockController.text.trim()
+        : (activeBanner?['total_stock'] ?? '100');
 
     final bannerBase64 = activeBanner?['image_base64'] as String?;
     final bannerUrl = activeBanner?['image_url'] as String?;
@@ -2237,6 +2249,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _offerPriceController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     labelText: 'Offer Price (₹)',
                     hintText: '65',
@@ -2248,6 +2261,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _originalPriceController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     labelText: 'Original (₹)',
                     hintText: '120',

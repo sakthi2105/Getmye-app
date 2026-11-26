@@ -3388,30 +3388,121 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     scrollToBottom();
   }
 
+  Widget _buildTimerDigitBox(String value, String unit) {
+    return Container(
+      width: 44,
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+            ),
+          ),
+          Text(
+            unit,
+            style: const TextStyle(
+              color: Color(0xFF93C5FD),
+              fontSize: 7.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOffersCarouselBanner() {
+    final int secs = _secondsUntilClose > 0 ? _secondsUntilClose : 0;
+    final String hrsStr = (secs ~/ 3600).toString().padLeft(2, '0');
+    final String minsStr = ((secs % 3600) ~/ 60).toString().padLeft(2, '0');
+    final String secsStr = (secs % 60).toString().padLeft(2, '0');
+
     return Column(
       children: [
+        // 1. LIMITED TIME OFFER Card (Timer only, NO LEFT count inside)
         if (_isStoreOnline && _secondsUntilClose > 0)
           Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFECFDF5),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFA7F3D0)),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border, width: 1.2),
+              boxShadow: AppColors.subtleShadow,
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const CircleAvatar(radius: 3.5, backgroundColor: Color(0xFF10B981)),
-                const SizedBox(width: 6),
-                Text(
-                  "Orders Live until ${_format24to12(_scheduleEndTime)} • Closes in ${_formatSeconds(_secondsUntilClose)}",
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF065F46),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: AppColors.danger,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Flexible(
+                            child: Text(
+                              'LIMITED TIME OFFER',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.primary,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Grab before timer hits zero',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                const SizedBox(width: 8),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildTimerDigitBox(hrsStr, 'HR'),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 3),
+                      child: Text(':', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.primary)),
+                    ),
+                    _buildTimerDigitBox(minsStr, 'MIN'),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 3),
+                      child: Text(':', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.primary)),
+                    ),
+                    _buildTimerDigitBox(secsStr, 'SEC'),
+                  ],
                 ),
               ],
             ),
@@ -3420,11 +3511,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           GestureDetector(
             onTap: _showStoreClosedPopup,
             child: Container(
-              margin: const EdgeInsets.only(bottom: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: const Color(0xFFFEF2F2),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFFFECACA)),
               ),
               child: Row(
@@ -3435,7 +3526,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   Text(
                     "Service Closed • Opens at ${_format24to12(_scheduleStartTime)} (Tap for details)",
                     style: const TextStyle(
-                      fontSize: 10.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF991B1B),
                     ),
@@ -3444,7 +3535,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
           ),
-        // 1. Biriyani Offer Image - 1:1 Aspect Ratio (Dynamically fitted, NEVER overflows, NO SCROLL)
+
+        // 2. Standalone 1:1 Offer Image (No outer container, no badges)
         Expanded(
           child: Center(
             child: Container(
@@ -3452,7 +3544,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 borderRadius: BorderRadius.circular(18),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF142B4A).withValues(alpha: 0.16),
+                    color: AppColors.primary.withValues(alpha: 0.16),
                     blurRadius: 14,
                     offset: const Offset(0, 6),
                   ),
@@ -3466,39 +3558,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),
                 child: AspectRatio(
-                  aspectRatio: 1.0, // 1:1 Aspect Ratio
+                  aspectRatio: 2 / 3,
                   child: InkWell(
                     onTap: () => _openFirstTimeOfferAddressConfirmSheet(context),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        _buildBannerImageWidget(),
-                        if (_adminBannerBadge != null && _adminBannerBadge!.trim().isNotEmpty)
-                          Positioned(
-                            top: 10,
-                            left: 10,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEA580C),
-                                borderRadius: BorderRadius.circular(8),
-                                boxShadow: const [
-                                  BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-                                ],
-                              ),
-                              child: Text(
-                                _adminBannerBadge!.trim().toUpperCase(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
+                    child: _buildBannerImageWidget(),
                   ),
                 ),
               ),
@@ -3506,157 +3569,64 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
 
-        const SizedBox(height: 6),
+        const SizedBox(height: 12),
 
-        // 2. Biryani stock counter below image
+        // 3. Dynamic Decreasing 'Left : <count>' Container (Matching Timer Digit Box style)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: const Color(0xFFFDE68A),
-              width: 1.2,
-            ),
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(10),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF142B4A).withValues(alpha: 0.05),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+                color: AppColors.primaryDark.withValues(alpha: 0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_adminBannerTitle != null && _adminBannerTitle!.trim().isNotEmpty) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _adminBannerTitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      "₹$_selectedOfferUnitPrice",
-                      style: const TextStyle(
-                        color: Color(0xFFEA580C),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    if (_selectedOfferOriginalPrice > _selectedOfferUnitPrice) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        "₹$_selectedOfferOriginalPrice",
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 11,
-                          decoration: TextDecoration.lineThrough,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-              ],
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Text("🔥", style: TextStyle(fontSize: 13)),
-                      const SizedBox(width: 6),
-                      Text(
-                        "$_remainingBiryaniCount out of $_totalBiryaniCount biryanis remaining",
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: const Color(0xFFFDE68A)),
-                    ),
-                    child: Text(
-                      "${_totalBiryaniCount > 0 ? ((_remainingBiryaniCount / _totalBiryaniCount) * 100).toInt() : 0}% LEFT",
-                      style: const TextStyle(
-                        color: Color(0xFFB45309),
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 5),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(5),
-                child: LinearProgressIndicator(
-                  value: _totalBiryaniCount > 0 ? (_remainingBiryaniCount / _totalBiryaniCount).clamp(0.0, 1.0) : 0.0,
-                  minHeight: 5,
-                  backgroundColor: const Color(0xFFF1F5F9),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEA580C)),
-                ),
-              ),
-            ],
+          child: Text(
+            'Holding On : $_remainingBiryaniCount',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 0.4,
+            ),
           ),
         ),
 
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
 
-        // 3. Shop Advertisements Carousel (Placed above the button)
-        _buildShopAdCarousel(),
-
-        const SizedBox(height: 8),
-
-        // 4. "Get This Offer" Button (Placed at the bottom)
+        // 4. Primary Order Now Pill Button
         SizedBox(
           width: double.infinity,
-          height: 46,
+          height: 50,
           child: ElevatedButton(
             onPressed: () => _openFirstTimeOfferAddressConfirmSheet(context),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEA580C),
+              backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               elevation: 4,
-              shadowColor: const Color(0xFFEA580C).withValues(alpha: 0.40),
+              shadowColor: AppColors.primaryDark.withValues(alpha: 0.35),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(25),
               ),
               padding: const EdgeInsets.symmetric(horizontal: 18),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.local_offer_rounded, size: 19, color: Colors.white),
-                const SizedBox(width: 8),
                 Text(
-                  "Order Now • ₹$_selectedOfferUnitPrice",
+                  "Order Now  •  ₹$_selectedOfferUnitPrice",
                   style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
                     letterSpacing: 0.2,
                   ),
                 ),
-                const SizedBox(width: 6),
-                const Icon(Icons.arrow_forward_rounded, size: 17, color: Colors.white),
+                const SizedBox(width: 8),
+                const Icon(Icons.arrow_forward_rounded, size: 19, color: Colors.white),
               ],
             ),
           ),
