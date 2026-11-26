@@ -157,19 +157,25 @@ router.get('/pending', async (req, res) => {
         partnerMatchList.push(`dp_${numClean.padStart(3, '0')}`);
       }
 
-      // Check if this delivery partner currently has an active ongoing delivery
+      // Check if this delivery partner currently has active deliveries
       const recentActiveThreshold = new Date(Date.now() - 12 * 60 * 60 * 1000);
-      const hasActiveOngoing = await Order.exists({
+      const activePartnerOrders = await Order.find({
         partner_id: { $in: partnerMatchList },
-        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+        status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'queued_accepted'] },
         created_at: { $gte: recentActiveThreshold }
-      });
+      }).select('order_id status bill_confirmed').lean();
+
+      const hasLateStage = activePartnerOrders.some(o => ['bill_sent', 'picked_up', 'in_transit'].includes(o.status) || o.bill_confirmed);
+      const hasQueued = activePartnerOrders.some(o => o.status === 'queued_accepted');
+      // Partner is eligible for 2nd (batch/stacked) order if they have exactly 1 order in pre-bill stage
+      const isBatchEligible = !hasLateStage && !hasQueued && activePartnerOrders.length === 1 && ['accepted', 'purchasing_food'].includes(activePartnerOrders[0].status);
+      const isCompletelyFree = activePartnerOrders.length === 0;
 
       const orConditions = [
-        // Ongoing accepted active orders for this partner (always allow them to view and complete their ongoing order)
+        // Ongoing accepted / queued active orders for this partner (always allow them to view and complete their ongoing orders)
         {
           partner_id: { $in: partnerMatchList },
-          status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+          status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'queued_accepted'] }
         },
         {
           partner_id: { $in: partnerMatchList },
@@ -183,16 +189,19 @@ router.get('/pending', async (req, res) => {
       ];
 
       // 🛑 STRICT PROXIMITY SEQUENTIAL DISPATCH:
-      // An unaccepted pending order is offered to the currently assigned nearest partner, or any online partner if unassigned!
-      if (!hasActiveOngoing && isPartnerOnline && isLocationEligible) {
+      // Offer pending order to partner if they are completely free OR eligible for a pre-bill stacked order!
+      if ((isCompletelyFree || isBatchEligible) && isPartnerOnline && isLocationEligible) {
+        const pendingOrConditions = [
+          { current_assigned_partner_id: { $in: partnerMatchList } }
+        ];
+        if (isCompletelyFree) {
+          pendingOrConditions.push({ current_assigned_partner_id: null }, { current_assigned_partner_id: '' });
+        }
+
         orConditions.unshift({
           status: 'pending',
           created_at: { $gte: pendingThreshold },
-          $or: [
-            { current_assigned_partner_id: { $in: partnerMatchList } },
-            { current_assigned_partner_id: null },
-            { current_assigned_partner_id: '' }
-          ],
+          $or: pendingOrConditions,
           declined_partners: { $nin: partnerMatchList },
           timed_out_partners: { $nin: partnerMatchList }
         });
@@ -304,7 +313,7 @@ router.get('/active/:user_id', async (req, res) => {
     if (targetOrderId) {
       query = {
         order_id: targetOrderId,
-        status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'delivered', 'completed'] }
+        status: { $in: ['pending', 'accepted', 'queued_accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'delivered', 'completed'] }
       };
     } else {
       query = {
@@ -313,7 +322,7 @@ router.get('/active/:user_id', async (req, res) => {
           { customer_phone: rawUserId },
           { customer_phone: new RegExp(rawUserId.replace(/\D/g, '') + '$') }
         ],
-        status: { $in: ['pending', 'accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+        status: { $in: ['pending', 'accepted', 'queued_accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
       };
     }
 
@@ -419,15 +428,32 @@ router.post('/accept', async (req, res) => {
       }
     }
 
+    // Check if this partner already has an active ongoing delivery (order other than this one)
+    const existingActive = await Order.findOne({
+      partner_id: resolvedPartnerId,
+      order_id: { $ne: order_id },
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+    }).sort({ created_at: -1 });
+
+    const isBatchQueued = Boolean(existingActive);
+    const targetStatus = isBatchQueued ? 'queued_accepted' : 'accepted';
+    const queuedBehindId = isBatchQueued ? existingActive.order_id : null;
+
+    if (isBatchQueued) {
+      console.log(`📦 [Batch Accept] Partner ${resolvedPartnerId} accepted Order #${order_id} in QUEUED status behind active Order #${queuedBehindId}`);
+    }
+
     const order = await Order.findOneAndUpdate(
-      { order_id, status: { $in: ['pending', 'accepted', 'purchasing_food'] } },
+      { order_id, status: { $in: ['pending', 'accepted', 'purchasing_food', 'queued_accepted'] } },
       {
         partner_id: resolvedPartnerId,
         partner_name: actualPartnerName,
         partner_phone: actualPartnerPhone,
         partner_profile_picture: partnerPhotoUrl,
         partner_photo_url: partnerPhotoUrl,
-        status: 'accepted',
+        status: targetStatus,
+        queued_behind_order_id: queuedBehindId,
+        is_batch_order: isBatchQueued,
         bill_confirmed: false,
         bill_image_url: null,
         bill_images: [],
@@ -812,6 +838,65 @@ router.post('/decline', async (req, res) => {
   }
 });
 
+// Helper to automatically activate a queued 2nd order when a delivery partner completes their 1st order
+async function activateNextQueuedOrder(partnerId, completedOrderId) {
+  if (!partnerId) return null;
+  try {
+    const queuedOrder = await Order.findOne({
+      partner_id: partnerId,
+      status: 'queued_accepted'
+    }).sort({ created_at: 1 });
+
+    if (queuedOrder) {
+      console.log(`🚀 [Batch Order Activation] Partner ${partnerId} completed #${completedOrderId}. Activating queued Order #${queuedOrder.order_id}!`);
+      queuedOrder.status = 'purchasing_food';
+      queuedOrder.queued_behind_order_id = null;
+      await queuedOrder.save();
+
+      // Update LiveLocation to point to this now-active order
+      try {
+        const LiveLocation = require('../models/LiveLocation');
+        await LiveLocation.updateMany(
+          { partner_id: partnerId },
+          { status: 'purchasing', order_id: queuedOrder.order_id }
+        );
+      } catch (_) {}
+
+      // Notification for Customer 2: live tracking is now active
+      try {
+        const Notification = require('../models/Notification');
+        const notifIdCust = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifIdCust,
+          recipient_id: queuedOrder.user_id,
+          recipient_type: 'customer',
+          order_id: queuedOrder.order_id,
+          title: '🛵 Partner is Processing Your Order!',
+          message: `Your delivery partner has completed their prior delivery and is now proceeding with your order! Live tracking is now active.`
+        });
+
+        // Notification for Delivery Partner: prompt to proceed with 2nd order
+        const notifIdPartner = await getNextSequence('notification_id', 'NOTIF-', 4);
+        await Notification.create({
+          notification_id: notifIdPartner,
+          recipient_id: partnerId,
+          recipient_type: 'partner',
+          order_id: queuedOrder.order_id,
+          title: `📦 Order #${queuedOrder.order_id} is Now Active!`,
+          message: `First delivery completed! Order #${queuedOrder.order_id} is now active. Please purchase items and send the bill.`
+        });
+      } catch (notifErr) {
+        console.error('Error sending queued order notification:', notifErr.message);
+      }
+
+      return queuedOrder;
+    }
+  } catch (err) {
+    console.error('Error in activateNextQueuedOrder:', err);
+  }
+  return null;
+}
+
 // POST /api/order/update-status - Update order lifecycle status
 router.post('/update-status', async (req, res) => {
   try {
@@ -852,12 +937,16 @@ router.post('/update-status', async (req, res) => {
 
     if (status === 'delivered') {
       try {
-        const LiveLocation = require('../models/LiveLocation');
-        if (order.partner_id) {
-          await LiveLocation.updateMany(
-            { partner_id: order.partner_id },
-            { status: 'idle', order_id: null }
-          );
+        // Activate any queued 2nd order for this partner, or set LiveLocation to idle
+        const nextActiveOrder = await activateNextQueuedOrder(order.partner_id, order.order_id);
+        if (!nextActiveOrder) {
+          const LiveLocation = require('../models/LiveLocation');
+          if (order.partner_id) {
+            await LiveLocation.updateMany(
+              { partner_id: order.partner_id },
+              { status: 'idle', order_id: null }
+            );
+          }
         }
         const Notification = require('../models/Notification');
         if (order.user_id) {
@@ -919,14 +1008,17 @@ router.post('/verify-delivery-otp', async (req, res) => {
     order.payment_status = 'success';
     await order.save();
 
-    // Release partner's LiveLocation to idle
+    // Activate any queued 2nd order for this partner, or set LiveLocation to idle
     try {
-      if (order.partner_id) {
-        const LiveLocation = require('../models/LiveLocation');
-        await LiveLocation.updateMany(
-          { partner_id: order.partner_id },
-          { status: 'idle', order_id: null }
-        );
+      const nextActiveOrder = await activateNextQueuedOrder(order.partner_id, order.order_id);
+      if (!nextActiveOrder) {
+        if (order.partner_id) {
+          const LiveLocation = require('../models/LiveLocation');
+          await LiveLocation.updateMany(
+            { partner_id: order.partner_id },
+            { status: 'idle', order_id: null }
+          );
+        }
       }
     } catch (_) {}
 
@@ -1100,20 +1192,23 @@ router.post('/cancel', async (req, res) => {
 
     console.log(`❌ Order ${order_id} cancelled by ${cancelled_by || 'customer'}: ${cancel_reason || defaultReason}`);
 
-    // Free the delivery partner so they immediately become available to accept new incoming orders
+    // Free the delivery partner or activate their next queued order
     try {
       const partnerIdToFree = existing.partner_id || existing.current_assigned_partner_id;
       if (partnerIdToFree) {
-        const LiveLocation = require('../models/LiveLocation');
-        await LiveLocation.updateMany(
-          { partner_id: partnerIdToFree },
-          { status: 'idle', order_id: null, is_online: true }
-        );
-        const DeliveryPerson = require('../models/DeliveryPerson');
-        await DeliveryPerson.findOneAndUpdate(
-          { DP_id: partnerIdToFree },
-          { dp_status: 'online' }
-        );
+        const activatedNext = await activateNextQueuedOrder(partnerIdToFree, existing.order_id);
+        if (!activatedNext) {
+          const LiveLocation = require('../models/LiveLocation');
+          await LiveLocation.updateMany(
+            { partner_id: partnerIdToFree },
+            { status: 'idle', order_id: null, is_online: true }
+          );
+          const DeliveryPerson = require('../models/DeliveryPerson');
+          await DeliveryPerson.findOneAndUpdate(
+            { DP_id: partnerIdToFree },
+            { dp_status: 'online' }
+          );
+        }
       }
     } catch (freeErr) {
       console.warn('Error releasing partner on cancel:', freeErr.message);
@@ -1173,7 +1268,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     // Build resilient query strictly for this partner
     let query;
     if (!partnerId || partnerId === 'all') {
-      query = { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted'] } };
+      query = { status: { $in: ['delivered', 'cancelled', 'in_transit', 'picked_up', 'bill_sent', 'purchasing_food', 'accepted', 'queued_accepted'] } };
     } else {
       query = {
         $or: [
@@ -1184,7 +1279,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     }
 
     // High performance projection: select only lightweight metadata fields (skip massive base64 images)
-    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name quantity budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at items';
+    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name quantity budget partner_id partner_name partner_phone status queued_behind_order_id is_batch_order decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at items';
 
     let orders = await Order.find(query)
       .select(projection)
