@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const Bill = require('../models/Bill');
 const Order = require('../models/Order');
@@ -54,6 +54,28 @@ router.post('/submit', async (req, res) => {
 
     // ✅ Fetch the order for customer coordinates + existing tip
     const existingOrder = await Order.findOne({ order_id }).lean();
+
+    // 🛑 STRICT BATCH CHECK: First order MUST be completed & delivered before submitting bill for 2nd queued order!
+    if (existingOrder && (existingOrder.status === 'queued_accepted' || existingOrder.queued_behind_order_id)) {
+      const activeFirstOrder = await Order.findOne({
+        $or: [
+          { order_id: existingOrder.queued_behind_order_id },
+          {
+            partner_id: existingOrder.partner_id || partner_id,
+            order_id: { $ne: order_id },
+            status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] }
+          }
+        ]
+      }).select('order_id status').lean();
+
+      if (activeFirstOrder && activeFirstOrder.status !== 'delivered' && activeFirstOrder.status !== 'cancelled') {
+        return res.status(400).json({
+          success: false,
+          error: 'FIRST_ORDER_INCOMPLETE',
+          message: `Please complete and deliver your first active order (#${activeFirstOrder.order_id}) before submitting the bill for this queued order.`
+        });
+      }
+    }
     const effectiveTip = (Number(tip_amount) && Number(tip_amount) >= 10)
       ? Number(tip_amount)
       : (existingOrder && existingOrder.tip_amount && existingOrder.tip_amount >= 10 ? existingOrder.tip_amount : 10);

@@ -76,6 +76,7 @@ const OrderSchema = new mongoose.Schema({
     enum: [
       'pending',
       'accepted',
+      'queued_accepted',
       'purchasing_food',
       'bill_sent',
       'picked_up',
@@ -244,6 +245,15 @@ const OrderSchema = new mongoose.Schema({
     }
   ],
   bill_confirmed: {
+    type: Boolean,
+    default: false
+  },
+  queued_behind_order_id: {
+    type: String,
+    default: null,
+    index: true
+  },
+  is_batch_order: {
     type: Boolean,
     default: false
   }

@@ -135,9 +135,9 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     // 2. Find any partners currently engaged in active orders within the last 12 hours
     const recentThreshold = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const activeOrders = await Order.find({
-      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit'] },
+      status: { $in: ['accepted', 'purchasing_food', 'bill_sent', 'picked_up', 'in_transit', 'queued_accepted'] },
       created_at: { $gte: recentThreshold }
-    }).select('partner_id').lean();
+    }).select('partner_id status bill_confirmed').lean();
 
     // Also exclude partners who currently have an unexpired pending assignment for another order
     const pendingQuery = {
@@ -151,17 +151,40 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     }
     const pendingOrders = await Order.find(pendingQuery).select('current_assigned_partner_id').lean();
 
-    const busyPartnerIds = new Set();
+    // Group active orders per partner to identify free vs pre-bill (batch eligible) vs fully busy
+    const partnerActiveOrdersMap = new Map();
     for (const o of activeOrders) {
       if (o.partner_id) {
-        busyPartnerIds.add(toCanonicalId(o.partner_id));
-        busyPartnerIds.add(o.partner_id.toString().trim().toLowerCase());
+        const idLower = o.partner_id.toString().trim().toLowerCase();
+        const canon = toCanonicalId(o.partner_id);
+        const list = partnerActiveOrdersMap.get(idLower) || [];
+        list.push(o);
+        partnerActiveOrdersMap.set(idLower, list);
+        if (canon) partnerActiveOrdersMap.set(canon, list);
       }
     }
+
+    const fullyBusyPartnerIds = new Set();
+    const preBillPartnerIds = new Set(); // Eligible for 2nd order (pre-bill stage)
+
     for (const o of pendingOrders) {
       if (o.current_assigned_partner_id) {
-        busyPartnerIds.add(toCanonicalId(o.current_assigned_partner_id));
-        busyPartnerIds.add(o.current_assigned_partner_id.toString().trim().toLowerCase());
+        fullyBusyPartnerIds.add(toCanonicalId(o.current_assigned_partner_id));
+        fullyBusyPartnerIds.add(o.current_assigned_partner_id.toString().trim().toLowerCase());
+      }
+    }
+
+    for (const [pId, orders] of partnerActiveOrdersMap.entries()) {
+      const hasQueued = orders.some(o => o.status === 'queued_accepted');
+      const hasLateStage = orders.some(o => ['bill_sent', 'picked_up', 'in_transit'].includes(o.status) || o.bill_confirmed === true);
+
+      if (orders.length >= 2 || hasQueued || hasLateStage) {
+        fullyBusyPartnerIds.add(pId);
+      } else if (orders.length === 1 && ['accepted', 'purchasing_food'].includes(orders[0].status) && !orders[0].bill_confirmed) {
+        // Exactly 1 active order, still in pre-bill state (haven't sent bill yet) -> eligible for 2nd order!
+        preBillPartnerIds.add(pId);
+      } else {
+        fullyBusyPartnerIds.add(pId);
       }
     }
 
@@ -184,6 +207,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     // 4. Candidate matching and distance calculation
     const activeCandidates = [];
     const fallbackCandidates = [];
+    const batchCandidates = []; // Pre-bill candidates eligible for stacked / 2nd order
     const now = Date.now();
     const LOCATION_ACTIVE_WINDOW_MS = 5 * 60 * 1000; // ✅ FIX 2: 5 minutes freshness (was 25 min — too stale)
 
@@ -195,8 +219,8 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       const dpIdLower = dpId.toLowerCase();
       const canonId = toCanonicalId(dpId);
 
-      // Check if busy with ongoing order or pending offer
-      if (busyPartnerIds.has(dpIdLower) || (canonId && busyPartnerIds.has(canonId))) {
+      // Check if fully busy (e.g. 2 orders, or in late stage delivering with bill sent)
+      if (fullyBusyPartnerIds.has(dpIdLower) || (canonId && fullyBusyPartnerIds.has(canonId))) {
         continue;
       }
 
@@ -240,7 +264,12 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
         distance_km: distance
       };
 
-      if (isLocationActiveNow) {
+      const isPreBillPartner = preBillPartnerIds.has(dpIdLower) || (canonId && preBillPartnerIds.has(canonId));
+
+      if (isPreBillPartner) {
+        // Pre-bill partner (already has 1 order, still at shop / hasn't sent bill yet)
+        batchCandidates.push(candidateObj);
+      } else if (isLocationActiveNow) {
         activeCandidates.push(candidateObj);
       } else {
         fallbackCandidates.push(candidateObj);
@@ -257,10 +286,10 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       const inRing = activeCandidates.filter(c => c.distance_km <= ringKm);
       if (inRing.length > 0) {
         inRing.sort((a, b) => a.distance_km - b.distance_km);
-        console.log(`🎯 [Ring Dispatch] Ring ${ringKm}km → ${inRing.length} active partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
+        console.log(`🎯 [Ring Dispatch] Ring ${ringKm}km → ${inRing.length} active free partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
         return inRing;
       }
-      console.log(`🔍 [Ring Dispatch] Ring ${ringKm}km → No active partners. Expanding...`);
+      console.log(`🔍 [Ring Dispatch] Ring ${ringKm}km → No active free partners. Expanding...`);
     }
 
     // Priority 2: Fallback candidates (stale GPS or offline flag missing) — same ring logic
@@ -268,7 +297,17 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       const inRing = fallbackCandidates.filter(c => c.distance_km <= ringKm);
       if (inRing.length > 0) {
         inRing.sort((a, b) => a.distance_km - b.distance_km);
-        console.log(`🔄 [Ring Dispatch] Fallback Ring ${ringKm}km → ${inRing.length} partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
+        console.log(`🔄 [Ring Dispatch] Fallback Ring ${ringKm}km → ${inRing.length} free partner(s). Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
+        return inRing;
+      }
+    }
+
+    // Priority 3: Pre-Bill Batch Candidates (Partners with 1 order who haven't sent bill yet)
+    for (const ringKm of DISPATCH_RINGS_KM) {
+      const inRing = batchCandidates.filter(c => c.distance_km <= ringKm);
+      if (inRing.length > 0) {
+        inRing.sort((a, b) => a.distance_km - b.distance_km);
+        console.log(`📦 [Batch Ring Dispatch] Ring ${ringKm}km → ${inRing.length} pre-bill partner(s) eligible for 2nd order. Nearest: ${inRing[0].partner_id} (${inRing[0].distance_km}km)`);
         return inRing;
       }
     }
