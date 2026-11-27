@@ -124,6 +124,8 @@ class ApiConfig {
   // Offer Banner Endpoints
   static Uri get bannerActive => Uri.parse('$baseUrl/api/banner/active');
   static Uri get bannerUpload => Uri.parse('$baseUrl/api/banner/upload');
+  static Uri get bannerSlidingActive => Uri.parse('$baseUrl/api/banner/sliding/active');
+  static Uri get quickCravingsActive => Uri.parse('$baseUrl/api/quick-cravings/active');
 
   // App Operational Schedule Endpoint (Store Online / Offline Window)
   static Uri get scheduleStatus => Uri.parse('$baseUrl/api/app-schedule/status');

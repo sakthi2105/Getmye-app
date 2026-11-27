@@ -44,6 +44,16 @@ const OrderSchema = new mongoose.Schema({
     type: Number,
     default: 1
   },
+  is_welcome_offer: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  order_type: {
+    type: String,
+    enum: ['regular', 'welcome_offer', 'custom'],
+    default: 'regular'
+  },
   partner_id: {
     type: String,
     default: null,

@@ -84,12 +84,185 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     },
   ];
 
+  // =========================================================================
+  // 🎠 REGULAR USER SLIDING BANNERS (HOMEPAGE CAROUSEL) STATES
+  // =========================================================================
+  int _selectedBannerType = 0; // 0 = First-Time Special Offer, 1 = Regular Sliding Carousel Banners
+  List<dynamic> slidingBanners = [];
+  bool isLoadingSliding = false;
+  bool isUploadingSliding = false;
+
+  final _slidingTitleController = TextEditingController(text: 'Chicken Biryani Special');
+  final _slidingItemController = TextEditingController(text: 'Chicken Biryani');
+  final _slidingTagController = TextEditingController(text: 'CRUSHING OFFER');
+  final _slidingOfferPriceController = TextEditingController(text: '49');
+  final _slidingOriginalPriceController = TextEditingController(text: '150');
+  final _slidingImageUrlController = TextEditingController();
+  final _slidingBase64Controller = TextEditingController();
+
+  String _selectedSlidingUploadTab = 'device'; // 'device', 'presets', 'url', 'base64'
+  Uint8List? _slidingPickedBytes;
+  String? _slidingPickedBase64;
+  String? _slidingPickedName;
+  String? _slidingPreviewImage;
+
+  final List<Map<String, String>> curatedSlidingPresets = [
+    {
+      'title': 'Woodfired Chicken Dum Biriyani',
+      'item': 'Chicken Biryani',
+      'price': '49',
+      'orig': '150',
+      'badge': 'CRUSHING OFFER',
+      'imageUrl': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&q=80',
+    },
+    {
+      'title': 'Hot & Spicy Chicken Shawarma',
+      'item': 'Chicken Shawarma',
+      'price': '30',
+      'orig': '110',
+      'badge': 'CRUSHING OFFER',
+      'imageUrl': 'https://images.unsplash.com/photo-1529006557810-274b9b2fc783?w=800&q=80',
+    },
+    {
+      'title': 'Hot & Steamy Momos',
+      'item': 'Hot & Steamy Momos',
+      'price': '39',
+      'orig': '120',
+      'badge': 'CRUSHING OFFER',
+      'imageUrl': 'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=800&q=80',
+    },
+    {
+      'title': 'Crispy Chicken Fried Rice',
+      'item': 'Chicken Fried Rice',
+      'price': '55',
+      'orig': '130',
+      'badge': 'BEST DEAL',
+      'imageUrl': 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=800&q=80',
+    },
+    {
+      'title': 'Golden Crispy Chicken 65',
+      'item': 'Chicken 65',
+      'price': '65',
+      'orig': '140',
+      'badge': 'CHEF SPECIAL',
+      'imageUrl': 'https://images.unsplash.com/photo-1610057099431-d73a1c9d2f2f?w=800&q=80',
+    },
+  ];
+
+  // =========================================================================
+  // 🥘 QUICK CRAVINGS (HOMEPAGE FOOD SUGGESTIONS) STATES
+  // =========================================================================
+  List<dynamic> quickCravings = [];
+  bool isLoadingCravings = false;
+  bool isUploadingCraving = false;
+
+  final _cravingNameController = TextEditingController(text: 'Chicken Biryani');
+  final _cravingRatingController = TextEditingController(text: '4.5');
+  final _cravingBudgetController = TextEditingController(text: '49');
+  final _cravingTimeController = TextEditingController(text: '20-25 mins');
+  final _cravingCuisineController = TextEditingController(text: 'Biryani • North Indian');
+  final _cravingIconController = TextEditingController(text: '🍗');
+  final _cravingImageUrlController = TextEditingController();
+  final _cravingBase64Controller = TextEditingController();
+
+  bool _cravingIsVeg = false;
+  String _selectedCravingUploadTab = 'device'; // 'device', 'presets', 'url', 'base64'
+  Uint8List? _cravingPickedBytes;
+  String? _cravingPickedBase64;
+  String? _cravingPickedName;
+  String? _cravingPreviewImage;
+
+  final List<Map<String, dynamic>> curatedCravingPresets = [
+    {
+      'name': 'Chicken Biryani',
+      'budget': '49',
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'Biryani • North Indian',
+      'icon': '🍗',
+      'isVeg': false,
+      'imageUrl': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&q=80',
+    },
+    {
+      'name': 'Chicken Shawarma',
+      'budget': '30',
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Rolls & Fast Food',
+      'icon': '🌯',
+      'isVeg': false,
+      'imageUrl': 'https://images.unsplash.com/photo-1529006557810-274b9b2fc783?w=800&q=80',
+    },
+    {
+      'name': 'Hot Momos',
+      'budget': '39',
+      'rating': '4.4',
+      'time': '15-20 mins',
+      'cuisine': 'Chinese • Street Food',
+      'icon': '🥟',
+      'isVeg': false,
+      'imageUrl': 'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=800&q=80',
+    },
+    {
+      'name': 'Crispy Dosa with Sambar',
+      'budget': '60',
+      'rating': '4.7',
+      'time': '10-15 mins',
+      'cuisine': 'South Indian • Tiffin',
+      'icon': '🥞',
+      'isVeg': true,
+      'imageUrl': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=800&q=80',
+    },
+    {
+      'name': 'Paneer Butter Masala',
+      'budget': '120',
+      'rating': '4.5',
+      'time': '20-25 mins',
+      'cuisine': 'North Indian • Curry',
+      'icon': '🍛',
+      'isVeg': true,
+      'imageUrl': 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=800&q=80',
+    },
+    {
+      'name': 'Chicken 65',
+      'budget': '110',
+      'rating': '4.6',
+      'time': '15-20 mins',
+      'cuisine': 'Starters • Appetizers',
+      'icon': '🍗',
+      'isVeg': false,
+      'imageUrl': 'https://images.unsplash.com/photo-1610057099431-d73a1c9d2f2f?w=800&q=80',
+    },
+    {
+      'name': 'Chicken Fried Rice',
+      'budget': '110',
+      'rating': '4.3',
+      'time': '20-25 mins',
+      'cuisine': 'Chinese • Fast Food',
+      'icon': '🍚',
+      'isVeg': false,
+      'imageUrl': 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=800&q=80',
+    },
+    {
+      'name': 'Fresh Mango Juice',
+      'budget': '50',
+      'rating': '4.8',
+      'time': '10-15 mins',
+      'cuisine': 'Beverages • Shakes',
+      'icon': '🥭',
+      'isVeg': true,
+      'imageUrl': 'https://images.unsplash.com/photo-1546173159-315724a31696?w=800&q=80',
+    },
+  ];
+
   @override
   void initState() {
     super.initState();
     fetchActiveBanner();
     fetchBannerHistory();
     fetchScheduleStatus();
+    fetchSlidingBanners();
+    fetchQuickCravings();
     _startScheduleTimer();
   }
 
@@ -104,6 +277,21 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     _totalStockController.dispose();
     _imageUrlController.dispose();
     _imageBase64Controller.dispose();
+    _slidingTitleController.dispose();
+    _slidingItemController.dispose();
+    _slidingTagController.dispose();
+    _slidingOfferPriceController.dispose();
+    _slidingOriginalPriceController.dispose();
+    _slidingImageUrlController.dispose();
+    _slidingBase64Controller.dispose();
+    _cravingNameController.dispose();
+    _cravingRatingController.dispose();
+    _cravingBudgetController.dispose();
+    _cravingTimeController.dispose();
+    _cravingCuisineController.dispose();
+    _cravingIconController.dispose();
+    _cravingImageUrlController.dispose();
+    _cravingBase64Controller.dispose();
     super.dispose();
   }
 
@@ -137,6 +325,464 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
         }
       }
     } catch (_) {}
+  }
+
+  // =========================================================================
+  // 🎠 SLIDING BANNERS API HANDLERS
+  // =========================================================================
+  Future<void> fetchSlidingBanners() async {
+    setState(() => isLoadingSliding = true);
+    try {
+      final res = await http.get(AdminApiConfig.bannerSlidingAll);
+      if (res.statusCode == 200) {
+        final decoded = json.decode(res.body);
+        if (mounted && decoded is Map<String, dynamic> && decoded['banners'] is List) {
+          setState(() {
+            slidingBanners = decoded['banners'] as List;
+            isLoadingSliding = false;
+          });
+          return;
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() => isLoadingSliding = false);
+  }
+
+  Future<void> _pickSlidingImage(ImageSource source) async {
+    try {
+      final file = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 700,
+        imageQuality: 85,
+      );
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        final base64Str = base64Encode(bytes);
+        setState(() {
+          _slidingPickedBytes = bytes;
+          _slidingPickedBase64 = 'data:image/jpeg;base64,$base64Str';
+          _slidingPickedName = file.name;
+          _slidingPreviewImage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting image: $e'), backgroundColor: AdminColors.danger),
+        );
+      }
+    }
+  }
+
+  Future<void> _publishSlidingBanner() async {
+    final itemText = _slidingItemController.text.trim();
+    if (itemText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter an item name (e.g. Chicken Biryani)'), backgroundColor: AdminColors.danger),
+      );
+      return;
+    }
+
+    setState(() => isUploadingSliding = true);
+
+    String? finalBase64;
+    String? finalUrl;
+
+    if (_selectedSlidingUploadTab == 'device') {
+      if (_slidingPickedBase64 == null) {
+        if (!mounted) return;
+        setState(() => isUploadingSliding = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select an image from your device first!'),
+            backgroundColor: AdminColors.danger,
+          ),
+        );
+        return;
+      }
+      finalBase64 = _slidingPickedBase64;
+    } else if (_selectedSlidingUploadTab == 'base64' && _slidingBase64Controller.text.trim().isNotEmpty) {
+      finalBase64 = _slidingBase64Controller.text.trim();
+    } else if (_selectedSlidingUploadTab == 'url' && _slidingImageUrlController.text.trim().isNotEmpty) {
+      finalUrl = _slidingImageUrlController.text.trim();
+    } else if (_selectedSlidingUploadTab == 'presets' && _slidingPreviewImage != null) {
+      finalUrl = _slidingPreviewImage;
+    }
+
+    try {
+      final res = await http.post(
+        AdminApiConfig.bannerSlidingUpload,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'title': _slidingTitleController.text.trim().isNotEmpty ? _slidingTitleController.text.trim() : itemText,
+          'item': itemText,
+          'tag': _slidingTagController.text.trim().isNotEmpty ? _slidingTagController.text.trim() : 'CRUSHING OFFER',
+          'offer_price': int.tryParse(_slidingOfferPriceController.text) ?? 49,
+          'budget': int.tryParse(_slidingOfferPriceController.text) ?? 49,
+          'original_price': int.tryParse(_slidingOriginalPriceController.text) ?? 150,
+          'image_base64': finalBase64,
+          'image_url': finalUrl,
+          'is_active': true,
+        }),
+      );
+
+      if (!mounted) return;
+      setState(() => isUploadingSliding = false);
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Expanded(child: Text('Sliding banner uploaded & live on Regular Customer Homepage!')),
+              ],
+            ),
+            backgroundColor: AdminColors.success,
+          ),
+        );
+        setState(() {
+          _slidingPickedBytes = null;
+          _slidingPickedBase64 = null;
+          _slidingPickedName = null;
+          _slidingPreviewImage = null;
+          _slidingImageUrlController.clear();
+          _slidingBase64Controller.clear();
+        });
+        fetchSlidingBanners();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to publish: HTTP ${res.statusCode}'), backgroundColor: AdminColors.danger),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => isUploadingSliding = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error uploading: $e'), backgroundColor: AdminColors.danger),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleSlidingBanner(String id) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return;
+
+    // 1. Optimistic UI update so the Switch flips immediately on screen!
+    final index = slidingBanners.indexWhere((b) => (b['banner_id'] ?? b['_id'] ?? '').toString() == cleanId);
+    if (index != -1) {
+      setState(() {
+        final cur = slidingBanners[index]['is_active'] == true;
+        slidingBanners[index]['is_active'] = !cur;
+      });
+    }
+
+    try {
+      final res = await http.post(AdminApiConfig.bannerSlidingToggle(cleanId));
+      if (res.statusCode == 200) {
+        fetchSlidingBanners();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to toggle: HTTP ${res.statusCode}'), backgroundColor: AdminColors.danger),
+        );
+        fetchSlidingBanners();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Network error: $e'), backgroundColor: AdminColors.danger),
+      );
+      fetchSlidingBanners();
+    }
+  }
+
+  Future<void> _deleteSlidingBanner(String id) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Sliding Banner?'),
+        content: const Text('Are you sure you want to remove this banner from the customer homepage carousel?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AdminColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    // Optimistic remove from UI list immediately!
+    setState(() {
+      slidingBanners.removeWhere((b) => (b['banner_id'] ?? b['_id'] ?? '').toString() == cleanId);
+    });
+
+    try {
+      final res = await http.delete(AdminApiConfig.bannerSlidingDelete(cleanId));
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Banner deleted successfully'), backgroundColor: AdminColors.success),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: HTTP ${res.statusCode}'), backgroundColor: AdminColors.danger),
+        );
+      }
+      fetchSlidingBanners();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e'), backgroundColor: AdminColors.danger),
+      );
+      fetchSlidingBanners();
+    }
+  }
+
+  // =========================================================================
+  // 🥘 QUICK CRAVINGS API HANDLERS
+  // =========================================================================
+  Future<void> fetchQuickCravings() async {
+    setState(() => isLoadingCravings = true);
+    try {
+      final res = await http.get(AdminApiConfig.quickCravingsAll);
+      if (res.statusCode == 200) {
+        final decoded = json.decode(res.body);
+        if (mounted && decoded is Map<String, dynamic> && decoded['cravings'] is List) {
+          setState(() {
+            quickCravings = decoded['cravings'] as List;
+            isLoadingCravings = false;
+          });
+          return;
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() => isLoadingCravings = false);
+  }
+
+  Future<void> _pickCravingImage(ImageSource source) async {
+    try {
+      final file = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 85,
+      );
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        final base64Str = base64Encode(bytes);
+        setState(() {
+          _cravingPickedBytes = bytes;
+          _cravingPickedBase64 = 'data:image/jpeg;base64,$base64Str';
+          _cravingPickedName = file.name;
+          _cravingPreviewImage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting image: $e'), backgroundColor: AdminColors.danger),
+        );
+      }
+    }
+  }
+
+  Future<void> _publishQuickCraving() async {
+    final nameText = _cravingNameController.text.trim();
+    if (nameText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a dish name (e.g. Chicken Biryani)'), backgroundColor: AdminColors.danger),
+      );
+      return;
+    }
+
+    String? finalImageBase64;
+    String? finalImageUrl;
+
+    if (_selectedCravingUploadTab == 'device') {
+      if (_cravingPickedBase64 != null && _cravingPickedBase64!.isNotEmpty) {
+        finalImageBase64 = _cravingPickedBase64;
+      } else if (_cravingPreviewImage != null && _cravingPreviewImage!.isNotEmpty) {
+        if (_cravingPreviewImage!.startsWith('http://') || _cravingPreviewImage!.startsWith('https://')) {
+          finalImageUrl = _cravingPreviewImage;
+        } else if (_cravingPreviewImage!.startsWith('data:image')) {
+          finalImageBase64 = _cravingPreviewImage;
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select an image from your device or choose a preset'), backgroundColor: AdminColors.danger),
+        );
+        return;
+      }
+    } else if (_selectedCravingUploadTab == 'presets') {
+      if (_cravingPreviewImage != null && _cravingPreviewImage!.isNotEmpty) {
+        finalImageUrl = _cravingPreviewImage;
+      } else {
+        final match = curatedCravingPresets.firstWhere(
+          (p) => p['name'].toString().toLowerCase() == nameText.toLowerCase(),
+          orElse: () => curatedCravingPresets.first,
+        );
+        finalImageUrl = match['imageUrl'];
+      }
+    } else if (_selectedCravingUploadTab == 'url') {
+      final url = _cravingImageUrlController.text.trim();
+      if (url.isEmpty || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid HTTP/HTTPS image URL'), backgroundColor: AdminColors.danger),
+        );
+        return;
+      }
+      finalImageUrl = url;
+    } else if (_selectedCravingUploadTab == 'base64') {
+      final b64 = _cravingBase64Controller.text.trim();
+      if (b64.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please paste a base64 image string'), backgroundColor: AdminColors.danger),
+        );
+        return;
+      }
+      finalImageBase64 = b64.startsWith('data:image') ? b64 : 'data:image/jpeg;base64,$b64';
+    }
+
+    if ((finalImageBase64 == null || finalImageBase64.isEmpty) &&
+        (finalImageUrl == null || finalImageUrl.isEmpty)) {
+      final match = curatedCravingPresets.firstWhere(
+        (p) => p['name'].toString().toLowerCase() == nameText.toLowerCase(),
+        orElse: () => curatedCravingPresets.first,
+      );
+      finalImageUrl = match['imageUrl'];
+    }
+
+    setState(() => isUploadingCraving = true);
+
+    try {
+      final rating = _cravingRatingController.text.trim().isEmpty ? '4.5' : _cravingRatingController.text.trim();
+      final budget = _cravingBudgetController.text.trim().isEmpty ? '49' : _cravingBudgetController.text.trim();
+      final time = _cravingTimeController.text.trim().isEmpty ? '20-25 mins' : _cravingTimeController.text.trim();
+      final cuisine = _cravingCuisineController.text.trim().isEmpty ? 'Special Delights' : _cravingCuisineController.text.trim();
+      final icon = _cravingIconController.text.trim().isEmpty ? (_cravingIsVeg ? '🥗' : '🍗') : _cravingIconController.text.trim();
+
+      final payload = {
+        'name': nameText,
+        'rating': rating,
+        'budget': budget,
+        'time': time,
+        'cuisine': cuisine,
+        'icon': icon,
+        'isVeg': _cravingIsVeg,
+        'image_base64': finalImageBase64,
+        'image_url': finalImageUrl,
+        'fallback_asset': _cravingIsVeg ? 'assets/craving_dosa.jpg' : 'assets/banner_biryani_crushing.jpg',
+        'is_active': true,
+      };
+
+      final res = await http.post(
+        AdminApiConfig.quickCravingsUpload,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(payload),
+      );
+
+      if (res.statusCode == 201 || res.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🎉 "$nameText" added to Quick Cravings!'),
+              backgroundColor: AdminColors.success,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          fetchQuickCravings();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Upload failed: HTTP ${res.statusCode}'), backgroundColor: AdminColors.danger),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload error: $e'), backgroundColor: AdminColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isUploadingCraving = false);
+    }
+  }
+
+  Future<void> _toggleCravingActive(String id, bool currentStatus) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return;
+
+    final newStatus = !currentStatus;
+    setState(() {
+      final index = quickCravings.indexWhere((c) => (c['craving_id'] ?? c['_id'] ?? '').toString() == cleanId);
+      if (index != -1) {
+        quickCravings[index]['is_active'] = newStatus;
+      }
+    });
+
+    try {
+      final res = await http.post(AdminApiConfig.quickCravingsToggle(cleanId));
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newStatus ? 'Quick Craving activated' : 'Quick Craving deactivated'),
+            backgroundColor: newStatus ? AdminColors.success : AdminColors.warning,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        fetchQuickCravings();
+      }
+    } catch (_) {
+      fetchQuickCravings();
+    }
+  }
+
+  Future<void> _deleteQuickCraving(String id, String name) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "$name"?'),
+        content: const Text('Are you sure you want to remove this item from customer Quick Cravings?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AdminColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() {
+      quickCravings.removeWhere((c) => (c['craving_id'] ?? c['_id'] ?? '').toString() == cleanId);
+    });
+
+    try {
+      final res = await http.delete(AdminApiConfig.quickCravingsDelete(cleanId));
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"$name" deleted successfully'), backgroundColor: AdminColors.success),
+        );
+      } else {
+        fetchQuickCravings();
+      }
+    } catch (_) {
+      fetchQuickCravings();
+    }
   }
 
   Future<void> fetchScheduleStatus() async {
@@ -497,6 +1143,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
               fetchActiveBanner();
               fetchBannerHistory();
               fetchScheduleStatus();
+              fetchSlidingBanners();
             },
           ),
           const SizedBox(width: 6),
@@ -507,6 +1154,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
               fetchActiveBanner();
               fetchBannerHistory();
               fetchScheduleStatus();
+              fetchSlidingBanners();
             },
           ),
           const SizedBox(width: 8),
@@ -524,6 +1172,59 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 🌟 Mode Selection Switcher: First-Time Offer Banner vs Regular User Sliding Banners
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  child: SegmentedButton<int>(
+                    style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return AdminColors.primary;
+                        }
+                        return Colors.white;
+                      }),
+                      foregroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return Colors.white;
+                        }
+                        return AdminColors.textPrimary;
+                      }),
+                      padding: WidgetStateProperty.all(const EdgeInsets.symmetric(vertical: 14)),
+                      shape: WidgetStateProperty.all(
+                        RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    segments: const [
+                      ButtonSegment<int>(
+                        value: 0,
+                        icon: Icon(Icons.local_offer_rounded),
+                        label: Text('First-Time Offer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
+                      ButtonSegment<int>(
+                        value: 1,
+                        icon: Icon(Icons.view_carousel_rounded),
+                        label: Text('Sliding Banners', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
+                      ButtonSegment<int>(
+                        value: 2,
+                        icon: Icon(Icons.restaurant_menu_rounded),
+                        label: Text('Quick Cravings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
+                    ],
+                    selected: {_selectedBannerType},
+                    onSelectionChanged: (newSelection) {
+                      setState(() => _selectedBannerType = newSelection.first);
+                      if (_selectedBannerType == 1) {
+                        fetchSlidingBanners();
+                      } else if (_selectedBannerType == 2) {
+                        fetchQuickCravings();
+                      }
+                    },
+                  ),
+                ),
+
+                if (_selectedBannerType == 0) ...[
                 // Top Explanatory Banner
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -604,13 +1305,20 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
 
                 // Banner History List
                 _buildBannerHistorySection(),
+              ] else if (_selectedBannerType == 1) ...[
+                // Regular User Sliding Banners (Carousel) Manager
+                _buildSlidingBannersSection(),
+              ] else ...[
+                // Quick Cravings (Food Suggestions) Manager
+                _buildQuickCravingsSection(),
               ],
-            ),
+            ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildStoreScheduleSection() {
     final startFormatted = '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
@@ -1714,6 +2422,1789 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
               },
             ),
         ],
+      ),
+    );
+  }
+
+  // =========================================================================
+  // 🎠 REGULAR USER SLIDING BANNERS (HOMEPAGE CAROUSEL) WIDGETS
+  // =========================================================================
+
+  Widget _buildSlidingBannersSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top Explanatory Banner
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AdminColors.primaryLight,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AdminColors.primarySubtle),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.view_carousel_rounded, color: AdminColors.primaryDark, size: 24),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Regular Customer Homepage - Sliding Carousel Banners',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: AdminColors.primaryDark,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Upload banners that auto-slide in 1024x571 aspect ratio on the customer app. When a customer taps any banner, the food item name and offer price will auto-fill into their order form!',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AdminColors.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Layout: Two columns on wider screens, stacked on mobile
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 700;
+            return Flex(
+              direction: isWide ? Axis.horizontal : Axis.vertical,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Left Column: Live Preview & Existing Banners List
+                Expanded(
+                  flex: isWide ? 5 : 0,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSlidingLivePreview(),
+                      const SizedBox(height: 20),
+                      _buildSlidingBannersList(),
+                    ],
+                  ),
+                ),
+                if (isWide) const SizedBox(width: 20) else const SizedBox(height: 20),
+
+                // Right Column: Upload New Banner Form
+                Expanded(
+                  flex: isWide ? 5 : 0,
+                  child: _buildSlidingUploadForm(),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlidingLivePreview() {
+    final title = _slidingTitleController.text.trim().isNotEmpty
+        ? _slidingTitleController.text.trim()
+        : 'Special Offer Deal';
+    final item = _slidingItemController.text.trim().isNotEmpty
+        ? _slidingItemController.text.trim()
+        : 'Chicken Biryani';
+    final tag = _slidingTagController.text.trim().isNotEmpty
+        ? _slidingTagController.text.trim()
+        : 'CRUSHING OFFER';
+    final offerPrice = _slidingOfferPriceController.text.trim().isNotEmpty
+        ? _slidingOfferPriceController.text.trim()
+        : '49';
+    final origPrice = _slidingOriginalPriceController.text.trim().isNotEmpty
+        ? _slidingOriginalPriceController.text.trim()
+        : '150';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AdminColors.border),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.remove_red_eye_rounded, size: 18, color: AdminColors.primary),
+                  SizedBox(width: 6),
+                  Text(
+                    'Live Customer App Preview',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: AdminColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  '1024 : 571 Ratio',
+                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Exact Aspect Ratio Card (1024 x 571) as in Customer App!
+          AspectRatio(
+            aspectRatio: 1024 / 571,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Background Image
+                    _buildSlidingPreviewImageWidget(),
+
+                    // Dark gradient overlay for text readability
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.25),
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.8),
+                            ],
+                            stops: const [0.0, 0.45, 1.0],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Top Left Tag Badge
+                    Positioned(
+                      top: 10,
+                      left: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDC2626),
+                          borderRadius: BorderRadius.circular(6),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.2),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          tag,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Bottom Information Overlay
+                    Positioned(
+                      bottom: 10,
+                      left: 12,
+                      right: 12,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                    shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Pre-fills: "$item"',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Price Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF16A34A),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (origPrice.isNotEmpty) ...[
+                                  Text(
+                                    '₹$origPrice',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.7),
+                                      fontSize: 10,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                ],
+                                Text(
+                                  '₹$offerPrice',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.touch_app_rounded, size: 14, color: AdminColors.primary),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  'Customer Action: Tapping this in app sets Order Item="$item" & Budget=₹$offerPrice',
+                  style: const TextStyle(fontSize: 11, color: AdminColors.textSecondary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlidingPreviewImageWidget() {
+    if (_slidingPickedBytes != null) {
+      return Image.memory(_slidingPickedBytes!, fit: BoxFit.cover);
+    }
+    if (_slidingPreviewImage != null && _slidingPreviewImage!.isNotEmpty) {
+      if (_slidingPreviewImage!.startsWith('http://') || _slidingPreviewImage!.startsWith('https://')) {
+        return Image.network(
+          _slidingPreviewImage!,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildSlidingPlaceholder(),
+        );
+      }
+    }
+    final urlText = _slidingImageUrlController.text.trim();
+    if (urlText.isNotEmpty && (urlText.startsWith('http://') || urlText.startsWith('https://'))) {
+      return Image.network(
+        urlText,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _buildSlidingPlaceholder(),
+      );
+    }
+    return _buildSlidingPlaceholder();
+  }
+
+  Widget _buildSlidingPlaceholder() {
+    return Container(
+      color: const Color(0xFF1E293B),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.image_outlined, size: 40, color: Colors.white.withValues(alpha: 0.4)),
+            const SizedBox(height: 6),
+            Text(
+              'Select or Upload an Image (1024x571)',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSlidingBannersList() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AdminColors.border),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.collections_rounded, size: 18, color: AdminColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'All Uploaded Carousel Banners (${slidingBanners.length})',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AdminColors.textPrimary),
+                  ),
+                ],
+              ),
+              IconButton(
+                tooltip: 'Refresh Banners',
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                onPressed: fetchSlidingBanners,
+              ),
+            ],
+          ),
+          const Divider(height: 16),
+          if (isLoadingSliding)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (slidingBanners.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.view_carousel_outlined, size: 36, color: Colors.grey.shade400),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'No custom sliding banners yet.',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AdminColors.textPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Default app banners (Biryani, Shawarma, Momos) are currently displayed in Customer App.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: AdminColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: slidingBanners.length,
+              separatorBuilder: (_, __) => const Divider(height: 12),
+              itemBuilder: (context, index) {
+                final b = slidingBanners[index] as Map<String, dynamic>;
+                final bId = (b['banner_id'] ?? b['_id'] ?? '').toString().trim();
+                final bTitle = b['title'] ?? b['item'] ?? 'Offer';
+                final bItem = b['item'] ?? bTitle;
+                final bTag = b['tag'] ?? 'CRUSHING OFFER';
+                final bOffer = b['offer_price'] ?? 49;
+                final bOrig = b['original_price'] ?? 150;
+                final isActive = b['is_active'] == true;
+                final imgUrl = b['image_url'] as String?;
+                final base64 = b['image_base64'] as String?;
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 52,
+                      height: 52,
+                      child: imgUrl != null && imgUrl.isNotEmpty
+                          ? Image.network(
+                              imgUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: const Icon(Icons.broken_image, size: 20)),
+                            )
+                          : (base64 != null && base64.isNotEmpty
+                              ? Image.memory(
+                                  base64Decode(base64.contains(',') ? base64.split(',')[1] : base64),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: const Icon(Icons.broken_image, size: 20)),
+                                )
+                              : Container(color: Colors.grey.shade200, child: const Icon(Icons.fastfood_rounded, size: 20))),
+                    ),
+                  ),
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          bTitle,
+                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEE2E2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          bTag,
+                          style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  subtitle: Text(
+                    'Item: $bItem • Offer: ₹$bOffer (Orig: ₹$bOrig)',
+                    style: const TextStyle(fontSize: 11, color: AdminColors.textSecondary),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Switch(
+                        value: isActive,
+                        activeColor: AdminColors.primary,
+                        onChanged: (_) => _toggleSlidingBanner(bId),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete Banner',
+                        icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger, size: 20),
+                        onPressed: () => _deleteSlidingBanner(bId),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlidingUploadForm() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AdminColors.border),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Add / Upload New Carousel Banner',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: AdminColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'Select banner photo and set the deal price & auto-fill food item.',
+            style: TextStyle(fontSize: 12, color: AdminColors.textSecondary),
+          ),
+          const SizedBox(height: 16),
+
+          // Upload Tabs
+          Row(
+            children: [
+              _buildSlidingTabButton('device', 'Device', Icons.phone_android_rounded),
+              const SizedBox(width: 6),
+              _buildSlidingTabButton('presets', 'Presets', Icons.auto_awesome_rounded),
+              const SizedBox(width: 6),
+              _buildSlidingTabButton('url', 'URL', Icons.link_rounded),
+              const SizedBox(width: 6),
+              _buildSlidingTabButton('base64', 'Base64', Icons.code_rounded),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Tab Content
+          if (_selectedSlidingUploadTab == 'device') ...[
+            if (_slidingPickedBytes == null)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AdminColors.border, style: BorderStyle.solid),
+                ),
+                child: Center(
+                  child: Column(
+                    children: [
+                      const Icon(Icons.cloud_upload_outlined, size: 36, color: AdminColors.primary),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Upload Promotional Banner',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AdminColors.textPrimary),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Recommended: 1024 x 571 Landscape image',
+                        style: TextStyle(fontSize: 11, color: AdminColors.textSecondary),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AdminColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.photo_library_rounded, size: 16),
+                            label: const Text('Choose Photo', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            onPressed: () => _pickSlidingImage(ImageSource.gallery),
+                          ),
+                          const SizedBox(width: 10),
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AdminColors.textPrimary,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.camera_alt_rounded, size: 16),
+                            label: const Text('Camera', style: TextStyle(fontSize: 12)),
+                            onPressed: () => _pickSlidingImage(ImageSource.camera),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF86EFAC)),
+                ),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: Image.memory(_slidingPickedBytes!, fit: BoxFit.cover),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Ready to Upload', style: TextStyle(color: Color(0xFF166534), fontWeight: FontWeight.w800, fontSize: 12)),
+                          Text(
+                            _slidingPickedName ?? 'device_banner.jpg',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AdminColors.textPrimary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text('${(_slidingPickedBytes!.lengthInBytes / 1024).toStringAsFixed(1)} KB', style: const TextStyle(fontSize: 11, color: AdminColors.textSecondary)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger),
+                      onPressed: () {
+                        setState(() {
+                          _slidingPickedBytes = null;
+                          _slidingPickedBase64 = null;
+                          _slidingPickedName = null;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+          ] else if (_selectedSlidingUploadTab == 'presets') ...[
+            const Text('Tap any preset to auto-fill image and details:', style: TextStyle(fontSize: 11, color: AdminColors.textSecondary)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 100,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: curatedSlidingPresets.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, idx) {
+                  final p = curatedSlidingPresets[idx];
+                  final isSelected = _slidingPreviewImage == p['imageUrl'];
+                  return InkWell(
+                    onTap: () {
+                      setState(() {
+                        _slidingPreviewImage = p['imageUrl'];
+                        _slidingPickedBytes = null;
+                        _slidingPickedBase64 = null;
+                        _slidingTitleController.text = p['title'] ?? '';
+                        _slidingItemController.text = p['item'] ?? '';
+                        _slidingTagController.text = p['badge'] ?? 'CRUSHING OFFER';
+                        _slidingOfferPriceController.text = p['price'] ?? '49';
+                        _slidingOriginalPriceController.text = p['orig'] ?? '150';
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      width: 120,
+                      decoration: BoxDecoration(
+                        color: isSelected ? AdminColors.primaryLight : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected ? AdminColors.primary : AdminColors.border,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(p['imageUrl']!, fit: BoxFit.cover, width: double.infinity),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(p['item']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10.5), maxLines: 1),
+                          Text('₹${p['price']}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Color(0xFF16A34A))),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ] else if (_selectedSlidingUploadTab == 'url') ...[
+            TextField(
+              controller: _slidingImageUrlController,
+              decoration: InputDecoration(
+                labelText: 'Direct Image URL (https://...)',
+                hintText: 'https://example.com/banner.jpg',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.check_circle_rounded, color: AdminColors.primary),
+                  onPressed: () {
+                    setState(() {
+                      _slidingPreviewImage = _slidingImageUrlController.text.trim();
+                      _slidingPickedBytes = null;
+                    });
+                  },
+                ),
+              ),
+              onChanged: (val) {
+                setState(() {
+                  _slidingPreviewImage = val.trim();
+                  _slidingPickedBytes = null;
+                });
+              },
+            ),
+          ] else ...[
+            TextField(
+              controller: _slidingBase64Controller,
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: 'Base64 Image String',
+                hintText: 'data:image/jpeg;base64,...',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onChanged: (val) {
+                if (val.trim().isNotEmpty) {
+                  try {
+                    final clean = val.contains(',') ? val.split(',')[1] : val;
+                    final bytes = base64Decode(clean);
+                    setState(() {
+                      _slidingPickedBytes = bytes;
+                      _slidingPickedBase64 = val.trim();
+                      _slidingPreviewImage = null;
+                    });
+                  } catch (_) {}
+                }
+              },
+            ),
+          ],
+          const SizedBox(height: 18),
+
+          // Form Fields: Food Item, Title, Tag, Prices
+          TextField(
+            controller: _slidingItemController,
+            decoration: InputDecoration(
+              labelText: 'Food Item Name (Auto-fills Order Form) *',
+              hintText: 'e.g. Chicken Biryani, Chicken Shawarma',
+              prefixIcon: const Icon(Icons.fastfood_rounded, size: 20),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onChanged: (val) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+
+          TextField(
+            controller: _slidingTitleController,
+            decoration: InputDecoration(
+              labelText: 'Banner Title Heading',
+              hintText: 'e.g. Chicken Dum Biryani Special',
+              prefixIcon: const Icon(Icons.title_rounded, size: 20),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onChanged: (val) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _slidingTagController,
+                  decoration: InputDecoration(
+                    labelText: 'Offer Badge Tag',
+                    hintText: 'e.g. CRUSHING OFFER',
+                    prefixIcon: const Icon(Icons.local_offer_rounded, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onChanged: (val) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _slidingOfferPriceController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Offer Price / Budget (₹)',
+                    hintText: '49',
+                    prefixIcon: const Icon(Icons.currency_rupee_rounded, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onChanged: (val) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _slidingOriginalPriceController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Original (₹)',
+                    hintText: '150',
+                    prefixIcon: const Icon(Icons.money_off_rounded, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onChanged: (val) => setState(() {}),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Publish Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AdminColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              onPressed: isUploadingSliding ? null : _publishSlidingBanner,
+              icon: isUploadingSliding
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.cloud_upload_rounded, size: 20),
+              label: Text(
+                isUploadingSliding ? 'Publishing Sliding Banner...' : 'Publish Sliding Banner to Customer App',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlidingTabButton(String tabKey, String label, IconData icon) {
+    final isSelected = _selectedSlidingUploadTab == tabKey;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _selectedSlidingUploadTab = tabKey),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? AdminColors.primaryLight : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AdminColors.primary : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: isSelected ? AdminColors.primaryDark : AdminColors.textSecondary),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                  color: isSelected ? AdminColors.primaryDark : AdminColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =========================================================================
+  // 🥘 QUICK CRAVINGS (HOMEPAGE FOOD SUGGESTIONS) UI BUILDERS
+  // =========================================================================
+
+  Widget _buildQuickCravingsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top Explanatory Banner
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEF3C7),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFDE68A)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.restaurant_menu_rounded, color: Color(0xFFD97706), size: 24),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Quick Cravings Food Suggestions Manager',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Manage dishes displayed in the horizontal "Quick Cravings" section on customer homepage. Customers can tap any dish to auto-fill their order form!',
+                      style: TextStyle(fontSize: 12.5, color: Color(0xFFB45309)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 900;
+            return Flex(
+              direction: isWide ? Axis.horizontal : Axis.vertical,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Left Column: Live Preview & Cravings List
+                Expanded(
+                  flex: isWide ? 5 : 0,
+                  child: Column(
+                    children: [
+                      _buildQuickCravingLivePreview(),
+                      const SizedBox(height: 20),
+                      _buildQuickCravingsList(),
+                    ],
+                  ),
+                ),
+                if (isWide) const SizedBox(width: 20) else const SizedBox(height: 20),
+
+                // Right Column: Upload Form
+                Expanded(
+                  flex: isWide ? 5 : 0,
+                  child: _buildQuickCravingUploadForm(),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickCravingLivePreview() {
+    final nameText = _cravingNameController.text.trim().isEmpty ? 'Chicken Biryani' : _cravingNameController.text.trim();
+    final ratingText = _cravingRatingController.text.trim().isEmpty ? '4.5' : _cravingRatingController.text.trim();
+    final budgetText = _cravingBudgetController.text.trim().isEmpty ? '49' : _cravingBudgetController.text.trim();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AdminColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.remove_red_eye_outlined, size: 18, color: AdminColors.primary),
+                  SizedBox(width: 8),
+                  Text(
+                    'Customer Card Live Preview',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  '118 x 112 Compact Card',
+                  style: TextStyle(color: Color(0xFFB45309), fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Live Customer App Item Mockup
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: SizedBox(
+                width: 118,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Food Image Card
+                    Container(
+                      width: 118,
+                      height: 112,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _buildQuickCravingPreviewImageWidget(),
+                            // Top-Right: Heart Icon
+                            Positioned(
+                              top: 7,
+                              right: 7,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.favorite_border_rounded, color: Colors.white, size: 15),
+                              ),
+                            ),
+                            // Top-Left: Veg / Non-Veg Indicator
+                            Positioned(
+                              top: 7,
+                              left: 7,
+                              child: Container(
+                                padding: const EdgeInsets.all(2.5),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.95),
+                                  borderRadius: BorderRadius.circular(4),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.15),
+                                      blurRadius: 3,
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  Icons.circle,
+                                  size: 6,
+                                  color: _cravingIsVeg ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Dish Name
+                    Text(
+                      nameText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1E293B),
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+
+                    // Rating & Price Row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(1.5),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF15803D),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.star_rounded, size: 9.5, color: Colors.white),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              ratingText,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          '₹$budgetText',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: AdminColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickCravingPreviewImageWidget() {
+    if (_cravingPickedBytes != null) {
+      return Image.memory(
+        _cravingPickedBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _buildQuickCravingPlaceholder(),
+      );
+    } else if (_cravingPreviewImage != null && _cravingPreviewImage!.isNotEmpty) {
+      if (_cravingPreviewImage!.startsWith('http://') || _cravingPreviewImage!.startsWith('https://')) {
+        return Image.network(
+          _cravingPreviewImage!,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildQuickCravingPlaceholder(),
+        );
+      } else if (_cravingPreviewImage!.startsWith('data:image')) {
+        try {
+          final clean = _cravingPreviewImage!.contains(',') ? _cravingPreviewImage!.split(',')[1] : _cravingPreviewImage!;
+          return Image.memory(
+            base64Decode(clean),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildQuickCravingPlaceholder(),
+          );
+        } catch (_) {
+          return _buildQuickCravingPlaceholder();
+        }
+      }
+      return _buildQuickCravingPlaceholder();
+    } else if (_cravingImageUrlController.text.trim().isNotEmpty) {
+      final url = _cravingImageUrlController.text.trim();
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildQuickCravingPlaceholder(),
+        );
+      }
+    } else if (_cravingBase64Controller.text.trim().isNotEmpty) {
+      try {
+        final b64 = _cravingBase64Controller.text.trim();
+        final clean = b64.contains(',') ? b64.split(',')[1] : b64;
+        return Image.memory(
+          base64Decode(clean),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildQuickCravingPlaceholder(),
+        );
+      } catch (_) {
+        return _buildQuickCravingPlaceholder();
+      }
+    }
+    return _buildQuickCravingPlaceholder();
+  }
+
+  Widget _buildThumbPlaceholder(bool isVeg, dynamic icon) {
+    final emoji = (icon != null && icon.toString().isNotEmpty) ? icon.toString() : (isVeg ? '🥗' : '🍗');
+    return Container(
+      color: const Color(0xFFF1F5F9),
+      child: Center(
+        child: Text(emoji, style: const TextStyle(fontSize: 24)),
+      ),
+    );
+  }
+
+  Widget _buildQuickCravingPlaceholder() {
+    final iconEmoji = _cravingIconController.text.trim().isEmpty ? (_cravingIsVeg ? '🥗' : '🍗') : _cravingIconController.text.trim();
+    return Container(
+      color: const Color(0xFFF1F5F9),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(iconEmoji, style: const TextStyle(fontSize: 38)),
+            const SizedBox(height: 6),
+            const Text(
+              'Select an image',
+              style: TextStyle(color: AdminColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickCravingsList() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AdminColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.fastfood_rounded, size: 18, color: AdminColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'All Uploaded Quick Cravings (${quickCravings.length})',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 20, color: AdminColors.textSecondary),
+                tooltip: 'Refresh list',
+                onPressed: fetchQuickCravings,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          if (isLoadingCravings)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 30),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+            )
+          else if (quickCravings.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Center(
+                child: Text('No quick cravings found. Use the upload form to add items!'),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: quickCravings.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final c = quickCravings[index];
+                if (c is! Map) return const SizedBox.shrink();
+                final cId = (c['craving_id'] ?? c['_id'] ?? '').toString();
+                final name = (c['name'] ?? 'Dish').toString();
+                final rating = (c['rating'] ?? '4.5').toString();
+                final budget = (c['budget'] ?? '49').toString();
+                final isVeg = c['isVeg'] == true;
+                final isActive = c['is_active'] != false;
+                final imgUrl = c['image_url'] as String?;
+                final base64 = c['image_base64'] as String?;
+                final fallback = (c['fallback_asset'] ?? 'assets/banner_biryani_crushing.jpg').toString();
+
+                Widget thumbWidget;
+                if (base64 != null && base64.isNotEmpty) {
+                  try {
+                    final clean = base64.contains(',') ? base64.split(',')[1] : base64;
+                    thumbWidget = Image.memory(
+                      base64Decode(clean),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _buildThumbPlaceholder(isVeg, c['icon']),
+                    );
+                  } catch (_) {
+                    thumbWidget = _buildThumbPlaceholder(isVeg, c['icon']);
+                  }
+                } else if (imgUrl != null && imgUrl.isNotEmpty && (imgUrl.startsWith('http://') || imgUrl.startsWith('https://'))) {
+                  thumbWidget = Image.network(
+                    imgUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _buildThumbPlaceholder(isVeg, c['icon']),
+                  );
+                } else {
+                  thumbWidget = _buildThumbPlaceholder(isVeg, c['icon']);
+                }
+
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.white : const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: isActive ? const Color(0xFFE2E8F0) : const Color(0xFFCBD5E1)),
+                  ),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: SizedBox(width: 52, height: 52, child: thumbWidget),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: isVeg ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFDCFCE7),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.star_rounded, size: 10, color: Color(0xFF15803D)),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        rating,
+                                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '₹$budget',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AdminColors.primary),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  (c['time'] ?? '20-25 mins').toString(),
+                                  style: const TextStyle(fontSize: 10.5, color: AdminColors.textMuted),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: isActive,
+                        activeColor: AdminColors.primary,
+                        onChanged: (_) => _toggleCravingActive(cId, isActive),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded, color: AdminColors.danger, size: 20),
+                        tooltip: 'Delete craving',
+                        onPressed: () => _deleteQuickCraving(cId, name),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickCravingUploadForm() {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AdminColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.add_photo_alternate_rounded, size: 20, color: AdminColors.primary),
+              SizedBox(width: 8),
+              Text(
+                'Upload New Quick Craving',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Upload Tabs
+          Row(
+            children: [
+              _buildCravingTabButton('device', 'Device', Icons.phone_android_rounded),
+              const SizedBox(width: 8),
+              _buildCravingTabButton('presets', 'Presets', Icons.auto_awesome_rounded),
+              const SizedBox(width: 8),
+              _buildCravingTabButton('url', 'URL', Icons.link_rounded),
+              const SizedBox(width: 8),
+              _buildCravingTabButton('base64', 'Base64', Icons.code_rounded),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Tab Content
+          if (_selectedCravingUploadTab == 'device') ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: const BorderSide(color: AdminColors.primary),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () => _pickCravingImage(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_rounded, size: 18),
+                      label: const Text('Gallery', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: const BorderSide(color: AdminColors.primary),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () => _pickCravingImage(ImageSource.camera),
+                      icon: const Icon(Icons.camera_alt_rounded, size: 18),
+                      label: const Text('Camera', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (_selectedCravingUploadTab == 'presets') ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Tap any preset to auto-fill details and image:', style: TextStyle(fontSize: 11.5, color: AdminColors.textSecondary)),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: curatedCravingPresets.map((preset) {
+                      final name = preset['name'] as String;
+                      final icon = preset['icon'] as String;
+                      return ActionChip(
+                        avatar: Text(icon, style: const TextStyle(fontSize: 14)),
+                        label: Text(name, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.white,
+                        side: const BorderSide(color: Color(0xFFCBD5E1)),
+                        onPressed: () {
+                          setState(() {
+                            _cravingNameController.text = preset['name'];
+                            _cravingBudgetController.text = preset['budget'];
+                            _cravingRatingController.text = preset['rating'];
+                            _cravingTimeController.text = preset['time'];
+                            _cravingCuisineController.text = preset['cuisine'];
+                            _cravingIconController.text = preset['icon'];
+                            _cravingIsVeg = preset['isVeg'] == true;
+                            _cravingPreviewImage = preset['imageUrl'];
+                            _cravingPickedBytes = null;
+                            _cravingPickedBase64 = null;
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (_selectedCravingUploadTab == 'url') ...[
+            TextField(
+              controller: _cravingImageUrlController,
+              decoration: InputDecoration(
+                hintText: 'https://images.unsplash.com/...',
+                labelText: 'Image URL',
+                prefixIcon: const Icon(Icons.link_rounded),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ] else if (_selectedCravingUploadTab == 'base64') ...[
+            TextField(
+              controller: _cravingBase64Controller,
+              maxLines: 2,
+              decoration: InputDecoration(
+                hintText: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+                labelText: 'Base64 Image String',
+                prefixIcon: const Icon(Icons.code_rounded),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // Dish Name Field
+          TextField(
+            controller: _cravingNameController,
+            decoration: InputDecoration(
+              labelText: 'Dish Name *',
+              hintText: 'e.g. Chicken Shawarma',
+              prefixIcon: const Icon(Icons.restaurant_rounded),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+
+          // Rating and Budget Row
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _cravingRatingController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Star Rating *',
+                    hintText: '4.5',
+                    prefixIcon: const Icon(Icons.star_rounded, color: Color(0xFFEAB308)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _cravingBudgetController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Budget Price (₹) *',
+                    hintText: '49',
+                    prefixIcon: const Icon(Icons.currency_rupee_rounded),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Veg / Non-Veg Toggle & Emoji Icon Row
+          Row(
+            children: [
+              Expanded(
+                flex: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFCBD5E1)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 10,
+                            color: _cravingIsVeg ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _cravingIsVeg ? 'Veg Delights 🌱' : 'Non-Veg 🍗',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      Switch(
+                        value: _cravingIsVeg,
+                        activeColor: const Color(0xFF16A34A),
+                        onChanged: (val) => setState(() => _cravingIsVeg = val),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 4,
+                child: TextField(
+                  controller: _cravingIconController,
+                  decoration: InputDecoration(
+                    labelText: 'Emoji Icon',
+                    hintText: '🍗',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Prep Time & Cuisine
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _cravingTimeController,
+                  decoration: InputDecoration(
+                    labelText: 'Prep Time',
+                    hintText: '15-20 mins',
+                    prefixIcon: const Icon(Icons.timer_outlined, size: 18),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _cravingCuisineController,
+                  decoration: InputDecoration(
+                    labelText: 'Cuisine',
+                    hintText: 'Rolls & Fast Food',
+                    prefixIcon: const Icon(Icons.category_outlined, size: 18),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Submit Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD97706),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              onPressed: isUploadingCraving ? null : _publishQuickCraving,
+              icon: isUploadingCraving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.cloud_upload_rounded, size: 20),
+              label: Text(
+                isUploadingCraving ? 'Publishing Quick Craving...' : 'Publish to Customer Homepage',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCravingTabButton(String tabKey, String label, IconData icon) {
+    final isSelected = _selectedCravingUploadTab == tabKey;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _selectedCravingUploadTab = tabKey),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFFFEF3C7) : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? const Color(0xFFD97706) : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: isSelected ? const Color(0xFFB45309) : AdminColors.textSecondary),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                  color: isSelected ? const Color(0xFFB45309) : AdminColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

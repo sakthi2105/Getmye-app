@@ -15,8 +15,18 @@ const KUMBAKONAM_GEOFENCE = {
   errorMessage: "Sorry, our service is currently unavailable in your location. We’re planning to expand to your area in the future. Thank you for your patience and understanding!"
 };
 
+// Kumbakonam Mahamaham Kulam (Tank) Center Definition
+const MAHAMAHAM_KULAM_CENTER = {
+  latitude: 10.9585,
+  longitude: 79.3820,
+  name: "Kumbakonam Mahamaham Kulam Center"
+};
+
 // Progressive Ring Dispatch — Expanding radius rings (500m → 1km → 2km → 3.5km → 5km)
 const DISPATCH_RINGS_KM = [0.5, 1.0, 2.0, 3.5, 5.0];
+
+// Welcome Offer Dispatch Rings — First 500m (0.5km), then 1km (1.0km), then 2km (2.0km), plus town boundaries
+const WELCOME_OFFER_RINGS_KM = [0.5, 1.0, 2.0, 3.5, 5.0];
 
 // Calculate Haversine distance in kilometers between two GPS coordinates
 function calculateDistanceKm(lat1, lon1, lat2, lon2) {
@@ -91,7 +101,7 @@ function toCanonicalId(id) {
  * 4. Already have an active pending order offered to them
  * 5. Are in the excludedPartnerIds list (already declined or timed out for this specific order)
  */
-async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = [], excludeOrderId = null) {
+async function findAvailablePartners(customerLat, customerLng, excludedPartnerIds = [], excludeOrderId = null, customRings = null) {
   try {
     // 1. Get all delivery persons who are registered and ONLINE (case-insensitive)
     const deliveryPersons = await DeliveryPerson.find({
@@ -267,8 +277,12 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
     }
 
     // 5. Progressive Ring Dispatch — Expanding radius search (500m → 1km → 2km → 3.5km → 5km)
-    // Priority 1: Free Active candidates (online + fresh GPS within 5min)
-    for (const ringKm of DISPATCH_RINGS_KM) {
+    // Priority 1: Active candidates (online + fresh GPS within 5min)
+    const rings = (customRings && Array.isArray(customRings) && customRings.length > 0)
+      ? customRings
+      : DISPATCH_RINGS_KM;
+
+    for (const ringKm of rings) {
       const inRing = activeCandidates.filter(c => c.distance_km <= ringKm);
       if (inRing.length > 0) {
         inRing.sort((a, b) => a.distance_km - b.distance_km);
@@ -278,8 +292,8 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       console.log(`🔍 [Ring Dispatch] Ring ${ringKm}km → No active free partners. Expanding...`);
     }
 
-    // Priority 2: Free Fallback candidates (stale GPS or offline flag missing) — same ring logic
-    for (const ringKm of DISPATCH_RINGS_KM) {
+    // Priority 2: Fallback candidates (stale GPS or offline flag missing) — same ring logic
+    for (const ringKm of rings) {
       const inRing = fallbackCandidates.filter(c => c.distance_km <= ringKm);
       if (inRing.length > 0) {
         inRing.sort((a, b) => a.distance_km - b.distance_km);
@@ -298,7 +312,7 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
       }
     }
 
-    console.log(`⚠️ [Ring Dispatch] No partners found in any ring (max ${DISPATCH_RINGS_KM[DISPATCH_RINGS_KM.length - 1]}km)`);
+    console.log(`⚠️ [Ring Dispatch] No partners found in any ring (max ${rings[rings.length - 1]}km)`);
     return [];
   } catch (err) {
     console.error('Error finding available partners:', err);
@@ -315,6 +329,10 @@ async function findAvailablePartners(customerLat, customerLng, excludedPartnerId
 async function assignNextClosestPartner(orderDoc, originLat, originLng) {
   if (!orderDoc) return null;
 
+  const isWelcomeOffer = orderDoc.is_welcome_offer === true ||
+    orderDoc.order_type === 'welcome_offer' ||
+    (orderDoc.item_name && /welcome\s*offer|crushing\s*offer/i.test(orderDoc.item_name));
+
   const excluded = [
     ...(orderDoc.declined_partners || []),
     ...(orderDoc.timed_out_partners || [])
@@ -324,14 +342,23 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
     excluded.push(orderDoc.current_assigned_partner_id);
   }
 
-  const refLat = originLat != null ? originLat : orderDoc.customer_latitude;
-  const refLng = originLng != null ? originLng : orderDoc.customer_longitude;
+  let refLat = originLat != null ? originLat : orderDoc.customer_latitude;
+  let refLng = originLng != null ? originLng : orderDoc.customer_longitude;
+  let ringsToUse = DISPATCH_RINGS_KM;
+
+  if (isWelcomeOffer) {
+    refLat = MAHAMAHAM_KULAM_CENTER.latitude;
+    refLng = MAHAMAHAM_KULAM_CENTER.longitude;
+    ringsToUse = WELCOME_OFFER_RINGS_KM;
+    console.log(`🎁 [Welcome Offer Dispatch] Routing Order #${orderDoc.order_id} around Mahamaham Kulam (${refLat}, ${refLng}) using rings: 500m → 1km → 2km...`);
+  }
 
   let candidates = await findAvailablePartners(
     refLat,
     refLng,
     excluded,
-    orderDoc.order_id
+    orderDoc.order_id,
+    ringsToUse
   );
 
   // If no candidates found with exclusions, handle looping!
@@ -344,7 +371,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
         refLat,
         refLng,
         orderDoc.declined_partners || [],
-        orderDoc.order_id
+        orderDoc.order_id,
+        ringsToUse
       );
     }
 
@@ -357,7 +385,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
         refLat,
         refLng,
         [],
-        orderDoc.order_id
+        orderDoc.order_id,
+        ringsToUse
       );
     }
 
@@ -374,8 +403,8 @@ async function assignNextClosestPartner(orderDoc, originLat, originLng) {
           partner_id: anyOnlinePartner.DP_id,
           name: anyOnlinePartner.name || 'Delivery Partner',
           phone: anyOnlinePartner.mobile_number || '',
-          latitude: KUMBAKONAM_GEOFENCE.center.latitude,
-          longitude: KUMBAKONAM_GEOFENCE.center.longitude,
+          latitude: isWelcomeOffer ? MAHAMAHAM_KULAM_CENTER.latitude : KUMBAKONAM_GEOFENCE.center.latitude,
+          longitude: isWelcomeOffer ? MAHAMAHAM_KULAM_CENTER.longitude : KUMBAKONAM_GEOFENCE.center.longitude,
           distance_km: 1.0
         });
       }
@@ -459,8 +488,15 @@ async function checkAndReassignExpiredOrders() {
           console.log(`⏳ [Order Dispatch] Order ${order.order_id} has no assigned partner. Attempting to route to nearest available partner...`);
         }
 
-        // Reassign to next closest partner relative to CUSTOMER LOCATION
-        await assignNextClosestPartner(order, order.customer_latitude, order.customer_longitude);
+        // Reassign to next closest partner
+        // If welcome offer, reassign relative to Mahamaham Kulam Center!
+        const isOffer = order.is_welcome_offer === true ||
+          order.order_type === 'welcome_offer' ||
+          (order.item_name && /welcome\s*offer|crushing\s*offer/i.test(order.item_name));
+        const reassignLat = isOffer ? MAHAMAHAM_KULAM_CENTER.latitude : order.customer_latitude;
+        const reassignLng = isOffer ? MAHAMAHAM_KULAM_CENTER.longitude : order.customer_longitude;
+
+        await assignNextClosestPartner(order, reassignLat, reassignLng);
         await order.save();
         reassignedCount++;
       } catch (orderSaveErr) {
@@ -612,6 +648,8 @@ function calculateDeliveryFee(distanceKm) {
 }
 module.exports = {
   KUMBAKONAM_GEOFENCE,
+  MAHAMAHAM_KULAM_CENTER,
+  WELCOME_OFFER_RINGS_KM,
   calculateDistanceKm,
   isWithinKumbakonam,
   partnerIdsMatch,
