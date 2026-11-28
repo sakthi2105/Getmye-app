@@ -80,12 +80,14 @@ class _PaymentPageState extends State<PaymentPage> {
     required String partnerPhone,
     String? partnerPhoto,
     required String priceRange,
+    String partnerId = '',
   }) {
     if (!mounted || _isShowingPriceRangeDialog) return;
-    if (_lastPromptedPriceRange == '${orderId}_$priceRange') return;
+    final promptKey = '${orderId}_${partnerId}_$priceRange';
+    if (_lastPromptedPriceRange == promptKey) return;
 
     _isShowingPriceRangeDialog = true;
-    _lastPromptedPriceRange = '${orderId}_$priceRange';
+    _lastPromptedPriceRange = promptKey;
 
     AppNotificationService.showPriceRangeAcknowledgementNotification(
       orderId: orderId,
@@ -110,13 +112,36 @@ class _PaymentPageState extends State<PaymentPage> {
             });
           }
         },
-        onFindAnotherPartner: () {
+        onFindAnotherPartner: () async {
           _isShowingPriceRangeDialog = false;
-          Navigator.of(context).pop(); // redirect back to Home where search resumes!
+          _lastPromptedPriceRange = null;
+          final p = await SharedPreferences.getInstance();
+          await p.setBool('active_order_partner_accepted', false);
+          await p.remove('has_notified_partner_accepted_$orderId');
+          await p.remove('active_order_partner_name');
+          await p.remove('active_order_partner_phone');
+          await p.remove('active_order_partner_id');
+          await p.remove('active_order_partner_image');
+          await p.remove('active_order_partner_pic');
+          await p.setString('active_order_status', 'pending');
+          if (mounted) {
+            Navigator.of(context).pop(); // redirect back to Home where search resumes!
+          }
         },
-        onStopOrder: () {
+        onStopOrder: () async {
           _isShowingPriceRangeDialog = false;
-          Navigator.of(context).pop(); // redirect back to Home!
+          _lastPromptedPriceRange = null;
+          final p = await SharedPreferences.getInstance();
+          await p.setBool('has_active_order', false);
+          await p.remove('active_order_id');
+          await p.setString('active_order_status', 'cancelled');
+          await p.remove('active_order_partner_accepted');
+          await p.remove('active_order_partner_name');
+          await p.remove('active_order_partner_phone');
+          await p.remove('active_order_partner_id');
+          if (mounted) {
+            Navigator.of(context).pop(); // redirect back to Home!
+          }
         },
         onDeclined: () {
           _isShowingPriceRangeDialog = false;
@@ -452,9 +477,22 @@ class _PaymentPageState extends State<PaymentPage> {
               imgsChanged ||
               (orderBillImg != null && uploadedBillImageUrl != orderBillImg);
 
+          final String orderType = (order['order_type'] ?? '').toString().toLowerCase().trim();
+          final bool isWelcomeOffer = order['is_welcome_offer'] == true || orderType == 'welcome_offer';
           final String pr = (order['price_range'] ?? '').toString().trim();
-          if (pr.isNotEmpty && agreedPriceRange != pr) {
+          final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
+          if (!isWelcomeOffer && pr.isNotEmpty && agreedPriceRange != pr) {
             agreedPriceRange = pr;
+          }
+          if (!isWelcomeOffer && pr.isNotEmpty && prStatus == 'pending') {
+            _checkAndShowCustomerPriceRangeDialog(
+              orderId: currentOrderId,
+              partnerName: pName,
+              partnerPhone: pPhone,
+              partnerPhoto: pPic,
+              priceRange: pr,
+              partnerId: pId ?? '',
+            );
           }
 
           // 🚨 Customer Notification: Delivery Partner confirmed order and sent bill (ONLY when status is bill_sent)

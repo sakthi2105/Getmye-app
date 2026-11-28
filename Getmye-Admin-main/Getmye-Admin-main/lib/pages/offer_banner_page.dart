@@ -87,10 +87,17 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   // =========================================================================
   // 🎠 REGULAR USER SLIDING BANNERS (HOMEPAGE CAROUSEL) STATES
   // =========================================================================
-  int _selectedBannerType = 0; // 0 = First-Time Special Offer, 1 = Regular Sliding Carousel Banners
+  int _selectedBannerType = 0; // 0 = First-Time Special Offer, 1 = Regular Sliding Carousel Banners, 2 = Quick Cravings, 3 = Preferred Hotels
   List<dynamic> slidingBanners = [];
   bool isLoadingSliding = false;
   bool isUploadingSliding = false;
+
+  // Preferred Hotels Manager States
+  List<dynamic> preferredHotels = [];
+  bool isLoadingHotels = false;
+  bool isSavingHotel = false;
+  final _hotelNameController = TextEditingController();
+  final _hotelAreaController = TextEditingController();
 
   final _slidingTitleController = TextEditingController(text: 'Chicken Biryani Special');
   final _slidingItemController = TextEditingController(text: 'Chicken Biryani');
@@ -292,6 +299,8 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     _cravingIconController.dispose();
     _cravingImageUrlController.dispose();
     _cravingBase64Controller.dispose();
+    _hotelNameController.dispose();
+    _hotelAreaController.dispose();
     super.dispose();
   }
 
@@ -1211,6 +1220,11 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                         icon: Icon(Icons.restaurant_menu_rounded),
                         label: Text('Quick Cravings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                       ),
+                      ButtonSegment<int>(
+                        value: 3,
+                        icon: Icon(Icons.apartment_rounded),
+                        label: Text('Preferred Hotels', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
                     ],
                     selected: {_selectedBannerType},
                     onSelectionChanged: (newSelection) {
@@ -1219,6 +1233,8 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                         fetchSlidingBanners();
                       } else if (_selectedBannerType == 2) {
                         fetchQuickCravings();
+                      } else if (_selectedBannerType == 3) {
+                        fetchPreferredHotels();
                       }
                     },
                   ),
@@ -1308,9 +1324,12 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
               ] else if (_selectedBannerType == 1) ...[
                 // Regular User Sliding Banners (Carousel) Manager
                 _buildSlidingBannersSection(),
-              ] else ...[
+              ] else if (_selectedBannerType == 2) ...[
                 // Quick Cravings (Food Suggestions) Manager
                 _buildQuickCravingsSection(),
+              ] else ...[
+                // Preferred Hotels (Dropdown List) Manager
+                _buildPreferredHotelsSection(),
               ],
             ],
           ),
@@ -1617,12 +1636,24 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   }
 
   Widget _buildLivePreviewSection() {
-    final title = activeBanner?['title'] ?? _titleController.text;
-    final badge = activeBanner?['badge'] ?? _badgeController.text;
-    final offerPrice = activeBanner?['offer_price'] ?? _offerPriceController.text;
-    final origPrice = activeBanner?['original_price'] ?? _originalPriceController.text;
-    final remainingStock = activeBanner?['stock_remaining'] ?? _stockRemainingController.text;
-    final totalStock = activeBanner?['total_stock'] ?? _totalStockController.text;
+    final title = _titleController.text.trim().isNotEmpty
+        ? _titleController.text.trim()
+        : (activeBanner?['title'] ?? 'Special Dum Biriyani Deal');
+    final badge = _badgeController.text.trim().isNotEmpty
+        ? _badgeController.text.trim()
+        : (activeBanner?['badge'] ?? "TODAY'S SPECIAL");
+    final offerPrice = _offerPriceController.text.trim().isNotEmpty
+        ? _offerPriceController.text.trim()
+        : (activeBanner?['offer_price'] ?? '65');
+    final origPrice = _originalPriceController.text.trim().isNotEmpty
+        ? _originalPriceController.text.trim()
+        : (activeBanner?['original_price'] ?? '120');
+    final remainingStock = _stockRemainingController.text.trim().isNotEmpty
+        ? _stockRemainingController.text.trim()
+        : (activeBanner?['stock_remaining'] ?? '75');
+    final totalStock = _totalStockController.text.trim().isNotEmpty
+        ? _totalStockController.text.trim()
+        : (activeBanner?['total_stock'] ?? '100');
 
     final bannerBase64 = activeBanner?['image_base64'] as String?;
     final bannerUrl = activeBanner?['image_url'] as String?;
@@ -2218,6 +2249,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _offerPriceController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     labelText: 'Offer Price (₹)',
                     hintText: '65',
@@ -2229,6 +2261,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _originalPriceController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     labelText: 'Original (₹)',
                     hintText: '120',
@@ -4206,6 +4239,279 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
           ),
         ),
       ),
+    );
+  }
+
+  // =========================================================================
+  // 🏨 PREFERRED HOTELS MANAGER (Dropdown Items for Customer Home Page)
+  // =========================================================================
+  Future<void> fetchPreferredHotels() async {
+    setState(() => isLoadingHotels = true);
+    try {
+      final res = await http.get(AdminApiConfig.preferredHotelsAll).timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (mounted) {
+          setState(() {
+            preferredHotels = (data['hotels'] as List?) ?? [];
+            isLoadingHotels = false;
+          });
+        }
+        return;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => isLoadingHotels = false);
+  }
+
+  Future<void> _addPreferredHotel() async {
+    final name = _hotelNameController.text.trim();
+    final area = _hotelAreaController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter hotel name'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => isSavingHotel = true);
+    try {
+      final res = await http.post(
+        AdminApiConfig.preferredHotelsAdd,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': name, 'area': area}),
+      ).timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        _hotelNameController.clear();
+        _hotelAreaController.clear();
+        await fetchPreferredHotels();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Added "$name" to Preferred Hotels!'), backgroundColor: AdminColors.success),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add hotel: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isSavingHotel = false);
+    }
+  }
+
+  Future<void> _togglePreferredHotel(String id) async {
+    try {
+      final res = await http.patch(AdminApiConfig.preferredHotelsToggle(id)).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        await fetchPreferredHotels();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _deletePreferredHotel(String id, String name) async {
+    try {
+      final res = await http.delete(AdminApiConfig.preferredHotelsDelete(id)).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        await fetchPreferredHotels();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Removed "$name"'), backgroundColor: AdminColors.textPrimary),
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  Widget _buildPreferredHotelsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AdminColors.primaryLight,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AdminColors.primarySubtle),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.apartment_rounded, color: AdminColors.primary, size: 28),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Preferred Hotels Dropdown Manager',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AdminColors.textPrimary),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Active hotels added here appear in the Customer Regular Home Page "Preferred Hotels" dropdown.',
+                      style: TextStyle(fontSize: 12.5, color: AdminColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AdminColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Add New Preferred Hotel',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AdminColors.textPrimary),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _hotelNameController,
+                      decoration: InputDecoration(
+                        labelText: 'Hotel / Restaurant Name *',
+                        hintText: 'e.g. Hotel Saravana Bhavan',
+                        prefixIcon: const Icon(Icons.storefront_rounded, size: 20),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _hotelAreaController,
+                      decoration: InputDecoration(
+                        labelText: 'Area (Optional)',
+                        hintText: 'e.g. Kumbakonam',
+                        prefixIcon: const Icon(Icons.location_on_outlined, size: 20),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: isSavingHotel ? null : _addPreferredHotel,
+                      icon: isSavingHotel
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.add_rounded),
+                      label: Text(isSavingHotel ? 'Adding...' : 'Add Hotel', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AdminColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AdminColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'All Preferred Hotels (${preferredHotels.length})',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AdminColors.textPrimary),
+                  ),
+                  IconButton(
+                    onPressed: fetchPreferredHotels,
+                    icon: const Icon(Icons.refresh_rounded),
+                    tooltip: 'Refresh Hotels',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (isLoadingHotels)
+                const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+              else if (preferredHotels.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: Text('No preferred hotels added yet.')),
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: preferredHotels.length,
+                  separatorBuilder: (_, __) => const Divider(height: 16),
+                  itemBuilder: (context, index) {
+                    final h = preferredHotels[index] as Map<String, dynamic>;
+                    final id = (h['hotel_id'] ?? h['_id'] ?? '').toString();
+                    final name = (h['name'] ?? '').toString();
+                    final area = (h['area'] ?? '').toString();
+                    final isActive = h['is_active'] == true;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundColor: isActive ? AdminColors.primaryLight : Colors.grey.shade200,
+                        child: Icon(Icons.apartment_rounded, color: isActive ? AdminColors.primary : Colors.grey),
+                      ),
+                      title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      subtitle: area.isNotEmpty ? Text(area, style: const TextStyle(fontSize: 12)) : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Switch(
+                            value: isActive,
+                            activeThumbColor: AdminColors.success,
+                            onChanged: (_) => _togglePreferredHotel(id),
+                          ),
+                          IconButton(
+                            onPressed: () => _deletePreferredHotel(id, name),
+                            icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                            tooltip: 'Delete Hotel',
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

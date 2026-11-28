@@ -116,10 +116,10 @@ router.post('/upload', async (req, res) => {
       banner_id: bannerId,
       title: title || 'Special Dum Biriyani Deal',
       badge: badge || "HOT OFFER",
-      original_price: Number(original_price) || 120,
-      offer_price: Number(offer_price) || 65,
-      stock_remaining: Number(stock_remaining) != null ? Number(stock_remaining) : 75,
-      total_stock: Number(total_stock) || 100,
+      original_price: (original_price != null && original_price !== '' && !isNaN(Number(original_price))) ? Number(original_price) : 120,
+      offer_price: (offer_price != null && offer_price !== '' && !isNaN(Number(offer_price))) ? Number(offer_price) : 65,
+      stock_remaining: (stock_remaining != null && stock_remaining !== '' && !isNaN(Number(stock_remaining))) ? Number(stock_remaining) : 75,
+      total_stock: (total_stock != null && total_stock !== '' && !isNaN(Number(total_stock))) ? Number(total_stock) : 100,
       image_base64: image_base64 || null,
       image_url: image_url || null,
       is_active: activeState
@@ -227,9 +227,9 @@ router.post('/sliding/upload', async (req, res) => {
 
     const bannerId = await getNextSequence('sliding_banner_id', 'SLD-', 3);
 
-    const priceOffer = Number(offer_price) || 49;
-    const priceBudget = Number(budget) || priceOffer;
-    const priceOrig = Number(original_price) || Math.round(priceOffer * 1.5);
+    const priceOffer = (offer_price != null && offer_price !== '' && !isNaN(Number(offer_price))) ? Number(offer_price) : 49;
+    const priceBudget = (budget != null && budget !== '' && !isNaN(Number(budget))) ? Number(budget) : priceOffer;
+    const priceOrig = (original_price != null && original_price !== '' && !isNaN(Number(original_price))) ? Number(original_price) : Math.round(priceOffer * 1.5);
 
     const newBanner = new SlidingBanner({
       banner_id: bannerId,

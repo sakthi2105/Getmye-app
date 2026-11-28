@@ -87,8 +87,14 @@ class _DeliveryPartnerPriceRangeDialogState
               .trim()
               .toLowerCase();
           final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+          final numClean = numPart.replaceFirst(RegExp(r'^0+'), '');
+          final assignedClean = assignedPartnerId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+          final bool isSamePartner = assignedPartnerId == myPId ||
+              (numClean.isNotEmpty && assignedClean.isNotEmpty && numClean == assignedClean);
           final bool isDeclinedForMe = declinedList.contains(myPId) ||
-              (numPart.isNotEmpty && declinedList.any((d) => d.contains(numPart)));
+              (numClean.isNotEmpty &&
+                  declinedList.any((d) =>
+                      d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == numClean));
 
           if (ordStatus == 'cancelled') {
             if (mounted) {
@@ -97,10 +103,7 @@ class _DeliveryPartnerPriceRangeDialogState
             return;
           }
 
-          if (isDeclinedForMe ||
-              (assignedPartnerId.isNotEmpty &&
-                  assignedPartnerId != myPId &&
-                  (numPart.isEmpty || !assignedPartnerId.contains(numPart)))) {
+          if (isDeclinedForMe || (assignedPartnerId.isNotEmpty && !isSamePartner)) {
             if (mounted) {
               await _handleOrderCancelledOrReassigned(wasReassigned: true);
             }
@@ -281,9 +284,15 @@ class _DeliveryPartnerPriceRangeDialogState
                 .trim()
                 .toLowerCase();
             final numPart = myPId.replaceAll(RegExp(r'[^0-9]'), '');
+            final numClean = numPart.replaceFirst(RegExp(r'^0+'), '');
+            final assignedClean = assignedPartnerId.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '');
+            final bool isSamePartner = assignedPartnerId == myPId ||
+                (numClean.isNotEmpty && assignedClean.isNotEmpty && numClean == assignedClean);
 
             final bool isDeclinedForMe = declinedList.contains(myPId) ||
-                (numPart.isNotEmpty && declinedList.any((d) => d.contains(numPart)));
+                (numClean.isNotEmpty &&
+                    declinedList.any((d) =>
+                        d.replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^0+'), '') == numClean));
 
             if (prStatus == 'accepted') {
               timer.cancel();
@@ -320,9 +329,7 @@ class _DeliveryPartnerPriceRangeDialogState
               }
             } else if (isDeclinedForMe ||
                 (ordStatus == 'pending' && _isSent) ||
-                (assignedPartnerId.isNotEmpty &&
-                    assignedPartnerId != myPId &&
-                    (numPart.isEmpty || !assignedPartnerId.contains(numPart))) ||
+                (assignedPartnerId.isNotEmpty && !isSamePartner) ||
                 (assignedPartnerId.isEmpty && ordStatus != 'accepted')) {
               timer.cancel();
               final notifKey = 'partner_notified_ack_dec_${widget.orderId}';
