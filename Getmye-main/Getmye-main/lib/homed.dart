@@ -1238,6 +1238,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                           final pPic = prefs.getString('d_profile_picture_base64');
 
                           bool acceptSuccess = false;
+                          bool isOfferOrder = (order['is_welcome_offer'] == true) ||
+                              ((order['order_type']?.toString().toLowerCase().trim() ?? '') == 'welcome_offer');
                           try {
                             final acceptRes = await http.post(
                               ApiConfig.orderAccept,
@@ -1249,12 +1251,15 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                                 'partner_phone': pPhone,
                                 if (pPic != null && pPic.isNotEmpty) 'partner_profile_picture': pPic,
                               }),
-                            ).timeout(const Duration(seconds: 4));
+                            ).timeout(const Duration(seconds: 10));
                             if (acceptRes.statusCode == 200) {
                               acceptSuccess = true;
                               final resData = jsonDecode(acceptRes.body);
                               if (resData['order'] != null) {
                                 final oObj = resData['order'];
+                                isOfferOrder = isOfferOrder ||
+                                    (oObj['is_welcome_offer'] == true) ||
+                                    ((oObj['order_type']?.toString().toLowerCase().trim() ?? '') == 'welcome_offer');
                                 if (oObj['partner_name'] != null && oObj['partner_name'].toString().isNotEmpty) {
                                   pName = oObj['partner_name'].toString();
                                 }
@@ -1363,15 +1368,57 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
                             ],
                             deliveryFee: 0.0,
                             status: "Accepted",
+                            isWelcomeOffer: isOfferOrder,
                           );
 
                           if (mounted) {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
-                              ),
-                            ).then((_) => _loadPartnerData());
+                            if (isOfferOrder) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+                                ),
+                              ).then((_) => _loadPartnerData());
+                            } else {
+                              // Regular order: Show popup to Call Customer & Send Estimated Price Range Acknowledgement
+                              final acceptedByCustomer = await showDialog<bool>(
+                                context: context,
+                                barrierDismissible: false,
+                                builder: (_) => DeliveryPartnerPriceRangeDialog(
+                                  orderId: orderId,
+                                  customerName: customerName,
+                                  customerPhone: customerPhone,
+                                  itemName: itemName,
+                                  budget: budget,
+                                ),
+                              );
+
+                              if (mounted && (acceptedByCustomer == true)) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+                                  ),
+                                ).then((_) => _loadPartnerData());
+                              } else if (mounted) {
+                                setState(() {
+                                  activeDeliveryOrder = null;
+                                });
+                                await _clearActiveOrderStorage(prefs);
+
+                                final curDeclined = prefs.getStringList('partner_declined_order_ids') ?? [];
+                                if (!curDeclined.contains(orderId)) {
+                                  curDeclined.add(orderId);
+                                  await prefs.setStringList('partner_declined_order_ids', curDeclined);
+                                }
+
+                                AlarmService.silenceOrder(orderId);
+                                AlarmService.stopAlarm();
+                                AppNotificationService.cancelNotification(999);
+
+                                _loadPartnerData();
+                              }
+                            }
                           }
                         },
                         child: const Row(
@@ -2921,11 +2968,16 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       status: status,
       customerLatitude: custLat,
       customerLongitude: custLng,
+      isWelcomeOffer: (o['is_welcome_offer'] == true) ||
+          ((o['order_type']?.toString().toLowerCase().trim() ?? '') == 'welcome_offer'),
     );
   }
 
   Future<void> _openOngoingDeliveryPage(Map<String, dynamic> o) async {
     final deliveryOrder = _createDeliveryOrderFromMap(o);
+    bool isOfferOrder = deliveryOrder.isWelcomeOffer;
+    bool isPriceRangeAccepted = false;
+    String latestStatus = (o['status']?.toString() ?? '').toLowerCase();
 
     // Verify order is not cancelled before continuing
     try {
@@ -2934,6 +2986,11 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         final data = jsonDecode(res.body);
         final ord = data['order'] ?? data;
         final st = (ord['status']?.toString() ?? '').toLowerCase();
+        if (st.isNotEmpty) latestStatus = st;
+        isOfferOrder = isOfferOrder ||
+            (ord['is_welcome_offer'] == true) ||
+            ((ord['order_type']?.toString().toLowerCase().trim() ?? '') == 'welcome_offer');
+        isPriceRangeAccepted = (ord['price_range_status'] ?? '').toString().toLowerCase() == 'accepted';
         if (st == 'cancelled') {
           final reason = ord['cancel_reason']?.toString() ?? 'Cancelled by customer';
           await _clearActiveOrderStorage();
@@ -2956,10 +3013,8 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
       }
     } catch (_) {}
 
-    final status = (o['status']?.toString() ?? '').toLowerCase();
-
     if (!mounted) return;
-    if (status == 'bill_sent' || status == 'in_transit' || status == 'picked_up') {
+    if (latestStatus == 'bill_sent' || latestStatus == 'in_transit' || latestStatus == 'picked_up') {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -2972,6 +3027,32 @@ class _DeliveryHomePageState extends State<DeliveryHomePage> {
         ),
       ).then((_) => _loadPartnerData());
     } else {
+      if (!isOfferOrder && !isPriceRangeAccepted) {
+        final acceptedByCustomer = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => DeliveryPartnerPriceRangeDialog(
+            orderId: deliveryOrder.orderId,
+            customerName: deliveryOrder.customerName,
+            customerPhone: deliveryOrder.customerPhone,
+            itemName: deliveryOrder.items.isNotEmpty ? deliveryOrder.items.first.name : 'Food Order',
+            budget: deliveryOrder.subtotal > 0 ? deliveryOrder.subtotal.toStringAsFixed(0) : '150',
+          ),
+        );
+
+        if (mounted && acceptedByCustomer == true) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => DeliveryBillPostPage(order: deliveryOrder),
+            ),
+          ).then((_) => _loadPartnerData());
+        } else {
+          _loadPartnerData();
+        }
+        return;
+      }
+
       if (!mounted) return;
       Navigator.push(
         context,

@@ -101,6 +101,14 @@ class AdminApiConfig {
   static Uri quickCravingsDelete(String id) => Uri.parse('$_baseUrl/api/quick-cravings/$id');
   static Uri quickCravingsToggle(String id) => Uri.parse('$_baseUrl/api/quick-cravings/toggle/$id');
 
+  // Preferred Hotels Endpoints (Homepage Dropdown List)
+  static Uri get preferredHotelsActive => Uri.parse('$_baseUrl/api/preferred-hotels/active');
+  static Uri get preferredHotelsAll => Uri.parse('$_baseUrl/api/preferred-hotels/all');
+  static Uri get preferredHotelsAdd => Uri.parse('$_baseUrl/api/preferred-hotels/add');
+  static Uri preferredHotelsUpdate(String id) => Uri.parse('$_baseUrl/api/preferred-hotels/$id');
+  static Uri preferredHotelsDelete(String id) => Uri.parse('$_baseUrl/api/preferred-hotels/$id');
+  static Uri preferredHotelsToggle(String id) => Uri.parse('$_baseUrl/api/preferred-hotels/toggle/$id');
+
   // Support Endpoints (Bug Reports, Complaints, Feedback)
   static Uri get supportBugReports => Uri.parse('$_baseUrl/api/support/bug-reports');
   static Uri get supportComplaints => Uri.parse('$_baseUrl/api/support/complaints');

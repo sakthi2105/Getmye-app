@@ -630,9 +630,15 @@ router.post('/price-range/respond', async (req, res) => {
       order.partner_photo_url = null;
       order.price_range = null;
       order.price_range_status = 'none';
+      order.price_range_sent_at = null;
+      order.accepted_at = null;
       order.status = 'pending';
 
-      const nextPartner = await assignNextClosestPartner(order);
+      const nextPartner = await assignNextClosestPartner(
+        order,
+        order.customer_latitude,
+        order.customer_longitude
+      );
       await order.save();
 
       console.log(`🔄 Customer requested another partner for order ${order.order_id}. Assigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
@@ -1654,20 +1660,68 @@ router.post('/waiting-customer', async (req, res) => {
   }
 });
 
-// GET /api/order/notifications/:user_id - Get unread customer notifications (e.g., partner now online)
+// GET /api/order/notifications/:user_id - Get customer notifications (supports ?all=true for full inbox)
 router.get('/notifications/:user_id', async (req, res) => {
   try {
     const Notification = require('../models/Notification');
     const { user_id } = req.params;
-    const notifs = await Notification.find({
+    const includeAll = req.query.all === 'true';
+
+    const query = {
       recipient_id: user_id,
       recipient_type: 'customer',
-      is_read: false
-    }).sort({ created_at: -1 }).limit(10);
-    res.json({ success: true, notifications: notifs || [] });
+    };
+    if (!includeAll) {
+      query.is_read = false;
+    }
+
+    const notifs = await Notification.find(query)
+      .sort({ created_at: -1 })
+      .limit(includeAll ? 50 : 10);
+
+    const unreadCount = await Notification.countDocuments({
+      recipient_id: user_id,
+      recipient_type: 'customer',
+      is_read: false,
+    });
+
+    res.json({
+      success: true,
+      unread_count: unreadCount,
+      notifications: notifs || [],
+    });
   } catch (err) {
     console.error('Error fetching customer notifications:', err);
     res.status(500).json({ error: 'Failed to get notifications' });
+  }
+});
+
+// DELETE /api/order/notifications/clear/:user_id - Clear all notifications for a user
+router.delete('/notifications/clear/:user_id', async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const { user_id } = req.params;
+    await Notification.deleteMany({
+      recipient_id: user_id,
+      recipient_type: 'customer',
+    });
+    res.json({ success: true, message: 'All notifications cleared' });
+  } catch (err) {
+    console.error('Error clearing customer notifications:', err);
+    res.status(500).json({ error: 'Failed to clear notifications' });
+  }
+});
+
+// DELETE /api/order/notifications/item/:notification_id - Delete single notification
+router.delete('/notifications/item/:notification_id', async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const { notification_id } = req.params;
+    await Notification.deleteOne({ notification_id });
+    res.json({ success: true, message: 'Notification deleted' });
+  } catch (err) {
+    console.error('Error deleting notification:', err);
+    res.status(500).json({ error: 'Failed to delete notification' });
   }
 });
 
