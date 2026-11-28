@@ -65,6 +65,7 @@ class DeliveryOrder {
   final double? customerLatitude;
   final double? customerLongitude;
   final String? currentAssignedPartnerId;
+  final bool isWelcomeOffer;
 
   DeliveryOrder({
     required this.orderId,
@@ -80,6 +81,7 @@ class DeliveryOrder {
     this.customerLatitude,
     this.customerLongitude,
     this.currentAssignedPartnerId,
+    this.isWelcomeOffer = false,
   });
 
   double get subtotal => items.fold(0.0, (sum, item) => sum + item.total);
@@ -381,6 +383,8 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
               customerLatitude: (o['customer_latitude'] as num?)?.toDouble(),
               customerLongitude: (o['customer_longitude'] as num?)?.toDouble(),
               currentAssignedPartnerId: o['current_assigned_partner_id']?.toString(),
+              isWelcomeOffer: (o['is_welcome_offer'] == true) ||
+                  ((o['order_type']?.toString().toLowerCase().trim() ?? '') == 'welcome_offer'),
             ),
           );
         }
@@ -967,7 +971,52 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           "Buy Food & Bill",
                                           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
                                         ),
-                                        onPressed: () {
+                                        onPressed: () async {
+                                          if (!order.isWelcomeOffer) {
+                                            bool isPriceRangeAccepted = false;
+                                            try {
+                                              final res = await http
+                                                  .get(ApiConfig.orderById(order.orderId))
+                                                  .timeout(const Duration(seconds: 3));
+                                              if (res.statusCode == 200) {
+                                                final data = jsonDecode(res.body);
+                                                final ord = data['order'];
+                                                if (ord != null) {
+                                                  final prSt = (ord['price_range_status'] ?? '').toString().toLowerCase();
+                                                  final ordSt = (ord['status'] ?? '').toString().toLowerCase();
+                                                  final isOfferFromApi = (ord['is_welcome_offer'] == true) ||
+                                                      ((ord['order_type'] ?? '').toString().toLowerCase() == 'welcome_offer');
+                                                  if (isOfferFromApi ||
+                                                      prSt == 'accepted' ||
+                                                      ordSt == 'bill_sent' ||
+                                                      ordSt == 'picked_up' ||
+                                                      ordSt == 'in_transit') {
+                                                    isPriceRangeAccepted = true;
+                                                  }
+                                                }
+                                              }
+                                            } catch (_) {}
+
+                                            if (!isPriceRangeAccepted) {
+                                              if (!context.mounted) return;
+                                              final acceptedByCustomer = await showDialog<bool>(
+                                                context: context,
+                                                barrierDismissible: false,
+                                                builder: (_) => DeliveryPartnerPriceRangeDialog(
+                                                  orderId: order.orderId,
+                                                  customerName: order.customerName,
+                                                  customerPhone: order.customerPhone,
+                                                  itemName: order.items.isNotEmpty ? order.items.first.name : 'Food Order',
+                                                  budget: order.subtotal > 0 ? order.subtotal.toStringAsFixed(0) : '150',
+                                                ),
+                                              );
+                                              if (!context.mounted || acceptedByCustomer != true) {
+                                                return;
+                                              }
+                                            }
+                                          }
+
+                                          if (!context.mounted) return;
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
@@ -1037,6 +1086,7 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           final partnerPic = prefs.getString('d_profile_picture_base64');
                                           bool acceptSuccess = false;
                                           String? cancelReason;
+                                          bool isOfferOrder = order.isWelcomeOffer;
                                           try {
                                             final acceptRes = await http.post(
                                               ApiConfig.orderAccept,
@@ -1048,9 +1098,18 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                                 'partner_phone': partnerPhone,
                                                 if (partnerPic != null && partnerPic.isNotEmpty) 'partner_profile_picture': partnerPic,
                                               }),
-                                            ).timeout(const Duration(seconds: 4));
+                                            ).timeout(const Duration(seconds: 10));
                                             if (acceptRes.statusCode == 200) {
                                               acceptSuccess = true;
+                                              try {
+                                                final resData = jsonDecode(acceptRes.body);
+                                                final ordObj = resData['order'];
+                                                if (ordObj is Map) {
+                                                  isOfferOrder = isOfferOrder ||
+                                                      (ordObj['is_welcome_offer'] == true) ||
+                                                      ((ordObj['order_type'] ?? '').toString().toLowerCase() == 'welcome_offer');
+                                                }
+                                              } catch (_) {}
                                             } else {
                                               try {
                                                 final resData = jsonDecode(acceptRes.body);
@@ -1112,13 +1171,42 @@ class _NewOrdersPageState extends State<NewOrdersPage> {
                                           await prefs.setString('active_order_restaurant', order.restaurantName);
                                           await prefs.setDouble('active_order_grand_total', order.grandTotal);
                                           if (!context.mounted) return;
-                                          if (!context.mounted) return;
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => DeliveryBillPostPage(order: order),
-                                            ),
-                                          );
+                                          if (isOfferOrder) {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) => DeliveryBillPostPage(order: order),
+                                              ),
+                                            );
+                                          } else {
+                                            final acceptedByCustomer = await showDialog<bool>(
+                                              context: context,
+                                              barrierDismissible: false,
+                                              builder: (_) => DeliveryPartnerPriceRangeDialog(
+                                                orderId: order.orderId,
+                                                customerName: order.customerName,
+                                                customerPhone: order.customerPhone,
+                                                itemName: order.items.isNotEmpty ? order.items.first.name : 'Food Order',
+                                                budget: order.subtotal > 0 ? order.subtotal.toStringAsFixed(0) : '150',
+                                              ),
+                                            );
+
+                                            if (context.mounted && acceptedByCustomer == true) {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) => DeliveryBillPostPage(order: order),
+                                                ),
+                                              );
+                                            } else if (context.mounted) {
+                                              await clearDeliveryPartnerActiveOrder(orderId: order.orderId);
+                                              if (!context.mounted) return;
+                                              Navigator.of(context).pushAndRemoveUntil(
+                                                MaterialPageRoute(builder: (_) => const DeliveryHomePage()),
+                                                (route) => false,
+                                              );
+                                            }
+                                          }
                                         },
                                       ),
                                     ),

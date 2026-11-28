@@ -604,9 +604,15 @@ router.post('/price-range/respond', async (req, res) => {
       order.partner_photo_url = null;
       order.price_range = null;
       order.price_range_status = 'none';
+      order.price_range_sent_at = null;
+      order.accepted_at = null;
       order.status = 'pending';
 
-      const nextPartner = await assignNextClosestPartner(order);
+      const nextPartner = await assignNextClosestPartner(
+        order,
+        order.customer_latitude,
+        order.customer_longitude
+      );
       await order.save();
 
       console.log(`🔄 Customer requested another partner for order ${order.order_id}. Assigned to next closest partner: ${nextPartner ? nextPartner.partner_id : 'None available'}`);
@@ -1208,7 +1214,7 @@ router.get('/partner/:partner_id', async (req, res) => {
     }
 
     // High performance projection: select only lightweight metadata fields (skip massive base64 images)
-    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name quantity budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status created_at updated_at items';
+    const projection = 'order_id user_id customer_name customer_phone delivery_address item_name quantity budget partner_id partner_name partner_phone status decline_reason delivery_fee item_total tip_amount grand_total payment_method payment_status cancel_reason accepted_at picked_up_at delivered_at cod_otp price_range price_range_status is_welcome_offer order_type created_at updated_at items';
 
     let orders = await Order.find(query)
       .select(projection)

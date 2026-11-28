@@ -69,18 +69,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isShowingPriceRangeDialog = false;
   String? _lastPromptedPriceRange;
 
+  bool _isWelcomeOfferOrder(Map<String, dynamic> order) {
+    final type = (order['order_type'] ?? '').toString().toLowerCase().trim();
+    return order['is_welcome_offer'] == true || type == 'welcome_offer';
+  }
+
   void _checkAndShowCustomerPriceRangeDialog({
     required String orderId,
     required String partnerName,
     required String partnerPhone,
     String? partnerPhoto,
     required String priceRange,
+    String partnerId = '',
   }) {
     if (!mounted || _isShowingPriceRangeDialog) return;
-    if (_lastPromptedPriceRange == '${orderId}_$priceRange') return;
+    final promptKey = '${orderId}_${partnerId}_$priceRange';
+    if (_lastPromptedPriceRange == promptKey) return;
 
     _isShowingPriceRangeDialog = true;
-    _lastPromptedPriceRange = '${orderId}_$priceRange';
+    _lastPromptedPriceRange = promptKey;
 
     AppNotificationService.showPriceRangeAcknowledgementNotification(
       orderId: orderId,
@@ -106,8 +113,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         onFindAnotherPartner: () async {
           _isShowingPriceRangeDialog = false;
+          _lastPromptedPriceRange = null;
           final p = await SharedPreferences.getInstance();
           await p.setBool('active_order_partner_accepted', false);
+          await p.remove('has_notified_partner_accepted_$orderId');
           await p.remove('active_order_partner_name');
           await p.remove('active_order_partner_phone');
           await p.remove('active_order_partner_id');
@@ -137,6 +146,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         onStopOrder: () async {
           _isShowingPriceRangeDialog = false;
+          _lastPromptedPriceRange = null;
           final p = await SharedPreferences.getInstance();
           await p.setBool('has_active_order', false);
           await p.remove('active_order_id');
@@ -948,6 +958,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _startRiderLocationPolling();
         _startOrderChatPolling();
         _fetchTrackingRoadRoute();
+
+        if (!_isWelcomeOfferOrder(activeOrderObj)) {
+          final String pr = (activeOrderObj['price_range'] ?? '').toString().trim();
+          final String prStatus = (activeOrderObj['price_range_status'] ?? '').toString().toLowerCase().trim();
+          if (pr.isNotEmpty && prStatus == 'pending') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _checkAndShowCustomerPriceRangeDialog(
+                orderId: curOrderId,
+                partnerName: pName,
+                partnerPhone: pPhone,
+                partnerPhoto: pPic,
+                priceRange: pr,
+                partnerId: pId,
+              );
+            });
+          }
+        }
       }
       AlarmService.startCustomerOrderListeningService(
         baseUrl: ApiConfig.baseUrl,
@@ -5919,6 +5946,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'cod_otp': customerFixedOtp,
           'customer_latitude': orderLat,
           'customer_longitude': orderLng,
+          'is_welcome_offer': false,
+          'order_type': 'regular',
         }),
       ).timeout(const Duration(seconds: 15));
 
@@ -6370,6 +6399,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   _startRiderLocationPolling();
                   _startOrderChatPolling();
                   _fetchTrackingRoadRoute();
+                }
+
+                if (!_isWelcomeOfferOrder(order)) {
+                  final String pr = (order['price_range'] ?? '').toString().trim();
+                  final String prStatus = (order['price_range_status'] ?? '').toString().toLowerCase().trim();
+                  if (pr.isNotEmpty && prStatus == 'pending') {
+                    _checkAndShowCustomerPriceRangeDialog(
+                      orderId: curOId,
+                      partnerName: pName,
+                      partnerPhone: pPhone,
+                      partnerPhoto: pPic,
+                      priceRange: pr,
+                      partnerId: pId,
+                    );
+                  }
                 }
               }
             } else {
