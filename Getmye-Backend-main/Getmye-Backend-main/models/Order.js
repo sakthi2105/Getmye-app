@@ -256,6 +256,10 @@ const OrderSchema = new mongoose.Schema({
   is_batch_order: {
     type: Boolean,
     default: false
+  },
+  offer_stock_decremented: {
+    type: Boolean,
+    default: false
   }
 }, {
   collection: 'orders',

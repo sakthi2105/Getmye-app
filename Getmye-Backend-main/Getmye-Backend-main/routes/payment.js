@@ -5,6 +5,7 @@ const Payment = require('../models/Payment');
 const Bill = require('../models/Bill');
 const Order = require('../models/Order');
 const { getNextSequence } = require('../models/Counter');
+const { decrementOfferStockForCompletedOrder } = require('../services/offerService');
 
 // Cashfree Gateway Environment Credentials from .env
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || '';
@@ -104,6 +105,12 @@ router.post('/verify-cod', async (req, res) => {
 
     // Mark order delivered
     await Order.findOneAndUpdate({ order_id }, { status: 'delivered', delivered_at: new Date() });
+
+    try {
+      await decrementOfferStockForCompletedOrder(Order, order_id);
+    } catch (stockErr) {
+      console.error('Error decrementing offer stock in verify-cod:', stockErr.message);
+    }
 
     res.json({ success: true, message: 'COD verified successfully!', payment });
   } catch (err) {

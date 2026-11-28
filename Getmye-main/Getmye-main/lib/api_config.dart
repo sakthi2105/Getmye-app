@@ -57,6 +57,14 @@ class ApiConfig {
   static Uri orderById(String id) => Uri.parse('$baseUrl/api/order/$id');
   static Uri orderActive(String userId) => Uri.parse('$baseUrl/api/order/active/$userId');
   static Uri orderUser(String userId) => Uri.parse('$baseUrl/api/order/user/$userId');
+  static Uri orderDailyOfferStatus(String userId, {String? mobile}) {
+    final safeId = userId.trim().isNotEmpty ? userId.trim() : 'guest';
+    final uri = Uri.parse('$baseUrl/api/order/daily-offer-status/$safeId');
+    if (mobile != null && mobile.trim().isNotEmpty) {
+      return uri.replace(queryParameters: {'mobile': mobile.trim()});
+    }
+    return uri;
+  }
   static Uri orderPartner(String partnerId) => Uri.parse('$baseUrl/api/order/partner/$partnerId');
   static Uri get orderCancel => Uri.parse('$baseUrl/api/order/cancel');
   static Uri get orderArrivedAtLocation => Uri.parse('$baseUrl/api/order/arrived-at-location');

@@ -299,6 +299,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isCheckingLocation = false;
   bool _showOrderForm = false;
   bool _hasClaimedFirstOffer = false;
+  String _lastCheckedIstDate = '';
 
   // Promotional Banner Carousel Controller & Timer (Regular User Home Page)
   late PageController _bannerPageController;
@@ -416,34 +417,112 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
+  String _todayIstDateKey() {
+    final ist = DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 30));
+    final y = ist.year.toString().padLeft(4, '0');
+    final m = ist.month.toString().padLeft(2, '0');
+    final d = ist.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  String _toIstDateKey(DateTime dt) {
+    final ist = dt.toUtc().add(const Duration(hours: 5, minutes: 30));
+    final y = ist.year.toString().padLeft(4, '0');
+    final m = ist.month.toString().padLeft(2, '0');
+    final d = ist.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
   Future<void> _checkFirstTimeOfferStatus({bool forceServerCheck = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      bool claimed = prefs.getBool('has_claimed_first_offer') ?? false;
+      final todayKey = _todayIstDateKey();
+      _lastCheckedIstDate = todayKey;
+
+      final savedClaimDate = prefs.getString('claimed_offer_ist_date') ?? '';
+      bool claimed = (savedClaimDate == todayKey);
+      if (!claimed && savedClaimDate.isNotEmpty) {
+        await prefs.remove('claimed_offer_ist_date');
+        await prefs.setBool('has_claimed_first_offer', false);
+      }
+
       final userId = prefs.getString('user_id') ?? '';
       final mobile = prefs.getString('mobile_number') ?? prefs.getString('user_mobile') ?? '';
       final queryId = (userId.isNotEmpty && userId != 'usr_001' && userId != 'guest') ? userId : mobile;
 
-      if ((!claimed || forceServerCheck) && queryId.isNotEmpty) {
+      if ((!claimed || forceServerCheck) && (queryId.isNotEmpty || mobile.isNotEmpty)) {
+        bool serverResolved = false;
         try {
-          final res = await http.get(ApiConfig.orderUser(queryId))
+          final res = await http
+              .get(ApiConfig.orderDailyOfferStatus(
+                queryId.isNotEmpty ? queryId : 'guest',
+                mobile: mobile,
+              ))
               .timeout(const Duration(seconds: 4));
           if (res.statusCode == 200) {
             final data = jsonDecode(res.body);
-            final List orders = (data['orders'] is List) ? (data['orders'] as List) : [];
-            final bool hasCompletedOrder = orders.any((o) {
-              final st = (o['status'] ?? '').toString().toLowerCase();
-              return st == 'delivered' || st == 'completed';
-            });
-            if (hasCompletedOrder) {
-              claimed = true;
-              await prefs.setBool('has_claimed_first_offer', true);
-            } else if (forceServerCheck) {
-              claimed = false;
-              await prefs.setBool('has_claimed_first_offer', false);
+            if (data is Map<String, dynamic> && data['success'] == true) {
+              serverResolved = true;
+              final serverDate = (data['ist_date'] ?? todayKey).toString();
+              _lastCheckedIstDate = serverDate;
+              final bool hasCompletedToday = data['has_claimed_today'] == true;
+              if (hasCompletedToday) {
+                claimed = true;
+                await prefs.setString('claimed_offer_ist_date', serverDate);
+                await prefs.setBool('has_claimed_first_offer', true);
+              } else if (forceServerCheck || savedClaimDate != serverDate) {
+                claimed = false;
+                await prefs.remove('claimed_offer_ist_date');
+                await prefs.setBool('has_claimed_first_offer', false);
+              }
+              if (data['stock_remaining'] != null) {
+                final srvStock = int.tryParse(data['stock_remaining'].toString());
+                if (srvStock != null && mounted) {
+                  setState(() {
+                    _remainingBiryaniCount = max(0, srvStock);
+                  });
+                  await prefs.setInt('remaining_biryani_count', _remainingBiryaniCount);
+                }
+              }
+              if (data['total_stock'] != null) {
+                final srvTotal = int.tryParse(data['total_stock'].toString());
+                if (srvTotal != null && mounted) {
+                  setState(() {
+                    _totalBiryaniCount = max(0, srvTotal);
+                  });
+                }
+              }
             }
           }
         } catch (_) {}
+
+        if (!serverResolved && queryId.isNotEmpty) {
+          try {
+            final res = await http.get(ApiConfig.orderUser(queryId))
+                .timeout(const Duration(seconds: 4));
+            if (res.statusCode == 200) {
+              final data = jsonDecode(res.body);
+              final List orders = (data['orders'] is List) ? (data['orders'] as List) : [];
+              final bool hasCompletedOrderToday = orders.any((o) {
+                final st = (o['status'] ?? '').toString().toLowerCase();
+                if (st != 'delivered' && st != 'completed') return false;
+                final dtStr = (o['delivered_at'] ?? o['created_at'] ?? '').toString();
+                final dt = DateTime.tryParse(dtStr);
+                if (dt == null) return false;
+                return _toIstDateKey(dt) == todayKey;
+              });
+              if (hasCompletedOrderToday) {
+                claimed = true;
+                await prefs.setString('claimed_offer_ist_date', todayKey);
+                await prefs.setBool('has_claimed_first_offer', true);
+              } else if (forceServerCheck) {
+                claimed = false;
+                await prefs.remove('claimed_offer_ist_date');
+                await prefs.setBool('has_claimed_first_offer', false);
+              }
+            }
+          } catch (_) {}
+        }
       }
       if (mounted) {
         setState(() {
@@ -457,6 +536,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final newStatus = !_hasClaimedFirstOffer;
     await prefs.setBool('has_claimed_first_offer', newStatus);
+    if (newStatus) {
+      await prefs.setString('claimed_offer_ist_date', _todayIstDateKey());
+    } else {
+      await prefs.remove('claimed_offer_ist_date');
+    }
     if (mounted) {
       setState(() {
         _hasClaimedFirstOffer = newStatus;
@@ -1123,7 +1207,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (badge != null) await prefs.setString('cached_banner_badge', badge);
             if (offerPrice != null) await prefs.setInt('cached_banner_offer_price', offerPrice);
             if (origPrice != null) await prefs.setInt('cached_banner_orig_price', origPrice);
-            if (remaining != null) await prefs.setInt('cached_banner_stock_remaining', remaining);
+            if (remaining != null) {
+              await prefs.setInt('cached_banner_stock_remaining', remaining);
+              await prefs.setInt('remaining_biryani_count', remaining);
+            }
             if (total != null) await prefs.setInt('cached_banner_total_stock', total);
           } catch (_) {}
         }
@@ -1500,6 +1587,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _storeCountdownTimer?.cancel();
     _storeCountdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return;
+
+      // Daily 12:00 AM IST Midnight Reset Check
+      final currentIstDate = _todayIstDateKey();
+      if (_lastCheckedIstDate.isNotEmpty && _lastCheckedIstDate != currentIstDate) {
+        _lastCheckedIstDate = currentIstDate;
+        _checkFirstTimeOfferStatus(forceServerCheck: true);
+        _loadActiveOfferBanner();
+      }
+
+      // Refresh live offer stock & daily eligibility every 8 seconds while viewing offer page
+      if (!_hasClaimedFirstOffer && !showDeliveryDetails && t.tick % 8 == 0) {
+        _loadActiveOfferBanner();
+      }
+
       if (_isStoreOnline) {
         if (_secondsUntilClose > 0) {
           setState(() => _secondsUntilClose--);
@@ -2853,6 +2954,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
+    if (_remainingBiryaniCount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Today's offer stock is sold out! Please check back tomorrow."),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final hasActive = prefs.getBool('has_active_order') ?? false;
     final activeStatus = (prefs.getString('active_order_status') ?? '').toLowerCase();
@@ -3353,7 +3465,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
-    // Mark offer as claimed!
+    // Mark offer as claimed for today (IST)!
+    await prefs.setString('claimed_offer_ist_date', _todayIstDateKey());
     await prefs.setBool('has_claimed_first_offer', true);
 
     await prefs.setString('active_order_id', newOrderId);
@@ -3613,7 +3726,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ],
           ),
           child: Text(
-            'Holding On : $_remainingBiryaniCount',
+            _remainingBiryaniCount > 0
+                ? 'Holding On : $_remainingBiryaniCount'
+                : 'Holding On : 0 (Sold Out)',
             style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w800,
@@ -3630,9 +3745,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           width: double.infinity,
           height: 50,
           child: ElevatedButton(
-            onPressed: () => _openFirstTimeOfferAddressConfirmSheet(context),
+            onPressed: _remainingBiryaniCount > 0
+                ? () => _openFirstTimeOfferAddressConfirmSheet(context)
+                : () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Today's offer stock is sold out! Please check back tomorrow."),
+                        backgroundColor: AppColors.danger,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
+              backgroundColor: _remainingBiryaniCount > 0 ? AppColors.primary : Colors.grey.shade500,
               foregroundColor: Colors.white,
               elevation: 4,
               shadowColor: AppColors.primaryDark.withValues(alpha: 0.35),
@@ -6169,6 +6294,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               await p.setBool('has_active_order', false);
               await p.setString('active_order_status', 'cancelled');
               await p.remove('active_order_id');
+              await _checkFirstTimeOfferStatus(forceServerCheck: true);
+              await _loadActiveOfferBanner();
               if (mounted) {
                 setState(() {
                   isSearchingRider = false;
@@ -6199,22 +6326,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               final curOId = (order['order_id'] ?? orderId).toString();
               final p = await SharedPreferences.getInstance();
 
-              // Decrement biryani remaining stock count ONLY AFTER delivery is completed
+              // Refresh live stock count from server (server atomically decrements OfferBanner stock on delivery)
               final bool alreadyReduced = p.getBool('biryani_reduced_$curOId') ?? false;
               if (!alreadyReduced) {
                 await p.setBool('biryani_reduced_$curOId', true);
-                final itemStr = (order['item_name'] ?? p.getString('active_order_item') ?? '').toString().toLowerCase();
-                if (itemStr.contains('biryani') || itemStr.contains('briyani')) {
+                if (_remainingBiryaniCount > 0) {
                   final int qty = int.tryParse(order['quantity']?.toString() ?? '') ??
                                   int.tryParse(p.getString('active_order_quantity') ?? '') ?? 1;
-                  if (_remainingBiryaniCount > 1) {
-                    setState(() {
-                      _remainingBiryaniCount = max(1, _remainingBiryaniCount - qty);
-                    });
-                    await p.setInt('remaining_biryani_count', _remainingBiryaniCount);
-                  }
+                  setState(() {
+                    _remainingBiryaniCount = max(0, _remainingBiryaniCount - qty);
+                  });
+                  await p.setInt('remaining_biryani_count', _remainingBiryaniCount);
                 }
               }
+              _loadActiveOfferBanner();
 
               final bool alreadyNotified = p.getBool('has_notified_delivered_$curOId') ?? false;
               if (!alreadyNotified) {
@@ -6230,6 +6355,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               await p.setBool('has_active_order', false);
               await p.remove('active_order_id');
               await p.setString('active_order_status', 'delivered');
+              await p.setString('claimed_offer_ist_date', _todayIstDateKey());
               await p.setBool('has_claimed_first_offer', true);
               if (mounted) {
                 setState(() {

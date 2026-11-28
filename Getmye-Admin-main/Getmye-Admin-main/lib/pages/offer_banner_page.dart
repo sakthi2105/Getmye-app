@@ -33,6 +33,8 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   final _originalPriceController = TextEditingController(text: '120');
   final _stockRemainingController = TextEditingController(text: '75');
   final _totalStockController = TextEditingController(text: '100');
+  bool _hasEditedStockField = false;
+  bool _isSavingStock = false;
   final _imageUrlController = TextEditingController();
   final _imageBase64Controller = TextEditingController();
 
@@ -304,21 +306,30 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     super.dispose();
   }
 
-  Future<void> fetchActiveBanner() async {
-    setState(() => isLoading = true);
+  Future<void> fetchActiveBanner({bool silent = false}) async {
+    if (!silent) setState(() => isLoading = true);
     try {
       final res = await http.get(AdminApiConfig.bannerActive);
       if (res.statusCode == 200) {
         final decoded = json.decode(res.body);
         if (mounted && decoded is Map<String, dynamic> && decoded['banner'] != null) {
+          final b = decoded['banner'] as Map<String, dynamic>;
           setState(() {
-            activeBanner = decoded['banner'] as Map<String, dynamic>;
+            activeBanner = b;
             isLoading = false;
+            if (!_hasEditedStockField) {
+              if (b['stock_remaining'] != null) {
+                _stockRemainingController.text = b['stock_remaining'].toString();
+              }
+              if (b['total_stock'] != null) {
+                _totalStockController.text = b['total_stock'].toString();
+              }
+            }
           });
         }
       }
     } catch (_) {
-      if (mounted) setState(() => isLoading = false);
+      if (mounted && !silent) setState(() => isLoading = false);
     }
   }
 
@@ -827,6 +838,10 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
     _schedulePollTimer?.cancel();
     _schedulePollTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
+      if (timer.tick % 10 == 0) {
+        fetchActiveBanner(silent: true);
+      }
+
       if (_isStoreCurrentlyOnline) {
         if (_secondsUntilClose > 0) {
           setState(() => _secondsUntilClose--);
@@ -1079,6 +1094,7 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
             backgroundColor: AdminColors.success,
           ),
         );
+        _hasEditedStockField = false;
         fetchActiveBanner();
         fetchBannerHistory();
       } else {
@@ -1110,9 +1126,12 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
   }
 
   Future<void> _updateQuickStock(int delta) async {
-    final current = int.tryParse(_stockRemainingController.text) ?? 75;
-    final newCount = (current + delta).clamp(0, 500);
+    final current = int.tryParse(activeBanner?['stock_remaining']?.toString() ?? '') ??
+        int.tryParse(_stockRemainingController.text) ??
+        0;
+    final newCount = (current + delta).clamp(0, 5000);
     _stockRemainingController.text = newCount.toString();
+    _hasEditedStockField = false;
 
     try {
       await http.put(
@@ -1120,8 +1139,57 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'stock_remaining': newCount}),
       );
-      fetchActiveBanner();
+      fetchActiveBanner(silent: true);
     } catch (_) {}
+  }
+
+  Future<void> _saveStockOnly() async {
+    final rem = int.tryParse(_stockRemainingController.text.trim());
+    final tot = int.tryParse(_totalStockController.text.trim());
+    if (rem == null || rem < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid remaining stock count'), backgroundColor: AdminColors.danger),
+      );
+      return;
+    }
+
+    setState(() => _isSavingStock = true);
+    try {
+      final res = await http.put(
+        AdminApiConfig.bannerStock,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'stock_remaining': rem,
+          if (tot != null && tot >= 0) 'total_stock': tot,
+        }),
+      );
+      if (!mounted) return;
+      setState(() {
+        _isSavingStock = false;
+        _hasEditedStockField = false;
+      });
+      if (res.statusCode == 200) {
+        await fetchActiveBanner(silent: true);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stock updated to $rem!'),
+            backgroundColor: AdminColors.success,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to update stock (${res.statusCode})'), backgroundColor: AdminColors.danger),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSavingStock = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error updating stock: $e'), backgroundColor: AdminColors.danger),
+        );
+      }
+    }
   }
 
   Future<void> _setActiveBanner(String bannerId) async {
@@ -1830,18 +1898,18 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
               const Spacer(),
               IconButton.outlined(
                 icon: const Icon(Icons.remove, size: 16),
-                onPressed: () => _updateQuickStock(-5),
+                onPressed: () => _updateQuickStock(-1),
                 style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
               ),
               const SizedBox(width: 8),
               Text(
-                '$remainingStock',
+                '${activeBanner?['stock_remaining'] ?? remainingStock}',
                 style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
               ),
               const SizedBox(width: 8),
               IconButton.outlined(
                 icon: const Icon(Icons.add, size: 16),
-                onPressed: () => _updateQuickStock(5),
+                onPressed: () => _updateQuickStock(1),
                 style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
               ),
             ],
@@ -2278,9 +2346,10 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _stockRemainingController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => _hasEditedStockField = true,
                   decoration: const InputDecoration(
                     labelText: 'Remaining Stock',
-                    hintText: '75',
+                    hintText: '25',
                   ),
                 ),
               ),
@@ -2289,13 +2358,29 @@ class _OfferBannerPageState extends State<OfferBannerPage> {
                 child: TextField(
                   controller: _totalStockController,
                   keyboardType: TextInputType.number,
+                  onChanged: (_) => _hasEditedStockField = true,
                   decoration: const InputDecoration(
                     labelText: 'Total Daily Stock',
-                    hintText: '100',
+                    hintText: '25',
                   ),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isSavingStock ? null : _saveStockOnly,
+              icon: _isSavingStock
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.inventory_2_rounded, size: 16),
+              label: const Text('Update Stock Only (Keep Current Banner)'),
+            ),
           ),
           const SizedBox(height: 20),
 

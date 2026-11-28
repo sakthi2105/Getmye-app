@@ -4,8 +4,13 @@ const Order = require('../models/Order');
 const Profile = require('../models/Profile');
 const DeliveryPerson = require('../models/DeliveryPerson');
 const LiveLocation = require('../models/LiveLocation');
+const OfferBanner = require('../models/OfferBanner');
 const { getNextSequence } = require('../models/Counter');
 const WaitingCustomer = require('../models/WaitingCustomer');
+const {
+  hasCustomerCompletedOrderToday,
+  decrementOfferStockForCompletedOrder
+} = require('../services/offerService');
 const {
   KUMBAKONAM_GEOFENCE,
   MAHAMAHAM_KULAM_CENTER,
@@ -43,6 +48,27 @@ router.post('/create', async (req, res) => {
     const isWelcomeOffer = is_welcome_offer === true ||
       order_type === 'welcome_offer' ||
       (item_name && /welcome\s*offer|crushing\s*offer/i.test(item_name));
+
+    // 0. Daily Offer Eligibility & Live Stock Check (resets daily at 12:00 AM IST)
+    if (isWelcomeOffer) {
+      const dailyStatus = await hasCustomerCompletedOrderToday(Order, user_id, customer_phone);
+      if (dailyStatus.hasCompletedToday) {
+        return res.status(400).json({
+          success: false,
+          error: 'OFFER_ALREADY_CLAIMED_TODAY',
+          message: 'You have already completed today\'s offer order! You can place regular orders for the rest of the day.'
+        });
+      }
+
+      const activeBanner = await OfferBanner.findOne({ is_active: true }).sort({ updated_at: -1 }).lean();
+      if (activeBanner && (Number(activeBanner.stock_remaining) || 0) <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'OFFER_OUT_OF_STOCK',
+          message: 'Today\'s offer stock is sold out!'
+        });
+      }
+    }
 
     // 1. Location-Based Geo-Fencing: Exclusively in Kumbakonam Town
     let finalLat = customer_latitude != null ? Number(customer_latitude) : null;
@@ -934,7 +960,7 @@ router.post('/update-status', async (req, res) => {
     const updateData = {};
     if (status) updateData.status = status;
     if (status === 'picked_up') updateData.picked_up_at = new Date();
-    if (status === 'delivered') updateData.delivered_at = new Date();
+    if (status === 'delivered' || status === 'completed') updateData.delivered_at = new Date();
     if (grand_total !== undefined) updateData.grand_total = Number(grand_total);
     if (tip_amount !== undefined) updateData.tip_amount = Number(tip_amount);
     if (item_total !== undefined) updateData.item_total = Number(item_total);
@@ -965,7 +991,12 @@ router.post('/update-status', async (req, res) => {
 
     if (!order) return res.status(404).json({ error: 'Order not found or was cancelled' });
 
-    if (status === 'delivered') {
+    if (status === 'delivered' || status === 'completed') {
+      try {
+        await decrementOfferStockForCompletedOrder(Order, order.order_id);
+      } catch (stockErr) {
+        console.error('Error decrementing offer stock in update-status:', stockErr.message);
+      }
       try {
         // Activate any queued 2nd order for this partner, or set LiveLocation to idle
         const nextActiveOrder = await activateNextQueuedOrder(order.partner_id, order.order_id);
@@ -1037,6 +1068,12 @@ router.post('/verify-delivery-otp', async (req, res) => {
     order.delivered_at = new Date();
     order.payment_status = 'success';
     await order.save();
+
+    try {
+      await decrementOfferStockForCompletedOrder(Order, order.order_id);
+    } catch (stockErr) {
+      console.error('Error decrementing offer stock in verify-delivery-otp:', stockErr.message);
+    }
 
     // Activate any queued 2nd order for this partner, or set LiveLocation to idle
     try {
@@ -1111,6 +1148,29 @@ router.get('/user/:user_id', async (req, res) => {
   } catch (err) {
     console.error('Error fetching customer orders:', err);
     res.status(500).json({ error: 'Failed to fetch customer orders' });
+  }
+});
+
+// GET /api/order/daily-offer-status/:user_id - Daily 12:00 AM IST offer eligibility + live stock
+router.get('/daily-offer-status/:user_id', async (req, res) => {
+  try {
+    const userId = req.params.user_id;
+    const mobile = req.query.mobile || '';
+    const daily = await hasCustomerCompletedOrderToday(Order, userId, mobile);
+    const activeBanner = await OfferBanner.findOne({ is_active: true }).sort({ updated_at: -1 }).lean();
+
+    res.json({
+      success: true,
+      has_claimed_today: daily.hasCompletedToday,
+      ist_date: daily.dateKey,
+      seconds_until_midnight_ist: daily.secondsUntilMidnightIst,
+      completed_order_id: daily.completedOrderId,
+      stock_remaining: activeBanner ? Math.max(0, Number(activeBanner.stock_remaining) || 0) : null,
+      total_stock: activeBanner ? Math.max(0, Number(activeBanner.total_stock) || 0) : null
+    });
+  } catch (err) {
+    console.error('Error checking daily offer status:', err);
+    res.status(500).json({ success: false, error: 'Failed to check daily offer status' });
   }
 });
 

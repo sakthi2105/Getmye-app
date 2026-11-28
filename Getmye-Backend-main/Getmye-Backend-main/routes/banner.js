@@ -140,15 +140,23 @@ router.post('/upload', async (req, res) => {
 // PUT /api/banner/stock - Quick update remaining stock count from Admin
 router.put('/stock', async (req, res) => {
   try {
-    const { stock_remaining, banner_id } = req.body;
-    if (stock_remaining == null) {
-      return res.status(400).json({ error: 'stock_remaining is required' });
+    const { stock_remaining, total_stock, banner_id } = req.body;
+    if (stock_remaining == null && total_stock == null) {
+      return res.status(400).json({ error: 'stock_remaining or total_stock is required' });
+    }
+
+    const updateFields = {};
+    if (stock_remaining != null && !isNaN(Number(stock_remaining))) {
+      updateFields.stock_remaining = Math.max(0, Number(stock_remaining));
+    }
+    if (total_stock != null && !isNaN(Number(total_stock))) {
+      updateFields.total_stock = Math.max(0, Number(total_stock));
     }
 
     const filter = banner_id ? { banner_id } : { is_active: true };
     const banner = await OfferBanner.findOneAndUpdate(
       filter,
-      { $set: { stock_remaining: Number(stock_remaining) } },
+      { $set: updateFields },
       { returnDocument: 'after' }
     );
 
